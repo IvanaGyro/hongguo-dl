@@ -22,6 +22,19 @@
           <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="例如：1234567890 或 https://hongguoduanju.com/detail?series_id=..." /><button type="submit" id="lookup-button" class="primary">讀取分集</button></div>
         </form>
         <div id="lookup-error" class="alert" hidden role="alert"></div>
+        <details class="api-settings" id="worker-settings">
+          <summary>Cloudflare Worker API 設定</summary>
+          <form id="api-settings-form">
+            <label for="worker-origin">Worker 網址（GitHub Pages 部署時必填）</label>
+            <div class="input-row">
+              <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
+              <button type="submit">儲存 API 網址</button>
+            </div>
+            <p id="worker-status" class="help"></p>
+            <p class="help">設定僅儲存在此瀏覽器。網站會將分集查詢與影片下載請求傳送到指定的 Cloudflare Worker。</p>
+            <div id="api-settings-error" class="alert" role="alert" hidden></div>
+          </form>
+        </details>
         <div id="series" hidden>
           <div class="section-title"><div><h2 id="series-title">劇集</h2><p id="series-count" class="subtle"></p></div>
             <div class="actions"><button id="select-all" type="button" class="quiet">全選</button><button id="select-none" type="button" class="quiet">清空選取</button></div>
