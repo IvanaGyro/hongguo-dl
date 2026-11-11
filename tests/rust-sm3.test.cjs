@@ -35,9 +35,16 @@ const FIXTURES = [
     body: Buffer.from('Hello Rust!') }
 ];
 const originalSignatures = FIXTURES.map(data => signing.signPlayer(data));
+const appSource = require('../worker/vendor/app-source.js');
+const GORGON_FIXTURES = [
+  ['aid=1967&device_id=123', null, 1700000000, 0x1234],
+  ['a=1&url=%2F&timestamp=2026', Buffer.from('hello'), 1700000001, 0],
+  ['query=%E4%B8%AD%E6%96%87', Buffer.from('a different payload'), 1700123456, 65535],
+];
+const originalGorgon = GORGON_FIXTURES.map(args => appSource.xGorgon(...args));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
-const { sm3: rustSm3, simonBlocks, ladonTransform } = require('../worker/rust-sm3.cjs')(wasmModule);
+const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform } = require('../worker/rust-sm3.cjs')(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -107,5 +114,27 @@ test('Helios uses shared Rust Ladon rounds and matches fixed ciphertext', () => 
       'eFY0EoRGGi2qBu2z7mg9cewQHxhl2JqeXVHnmakVf60TcY/S');
   } finally {
     Math.random = originalRandom;
+  }
+});
+
+test('Rust Gorgon legacy RC4-like transformation matches fixed vectors', () => {
+  const bytes = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
+  for (const [random, hex] of [
+    [0, '7c6ea4f8fd1b19a64fb5f17cf2c09ce864510400'],
+    [0x1234, 'aa1bde6f7b948ad7823d322065098be5ba8a2733'],
+    [65535, 'cb95f3729edc67f5cf7a645210f698674fd40085']
+  ]) {
+    assert.equal(gorgonTransform(bytes, random).toString('hex'), hex);
+  }
+  assert.throws(() => gorgonTransform(Buffer.alloc(19), 1), /20 bytes/);
+  assert.throws(() => gorgonTransform(Buffer.alloc(20), 65536), /16-bit nonce/);
+});
+
+test('Rust Gorgon generates byte-for-byte compatible app signatures', () => {
+  assert.equal(appSource.xGorgon(...GORGON_FIXTURES[0]),
+    '840434124001db2d5bb9d9fe6cc91364e71df6105a4612699331');
+  for (let i = 0; i < GORGON_FIXTURES.length; ++i) {
+    assert.equal(appSource.xGorgon(...GORGON_FIXTURES[i]), originalGorgon[i],
+      'Gorgon signature differs at fixture ' + i);
   }
 });
