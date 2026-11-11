@@ -30,8 +30,21 @@ jobs:
       - name: Build for GitHub Pages
         env:
           VITE_BASE_PATH: /hongguo-dl/
-          VITE_API_ORIGIN: ${{ vars.HONGGUO_WORKER_ORIGIN }}
-        run: bun run build
+          VITE_API_ORIGIN: ${{ vars.PROXY || vars.HONGGUO_WORKER_ORIGIN }}
+        run: |
+          if [ -n "$VITE_API_ORIGIN" ]; then
+            node --input-type=module -e '
+              const value = process.env.VITE_API_ORIGIN.trim();
+              const u = new URL(value);
+              if (u.protocol !== "https:" || u.username || u.password ||
+                  u.pathname !== "/" || u.search || u.hash)
+                throw new Error("PROXY must be the HTTPS origin of the Worker, without path/query/fragment");
+              console.log("Cloudflare Worker default configured from Actions variable");
+            '
+          else
+            echo "::warning::GitHub repository variable PROXY is missing: Pages will require manual Worker setup"
+          fi
+          bun run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
