@@ -46,9 +46,17 @@ const XM_KEY = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 19 + 5) & 2
 const XM_FIXTURES = [5, 6, 8, 16, 32, 64, 128, 257, 1024].map(n =>
   Buffer.from(Array.from({ length: n }, (_, i) => (i * 23 + 3) & 255)));
 const originalXmXor = XM_FIXTURES.map(input => appSource.xmxor(input, XM_KEY));
+// Capture the actual vendor AES-V3 implementation before installing the Rust backend.
+const MEDUSA_AES_FIXTURES = [248, 249, 264, 299, 512].flatMap(size =>
+  [0, 1, 2, 3].map(variant => ({
+    khronos: 1700000000 + variant,
+    bytes: Buffer.from(Array.from({ length: size }, (_, i) => (i * 37 + variant * 17) & 255))
+  })));
+const originalMedusaAesV3 = MEDUSA_AES_FIXTURES.map(
+  f => appSource.medusaAesV3Encrypt(f.bytes, f.khronos));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
-const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor } = require('../worker/rust-sm3.cjs')(wasmModule);
+const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor, medusaAesV3 } = require('../worker/rust-sm3.cjs')(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -154,4 +162,19 @@ test('Rust Medusa XM-XOR matches vendor JS and independent 32-byte golden', () =
   }
   assert.throws(() => medusaXmXor(Buffer.alloc(4), XM_KEY), /at least 5/);
   assert.throws(() => medusaXmXor(XM_FIXTURES[0], Buffer.alloc(31)), /32-byte key/);
+});
+
+test('Medusa custom AES-V3 in Rust exactly matches the JS vendor for all 4 time variants', () => {
+  for (let i = 0; i < MEDUSA_AES_FIXTURES.length; i++) {
+    const f = MEDUSA_AES_FIXTURES[i];
+    const actual = appSource.medusaAesV3Encrypt(f.bytes, f.khronos);
+    assert.equal(actual.length, f.bytes.length + 1);
+    assert.deepEqual(actual, originalMedusaAesV3[i],
+      'AES V3 differs for variant ' + (f.khronos & 3) + ', len=' + f.bytes.length);
+  }
+  const box = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+  const key = Buffer.alloc(16, 0xa5), iv = Buffer.alloc(16, 0x5a);
+  assert.throws(() => medusaAesV3(box, key, iv, 0, Buffer.alloc(247)), />=248/);
+  assert.throws(() => medusaAesV3(Buffer.alloc(255), key, iv, 0, Buffer.alloc(248)), /256-byte/);
+  assert.throws(() => medusaAesV3(box, key, iv, 0, Buffer.alloc(16 * 1024 * 1024 + 1)), />=248/);
 });
