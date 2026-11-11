@@ -65,3 +65,28 @@ footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
 .api-settings summary { cursor: pointer; color: #a9c7ff; font-weight: 600; }
 .api-settings form { padding: 1rem 0 .25rem; }
 .api-settings label { display: block; margin-bottom: .6rem; font-size: .88rem; }
+
+/* Play / download modes, browser-only library, and streamed bulk actions. */
+.mode-tabs { display: flex; gap: .7rem; padding-top: 1.3rem; }
+.mode-tabs button { flex: 1; font-weight: 750; border-radius: 12px; }
+.mode-tabs button.selected { background: #9bbfff; border-color: #9bbfff; color: #101727; }
+.recent-library:not(:empty) { padding-bottom: 1rem; margin-bottom: 1.2rem; border-bottom: 1px solid #36455e; }
+.recent-library h3 { margin: 0 0 .6rem; font-size: .95rem; color: #d8e5ff; }
+.recent-list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.recent-list button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.episode.play-episode { text-align: left; width: 100%; color: #eaf0ff; font-weight: 650; }
+.episode.watched { border-color: #458d70; }
+.episode.in-progress { border-color: #d0a162; }
+.episode.current { background: #244776; border-color: #8fb7ff; }
+.batch-tools { margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid #36455e; }
+.batch-tools .actions { margin-top: .9rem; }
+.batch-tools .help { margin-top: .5rem; }
+#player-panel { margin-top: 1.1rem; border-top: 1px solid #36455e; padding-top: 1.3rem; }
+.player-header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }
+#player-status { color: #a7c4e9; font-size: .88rem; overflow-wrap: anywhere; }
+#player-video { display: block; width: 100%; aspect-ratio: 16/9; max-height: 72vh; background: #02060e; border-radius: 12px; }
+.player-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin-top: 1rem; }
+.player-controls label { min-width: 150px; display: flex; flex-direction: column; gap: .4rem; font-size: .85rem; }
+.player-controls select { border: 1px solid #44536e; background: #111b2d; color: #eaf0ff; padding: .6rem; border-radius: 8px; }
+.player-controls button:disabled { opacity: .38; }
+[hidden] { display: none !important; }
