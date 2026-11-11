@@ -25,3 +25,28 @@ jobs:
         run: grep -q '/hongguo-dl/assets/' dist/index.html
       - name: Cloudflare Worker dry-run
         run: bunx wrangler deploy --dry-run --outdir /tmp/hongguo-worker
+      # Wrangler's dry-run only bundles files. Actually starting workerd catches
+      # invalid top-level I/O (e.g. node:crypto randomBytes during module load).
+      - name: Cloudflare Worker cold-start smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx wrangler dev --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false > /tmp/hongguo-workerd.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..40}; do
+            if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8787/api/health > /tmp/hongguo-health.json 2>/dev/null &&
+               grep -q '"ok":true' /tmp/hongguo-health.json; then
+              echo "Worker cold-start and GET /api/health succeeded"
+              exit 0
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then
+              echo "Wrangler exited unexpectedly:"
+              cat /tmp/hongguo-workerd.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Worker failed to start within smoke-test window:"
+          cat /tmp/hongguo-workerd.log
+          exit 1
