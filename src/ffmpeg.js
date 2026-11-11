@@ -2,6 +2,7 @@
 // Single-thread FFmpeg.wasm is loaded only when a job actually needs processing.
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { assertHlsManifest, selectHlsVariant, errorWith } from './logic.js';
+import { planHlsMediaPlaylist, rewriteHlsMediaPlaylist } from './hls-playlist.js';
 
 const MAX_FFMPEG_INPUT = 320 * 1024 * 1024;
 let instance = null;
@@ -138,51 +139,45 @@ export async function convertHls(url, {
     const id = fileId(), playlist = id + '.m3u8', output = id + '.mp4';
     try {
       const media = await getMediaPlaylist(url, fetchBytes, signal);
-      const rows = media.text.split(/\r?\n/);
-      const segments = rows.filter(line => line.trim() && !line.trim().startsWith('#'));
-      if (segments.length > 1500) throw errorWith('HLS_MANIFEST', 'HLS 分片數量超過 1500 個');
-      if (!segments.length) throw errorWith('HLS_MANIFEST', 'HLS 清單沒有媒體分片');
-      const total = segments.length;
+      const plan = planHlsMediaPlaylist(media.text);
+      const total = plan.segmentCount;
       let done = 0;
       let seq = 0;
-      async function stage(uri, key = false) {
+      async function stage(resource) {
+        const { uri, key, kind } = resource;
         const full = new URL(uri, media.url).href;
-        if (unique.has(full)) return unique.get(full);
-        if (signal?.aborted) throw cancelError();
-        const extension = key ? '.key' : (/\.(m4s|mp4|aac|m4a|ts)(?:$|\?)/i.exec(uri)?.[1] || 'ts');
-        const name = id + '_part_' + (seq++) + '.' + (key ? 'key' : extension.replace(/^\./, ''));
-        // Reserve a conservative per-segment ceiling and total FFmpeg FS limit.
-        const data = await fetchBytes(full, signal, Math.min(64 * 1024 * 1024, MAX_FFMPEG_INPUT - size));
-        if (!data.length) throw errorWith('EMPTY_MEDIA', 'HLS 分片沒有資料');
-        if (key && data.length !== 16) throw errorWith('HLS_MANIFEST', 'AES-128 HLS 金鑰必須是 16 位元組');
-        size += data.length;
-        if (size > MAX_FFMPEG_INPUT) throw errorWith('FFMPEG_LIMIT', 'HLS 分片合計超過 FFmpeg.wasm 安全上限');
-        await ffmpeg.writeFile(name, data);
-        files.add(name); unique.set(full, name);
-        if (!key) { done++; segmentProgress?.({ current: done, total, bytes: size }); }
+        // A URL used both as a decryption key and as media needs distinct
+        // local files and length validation, not a shared cache entry.
+        const cacheKey = (key ? 'key:' : 'media:') + full;
+        let name = unique.get(cacheKey);
+        if (!name) {
+          if (signal?.aborted) throw cancelError();
+          const extension = key ? 'key' : (/\.(m4s|mp4|aac|m4a|ts)(?:$|\?)/i.exec(uri)?.[1] || 'ts');
+          name = id + '_part_' + (seq++) + '.' + extension;
+          const data = await fetchBytes(full, signal, Math.min(64 * 1024 * 1024, MAX_FFMPEG_INPUT - size));
+          if (!data.length) throw errorWith('EMPTY_MEDIA', 'HLS 分片沒有資料');
+          if (key && data.length !== 16) throw errorWith('HLS_MANIFEST', 'AES-128 HLS 金鑰必須是 16 位元組');
+          size += data.length;
+          if (size > MAX_FFMPEG_INPUT) throw errorWith('FFMPEG_LIMIT', 'HLS 分片合計超過 FFmpeg.wasm 安全上限');
+          await ffmpeg.writeFile(name, data);
+          files.add(name);
+          unique.set(cacheKey, name);
+        }
+        // Count logical segments rather than unique URLs or URI attributes.
+        // HLS playlists may repeat the same segment URI many times.
+        if (kind === 'segment') {
+          done++;
+          segmentProgress?.({ current: done, total, bytes: size });
+        }
         return name;
       }
-      const rewritten = [];
-      for (const line of rows) {
+      const localNames = [];
+      for (const resource of plan.resources) {
         if (signal?.aborted) throw cancelError();
-        const value = line.trim();
-        if (!value) { rewritten.push(line); continue; }
-        if (!value.startsWith('#')) { rewritten.push(await stage(value)); continue; }
-        if (/^#EXT-X-(?:SESSION-)?KEY:/.test(value)) {
-          if (!/\bMETHOD=(?:AES-128|NONE)(?:,|$)/.test(value))
-            throw errorWith('HLS_DRM', '此 HLS 使用未支援的加密方式');
-        }
-        let changed = line;
-        const uris = [...line.matchAll(/\bURI="([^"]+)"/g)];
-        if ((line.match(/\bURI\s*=/g) || []).length !== uris.length)
-          throw errorWith('HLS_MANIFEST', 'HLS 標籤的 URI 格式不正確');
-        for (const match of uris) {
-          const path = await stage(match[1], /^#EXT-X-(?:SESSION-)?KEY:/.test(value));
-          changed = changed.replace(match[0], 'URI="' + path + '"');
-        }
-        rewritten.push(changed);
+        localNames.push(await stage(resource));
       }
-      await ffmpeg.writeFile(playlist, new TextEncoder().encode(rewritten.join('\n'))); files.add(playlist);
+      const rewritten = rewriteHlsMediaPlaylist(plan, localNames);
+      await ffmpeg.writeFile(playlist, new TextEncoder().encode(rewritten)); files.add(playlist);
       await run(ffmpeg, argsFor(mode, contentKey, playlist, output, true), signal, progress);
       files.add(output);
       return new Uint8Array(await ffmpeg.readFile(output));
