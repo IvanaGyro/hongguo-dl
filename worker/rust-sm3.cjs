@@ -8,11 +8,11 @@ function installRustSm3(wasmModule) {
   const { memory, rust_alloc, rust_dealloc, rust_sm3,
     rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform,
     rust_medusa_xmxor, rust_medusa_aes_v3,
-    rust_medusa_get_iv, rust_medusa_sum_md5 } = kernel;
+    rust_medusa_get_iv, rust_medusa_sum_md5, rust_medusa_hash_f13 } = kernel;
   if (!memory || !rust_alloc || !rust_dealloc || !rust_sm3 ||
       !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform ||
       !rust_medusa_xmxor || !rust_medusa_aes_v3 ||
-      !rust_medusa_get_iv || !rust_medusa_sum_md5)
+      !rust_medusa_get_iv || !rust_medusa_sum_md5 || !rust_medusa_hash_f13)
     throw new Error('The Rust signing wasm ABI is missing required exports');
 
   const allocate = length => {
@@ -149,6 +149,29 @@ function installRustSm3(wasmModule) {
   };
   const medusaSumMd5 = data => medusaHashCall(rust_medusa_sum_md5, null, data, 12);
 
+  function medusaHashF13(query, body, timestampBytes, khronos) {
+    if (!Buffer.isBuffer(query) || query.length !== 32 ||
+        !Buffer.isBuffer(body) || body.length !== 16 ||
+        !Buffer.isBuffer(timestampBytes) || timestampBytes.length !== 4 ||
+        !Number.isInteger(khronos) || khronos < 0 || khronos > 0xffffffff)
+      throw new TypeError('Medusa F13 requires 32-byte query SM3, 16-byte body MD5, and u32 timestamp');
+    const inputPtr = allocate(52);
+    let outputPtr = 0;
+    try {
+      outputPtr = allocate(36);
+      const view = new Uint8Array(memory.buffer, inputPtr, 52);
+      view.set(query, 0);
+      view.set(body, 32);
+      view.set(timestampBytes, 48);
+      const n = rust_medusa_hash_f13(inputPtr, khronos, outputPtr);
+      if (n !== 20 && n !== 36) throw new Error('Rust Medusa F13 returned unexpected length ' + n);
+      return Buffer.from(new Uint8Array(memory.buffer, outputPtr, n));
+    } finally {
+      if (outputPtr) rust_dealloc(outputPtr, 36);
+      rust_dealloc(inputPtr, 52);
+    }
+  }
+
   const simonBlocks = (key, input) => transform(rust_simon_encrypt, key, input);
   const ladonTransform = (md5Ascii, input) => transform(rust_ladon_transform, md5Ascii, input);
 
@@ -164,7 +187,8 @@ function installRustSm3(wasmModule) {
   appSource.setRustXmXorBackend(medusaXmXor);
   appSource.setRustMedusaAesV3Backend(medusaAesV3);
   appSource.setRustMedusaHashBackend({ getIv: medusaGetIv, sumMd5: medusaSumMd5 });
+  appSource.setRustHashF13Backend(medusaHashF13);
   return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform,
-    medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5 };
+    medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5, medusaHashF13 };
 }
 module.exports = installRustSm3;
