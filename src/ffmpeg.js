@@ -7,14 +7,31 @@ const MAX_FFMPEG_INPUT = 320 * 1024 * 1024;
 let instance = null;
 let ready = null;
 let serial = Promise.resolve();
-
+let wasmBlobUrl = null;
+let wasmPromise = null;
+async function compressedWasmUrl() {
+  if (wasmBlobUrl) return wasmBlobUrl;
+  if (!wasmPromise) wasmPromise = (async () => {
+    if (typeof DecompressionStream !== 'function')
+      throw errorWith('FFMPEG_ERROR', '此瀏覽器不支援 gzip DecompressionStream，無法載入 FFmpeg.wasm');
+    const res = await fetch('/ffmpeg/ffmpeg-core.wasm.gz');
+    if (!res.ok || !res.body) throw errorWith('FFMPEG_ERROR', '無法取得 FFmpeg.wasm 壓縮核心（HTTP ' + res.status + '）');
+    // The compressed artifact is smaller than Cloudflare's 25 MiB per-asset limit.
+    // Unpack only on first demand, preserving an ordinary static-site deployment.
+    const stream = res.body.pipeThrough(new DecompressionStream('gzip'));
+    const wasm = await new Response(stream).blob();
+    wasmBlobUrl = URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' }));
+    return wasmBlobUrl;
+  })().catch(error => { wasmPromise = null; throw error; });
+  return wasmPromise;
+}
 async function engine() {
   if (instance && ready) { await ready; return instance; }
   const ffmpeg = new FFmpeg();
   instance = ffmpeg;
   ready = ffmpeg.load({
     coreURL: new URL('/ffmpeg/ffmpeg-core.js', location.href).href,
-    wasmURL: new URL('/ffmpeg/ffmpeg-core.wasm', location.href).href
+    wasmURL: await compressedWasmUrl()
   });
   try { await ready; return ffmpeg; }
   catch (error) { instance = null; ready = null; throw errorWith('FFMPEG_ERROR', '無法載入本機 FFmpeg.wasm：' + error.message); }
