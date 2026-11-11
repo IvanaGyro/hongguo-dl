@@ -478,9 +478,69 @@ async function runJob(job, signal) {
   }
 }
 
+async function startBulk(type) {
+  if (bulkController || !series || !selected.size) return;
+  const episodes = series.episodes.filter(ep => selected.has(ep.vid));
+  if (type === 'concat' && episodes.length < 2) return;
+  bulkController = new AbortController();
+  const signal = bulkController.signal;
+  $('bulk-cancel').hidden = false;
+  renderEpisodes();
+  $('bulk-status').textContent = type === 'zip'
+    ? '正在啟動單一 ZIP 下載，請保留此頁面直到完成…'
+    : '正在準備無損合併…';
+  try {
+    await runBulk({
+      type, series, episodes, quality: $('quality').value, codec: $('codec').value,
+      outputMode: $('output-mode').value,
+      sourceFor: getSource, fetchBytes, cache: mediaCache, signal,
+      saveZip: (stream, filename) => triggerArchiveDownload(stream, filename, {
+        onFallback: error => {
+          $('bulk-status').textContent = '瀏覽器不支援串流下載（' + error.message +
+            '），改用 240 MiB 上限的單一 ZIP 記憶體備援模式…';
+        }
+      }),
+      saveOutput: saveProcessed,
+      onStatus: text => { $('bulk-status').textContent = text; }
+    });
+  } catch (error) {
+    const result = classifyError(error);
+    $('bulk-status').textContent = (signal.aborted ? '批次處理已取消' : '批次處理失敗') +
+      '：' + result.message;
+  } finally {
+    bulkController = null;
+    $('bulk-cancel').hidden = true;
+    renderEpisodes();
+  }
+}
 $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
+player = createPlayer({
+  video: $('player-video'), status: $('player-status'), label: $('player-episode'),
+  prevButton: $('player-prev'), nextButton: $('player-next'),
+  qualitySelect: $('player-quality'), codecSelect: $('player-codec'),
+  getSeries: () => series, sourceFor: getSource,
+  fetchBytes, getWorkerOrigin: requireWorkerOrigin,
+  cache: mediaCache, storage: localStorage,
+  onProgress: () => { if (series && currentMode === 'play') renderEpisodes(); }
+});
+$('mode-download').addEventListener('click', () => setMode('download'));
+$('mode-play').addEventListener('click', () => setMode('play'));
+$('bulk-zip').addEventListener('click', () => { void startBulk('zip'); });
+$('bulk-concat').addEventListener('click', () => { void startBulk('concat'); });
+$('bulk-cancel').addEventListener('click', () => {
+  if (bulkController) bulkController.abort();
+});
+$('recent-series').addEventListener('click', event => {
+  const button = event.target.closest('button[data-recent-id]');
+  if (!button) return;
+  const record = recentSeries(localStorage).find(r => r.seriesId === button.dataset.recentId);
+  if (!record) return;
+  $('input-url').value = record.seriesId;
+  showSeries(record, true);
+});
+renderRecentSeries();
 $('lookup-form').addEventListener('submit', lookup);
 $('choose-folder').addEventListener('click', chooseFolder);
 $('add-queue').addEventListener('click', queueSelected);
@@ -489,7 +549,15 @@ $('select-all').addEventListener('click', () => {
   selected = new Set(series.episodes.map(e => e.vid)); renderEpisodes();
 });
 $('select-none').addEventListener('click', () => { selected.clear(); if (series) renderEpisodes(); });
+$('episodes').addEventListener('click', e => {
+  if (currentMode !== 'play' || !series) return;
+  const control = e.target.closest('button[data-play-vid]');
+  if (!control) return;
+  const ep = series.episodes.find(item => item.vid === control.dataset.playVid);
+  if (ep) player.open(ep);
+});
 $('episodes').addEventListener('change', e => {
+  if (currentMode !== 'download') return;
   const checkbox = e.target.closest('input[data-vid]');
   if (!checkbox) return;
   if (checkbox.checked) selected.add(checkbox.dataset.vid);
@@ -520,3 +588,4 @@ if (!window.showDirectoryPicker) {
   $('browser-note').textContent = '建議先選擇資料夾，讓大型原始影片直接寫入硬碟。轉檔仍需將媒體載入 FFmpeg.wasm 記憶體。';
 }
 renderQueue();
+setMode('download');
