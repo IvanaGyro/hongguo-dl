@@ -7,10 +7,12 @@ function installRustSm3(wasmModule) {
   const { exports: kernel } = new WebAssembly.Instance(wasmModule, {});
   const { memory, rust_alloc, rust_dealloc, rust_sm3,
     rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform,
-    rust_medusa_xmxor, rust_medusa_aes_v3 } = kernel;
+    rust_medusa_xmxor, rust_medusa_aes_v3,
+    rust_medusa_get_iv, rust_medusa_sum_md5 } = kernel;
   if (!memory || !rust_alloc || !rust_dealloc || !rust_sm3 ||
       !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform ||
-      !rust_medusa_xmxor || !rust_medusa_aes_v3)
+      !rust_medusa_xmxor || !rust_medusa_aes_v3 ||
+      !rust_medusa_get_iv || !rust_medusa_sum_md5)
     throw new Error('The Rust signing wasm ABI is missing required exports');
 
   const allocate = length => {
@@ -129,6 +131,24 @@ function installRustSm3(wasmModule) {
     }
   }
 
+  function medusaHashCall(exported, iv, data, minimumLength) {
+    if (!Buffer.isBuffer(data) || data.length < minimumLength ||
+        data.length > 16 * 1024 * 1024)
+      throw new TypeError('Medusa checksum input length is invalid');
+    const ptr = allocate(data.length);
+    try {
+      new Uint8Array(memory.buffer, ptr, data.length).set(data);
+      return (iv === null ? exported(ptr, data.length) : exported(iv >>> 0, ptr, data.length)) >>> 0;
+    } finally {
+      rust_dealloc(ptr, Math.max(1, data.length));
+    }
+  }
+  const medusaGetIv = (iv, data) => {
+    if (!Number.isInteger(iv)) throw new TypeError('Medusa IV must be an integer');
+    return medusaHashCall(rust_medusa_get_iv, iv, data, 0);
+  };
+  const medusaSumMd5 = data => medusaHashCall(rust_medusa_sum_md5, null, data, 12);
+
   const simonBlocks = (key, input) => transform(rust_simon_encrypt, key, input);
   const ladonTransform = (md5Ascii, input) => transform(rust_ladon_transform, md5Ascii, input);
 
@@ -143,6 +163,8 @@ function installRustSm3(wasmModule) {
   appSource.setRustGorgonBackend(gorgonTransform);
   appSource.setRustXmXorBackend(medusaXmXor);
   appSource.setRustMedusaAesV3Backend(medusaAesV3);
-  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor, medusaAesV3 };
+  appSource.setRustMedusaHashBackend({ getIv: medusaGetIv, sumMd5: medusaSumMd5 });
+  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform,
+    medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5 };
 }
 module.exports = installRustSm3;
