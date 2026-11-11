@@ -14,14 +14,24 @@ functions out of JavaScript. The production Cloudflare Worker loads
   `x-ladon` and App `x-helios` signatures with exact output compatibility.
 - **Gorgon 20-byte RC4-like mixing and bit reversal**, retaining the
   upstream state mutation exactly rather than replacing it with standard RC4.
+- **Medusa XM-XOR** byte permutation and dependent postmix, with independent
+  golden output and varying-length parity tests.
+- **Medusa custom AES V3**, including time-dependent S-box selection, unusual
+  key expansion, row permutations, block mixing, and byte bit injection.
+  All four time variants and different input lengths are checked against the
+  original JavaScript implementation.
+- **Medusa IV selector and 12-byte checksum**, preserving JavaScript's
+  unsigned 32-bit wrapping and shift semantics.
 - Stable ABI: `rust_alloc`, `rust_dealloc`, `rust_sm3`,
-  `rust_simon_encrypt`, `rust_ladon_transform`, `rust_gorgon_transform`.
+  `rust_simon_encrypt`, `rust_ladon_transform`, `rust_gorgon_transform`,
+  `rust_medusa_xmxor`, `rust_medusa_aes_v3`, `rust_medusa_get_iv`,
+  `rust_medusa_sum_md5`.
 - Thin memory-copy bridge at `worker/rust-sm3.cjs` shared by the real
   Worker entrypoint and the golden-vector tests.
-- SM3 official vectors; Simon, Ladon/Helios, and Gorgon fixed vectors;
-  full Argus/Ladon/Gorgon byte-for-byte parity checks against the original
-  implementation (including body signatures), plus Cloudflare workerd
-  cold-start verification.
+- SM3 official vectors; Simon, Ladon/Helios, Gorgon, XM-XOR, and checksum
+  fixed vectors; full Argus/Ladon/Gorgon byte-for-byte parity checks, plus
+  Medusa AES-V3 and XM-XOR direct comparisons with the vendor JS code.
+  Cloudflare workerd cold-start verification is also required.
 - Pinned Rust 1.99.1 and byte-for-byte precompiled WASM verification.
 
 ## Why precompile and check in the .wasm file?
@@ -49,10 +59,12 @@ interfaces; it does not perform the heavy Simon/Ladon loops on the deployed
 Worker. The JavaScript reference implementations remain so golden tests can
 detect protocol regressions.
 
-Medusa's custom AES-like mixer and other app-signature variants, plus
-browser HLS orchestration, have **not** been ported to Rust. The FFmpeg.wasm core is already native
+Medusa's main XM-XOR and AES-V3 transforms now run in Rust, but its
+**hashF13 branch-specific message mixing** and protobuf packing still run in
+JavaScript. Other app-signature variants and browser HLS orchestration have
+also not been fully migrated. The FFmpeg.wasm core is already native
 **C compiled to WebAssembly**, not media processing implemented in JavaScript;
-reimplementing the codecs in Rust is unnecessary.
+reimplementing its codecs in Rust is unnecessary.
 
 Rust/WASM does not eliminate the need for minimal JavaScript platform glue:
 browser file access, Worker `fetch` handlers, streams, and importing Wasm
