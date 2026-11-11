@@ -12,18 +12,18 @@ const assetStatus = new Map();
 page.on('pageerror', e => diagnostics.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error') diagnostics.push('console: ' + m.text()); });
 page.on('response', r => {
-  if (/\\/ffmpeg\\/ffmpeg-core\\.(js|wasm\\.gz)/.test(new URL(r.url()).pathname)) {
+  if (['ffmpeg-core.js', 'ffmpeg-core.wasm.gz'].some(name => new URL(r.url()).pathname.endsWith('/ffmpeg/' + name))) {
     assetStatus.set(new URL(r.url()).pathname, r.status());
   }
 });
-page.route(/\\/api\\/series\\?/, route => route.fulfill({
+page.route(url => url.pathname === '/api/series', route => route.fulfill({
   status: 200, contentType: 'application/json',
   body: JSON.stringify({
     kind: 'direct', title: 'Firefox FFmpeg test fixture', total: 1,
     episodes: [{ vid: 'direct', index: 1, url: 'https://cdn.fqnovelvod.com/smoke.mp4' }]
   })
 }));
-page.route(/\\/api\\/media\\?/, route => route.fulfill({
+page.route(url => url.pathname === '/api/media', route => route.fulfill({
   status: 200,
   contentType: 'video/mp4',
   headers: { 'Content-Length': String(sample.length), 'Access-Control-Allow-Origin': '*' },
