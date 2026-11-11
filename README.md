@@ -8,7 +8,7 @@
 - 來源優先使用官網公開影片（自動畫質／編碼）；其他情況使用上游 App 取源模組。
 - 可選不限編碼、H.264、HEVC/H.265、ByteVC2。**不限 H.264 不代表保證能轉碼 ByteVC2**。
 - 未加密原始串流直接保存；按需使用本機 FFmpeg.wasm 無損封裝 MP4 或轉成 H.264，HLS VOD 透過 FFmpeg.wasm 整合。
-- Chromium 支援 File System Access API 的瀏覽器可以直接串流寫入資料夾；Firefox 等無此 API 的瀏覽器使用 Blob 保存單集。
+- 瀏覽器若提供 `window.showDirectoryPicker()`，就能直接串流寫入選取的資料夾；否則退回 Blob 儲存單集（以實際功能偵測為準，不以瀏覽器品牌判斷）。
 - 佇列狀態保存在 localStorage，重開網頁後未完成工作標示中斷，需要重試；不會保留 CDN 簽章連結或影片密鑰。
 
 ## 部署到 Cloudflare
@@ -37,7 +37,7 @@ npm run dev:worker
 
 ## 使用限制
 
-- Firefox 沒有本專案所需的資料夾寫入 API；Blob 儲存限制 **每集 300 MiB**，避免無限制使用記憶體。
+- 未提供 `showDirectoryPicker()` 的環境會使用 Blob 儲存，限制 **每集 300 MiB**，避免無限制使用記憶體。Firefox 支援 OPFS 與選擇資料夾上傳，不等於一定提供此存取本機任意目錄的寫入 API。
 - FFmpeg.wasm 本機讀寫與處理限制 **每集 320 MiB 輸入**；單執行緒核心成本高。標準版未保證支援 ByteVC2/VVC 解碼，尤其不能保證轉成 H.264。
 - 不實作登入、DRM 授權或影片搜尋；不支援 SAMPLE-AES / Widevine 或直播 HLS。僅接受白名單 HTTPS 來源和受驗證的官方劇集資料。
 - 不支援斷點續傳。HLS 工作先將分片放入 FFmpeg.wasm 虛擬檔案系統；原始 MP4 可直接串流寫入資料夾。
