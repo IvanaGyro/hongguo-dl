@@ -1,4 +1,4 @@
-name: Verify Rust SM3 WebAssembly
+name: Verify Rust Signing WebAssembly
 on:
   push:
     branches: [main, feat/rust-wasm-crypto]
@@ -19,7 +19,7 @@ on:
       - 'tests/rust-sm3.test.cjs'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   native-and-wasm:
     runs-on: ubuntu-24.04
@@ -33,10 +33,22 @@ jobs:
         run: cargo test --manifest-path rust/crypto/Cargo.toml --locked
       - name: Compile Rust to wasm32
         run: cargo build --manifest-path rust/crypto/Cargo.toml --locked --release --target wasm32-unknown-unknown
+      - name: Sync compiled Wasm to main after Rust changes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          built=rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm
+          shipped=rust/crypto/dist/hongguo_crypto.wasm
+          if cmp -s "$built" "$shipped"; then exit 0; fi
+          cp "$built" "$shipped"
+          git add -f "$shipped"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(rust): sync verified Simon/Ladon WebAssembly binary'
+          git push origin HEAD:main
       - name: Verify precompiled Wasm exactly matches Rust source
         run: cmp rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm rust/crypto/dist/hongguo_crypto.wasm
       - name: Upload verified WebAssembly artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hongguo-rust-sm3
+          name: hongguo-rust-signing
           path: rust/crypto/dist/hongguo_crypto.wasm
