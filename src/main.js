@@ -395,8 +395,11 @@ async function streamToDestination(job, source, signal) {
     if (length && length !== bytes) throw errorWith('INCOMPLETE', 'Content-Length：預期 ' + length + '，實收 ' + bytes);
     if (writer) await writer.close();
     else {
-      const blob = new Blob(chunks, { type: 'video/mp4' });
-      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec), blob);
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
+      // Only MP4 data is safe to pass to the HTML5 MP4 playback buffer.
+      // .ts/.webm/.mkv files are still downloadable but are not mislabeled.
+      if (/\.mp4$/i.test(name))
+        mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec), blob);
       triggerSave(blob, name);
     }
     complete = true;
@@ -436,8 +439,10 @@ async function runJob(job, signal) {
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
-        new Blob([out], { type: 'video/mp4' }));
+      if (job.mode !== 'h264') {
+        mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
+          new Blob([out], { type: 'video/mp4' }));
+      }
       await saveProcessed(out, outputFileName(job, source, true));
     } else {
       const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
@@ -448,8 +453,10 @@ async function runJob(job, signal) {
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
-        new Blob([out], { type: 'video/mp4' }));
+      if (job.mode !== 'h264') {
+        mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
+          new Blob([out], { type: 'video/mp4' }));
+      }
       await saveProcessed(out, outputFileName(job, source, true));
     }
     update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
