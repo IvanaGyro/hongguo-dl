@@ -6,9 +6,9 @@ const { installRustSigningBackend } = require('./vendor/playback-signature.js');
 function installRustSm3(wasmModule) {
   const { exports: kernel } = new WebAssembly.Instance(wasmModule, {});
   const { memory, rust_alloc, rust_dealloc, rust_sm3,
-    rust_simon_encrypt, rust_ladon_transform } = kernel;
+    rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform } = kernel;
   if (!memory || !rust_alloc || !rust_dealloc || !rust_sm3 ||
-      !rust_simon_encrypt || !rust_ladon_transform)
+      !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform)
     throw new Error('The Rust signing wasm ABI is missing required exports');
 
   const allocate = length => {
@@ -57,6 +57,24 @@ function installRustSm3(wasmModule) {
       rust_dealloc(keyPtr, key.length);
     }
   }
+  function gorgonTransform(input, random) {
+    if (!Buffer.isBuffer(input) || input.length !== 20 ||
+        !Number.isInteger(random) || random < 0 || random > 65535)
+      throw new TypeError('Rust Gorgon requires 20 bytes and a 16-bit nonce');
+    const inputPtr = allocate(20);
+    let outputPtr = 0;
+    try {
+      outputPtr = allocate(20);
+      new Uint8Array(memory.buffer, inputPtr, 20).set(input);
+      const status = rust_gorgon_transform(inputPtr, random, outputPtr);
+      if (status !== 0) throw new Error('Rust Gorgon error ' + status);
+      return Buffer.from(new Uint8Array(memory.buffer, outputPtr, 20));
+    } finally {
+      if (outputPtr) rust_dealloc(outputPtr, 20);
+      rust_dealloc(inputPtr, 20);
+    }
+  }
+
   const simonBlocks = (key, input) => transform(rust_simon_encrypt, key, input);
   const ladonTransform = (md5Ascii, input) => transform(rust_ladon_transform, md5Ascii, input);
 
@@ -67,6 +85,7 @@ function installRustSm3(wasmModule) {
 
   sm3.setRustBackend(rustSm3);
   installRustSigningBackend({ simonBlocks, ladonTransform });
-  return { sm3: rustSm3, simonBlocks, ladonTransform };
+  require('./vendor/app-source.js').setRustGorgonBackend(gorgonTransform);
+  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform };
 }
 module.exports = installRustSm3;
