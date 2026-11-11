@@ -97,3 +97,15 @@ test('Rust signing bridge rejects invalid or unsafe input lengths', () => {
   assert.throws(() => simonBlocks(Buffer.alloc(32), Buffer.alloc(17)), /aligned input/);
   assert.throws(() => ladonTransform(Buffer.alloc(32), Buffer.alloc(16 * 1024 * 1024 + 16)), /aligned input/);
 });
+
+test('Helios uses shared Rust Ladon rounds and matches fixed ciphertext', () => {
+  const { helios } = require('../worker/vendor/app-source.js');
+  const originalRandom = Math.random;
+  Math.random = () => 0x12345678 / 0x100000000;
+  try {
+    assert.equal(helios(1700000000),
+      'eFY0EoRGGi2qBu2z7mg9cewQHxhl2JqeXVHnmakVf60TcY/S');
+  } finally {
+    Math.random = originalRandom;
+  }
+});
