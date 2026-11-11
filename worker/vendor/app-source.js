@@ -103,7 +103,15 @@ function md5SumV3(message, countV2, orders, countV1) {
 }
 function branch2F13(iv, querySm3, bodyMd5, tsBytes, khronos) { const v = (iv & 13) * 86; const ivV0 = ((v >>> 15) & 255) + ((v >>> 8) & 255); const n1 = [0x8980f29b,0xeb549c7f,0xb08726db,0xd40cb5e6,0xe8f559e4][ivV0]; const countV1 = (n1 + khronos + 1) & 255; const countV2 = u32(n1 + khronos); const shift = (countV2 + 5) & 7; const seed = [0x84,0x96,0x77,0x9d,0xd4,0x15,0x0b,0xf8]; const pad = Buffer.from(seed.map((value) => ((value | (value << 8)) >> shift) & 255)); const input = Buffer.concat([querySm3,bodyMd5,tsBytes,pad,Buffer.from('a0010000','hex')]); return md5SumV3(input,countV2,BRANCH2_ORDERS.subarray(ivV0 << 6,(ivV0 + 1) << 6),countV1); }
 function bxor(a, b) { const out = Buffer.alloc(Math.min(a.length, b.length)); for (let i = 0; i < out.length; i += 1) out[i] = a[i] ^ b[i]; return out; }
+// All three F13 hash branches are computed by the Rust/WASM backend in
+// production. Keep the vendor JS as a byte-for-byte test oracle.
+let rustHashF13 = null;
+function setRustHashF13Backend(backend) {
+    if (typeof backend !== 'function') throw new TypeError('Medusa F13 backend must be callable');
+    rustHashF13 = backend;
+}
 function hashF13(querySm3, bodyMd5, tsBytes, khronos) {
+    if (rustHashF13) return rustHashF13(Buffer.from(querySm3), Buffer.from(bodyMd5), Buffer.from(tsBytes), khronos);
     const iv = getIv(getIv(getIv(0x20230928, querySm3), bodyMd5), tsBytes); const low = iv & 15; const ivV0 = (low * 171) >> 9; const branch = low - ivV0 * 3;
     if (branch === 2) return branch2F13(iv, querySm3, bodyMd5, tsBytes, khronos);
     if (branch !== 0) return Buffer.concat([querySm3.subarray(0, 16), bodyMd5, le32(sumMd5(Buffer.concat([querySm3, bodyMd5]))) ]);
@@ -644,4 +652,4 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
         });
 }
 
-module.exports = { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend };
+module.exports = { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
