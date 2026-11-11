@@ -5,7 +5,7 @@ export function safeName(input, fallback = 'video') {
   return name || fallback;
 }
 export function normalizeWorkerOrigin(input) {
-  const text = String(input || '').trim().replace(/\\/+$/, '');
+  const text = String(input || '').trim().replace(new RegExp('/+$'), '');
   if (!text) return '';
   let url;
   try { url = new URL(text); } catch { throw new Error('請輸入有效的 Cloudflare Worker HTTPS 網址'); }
