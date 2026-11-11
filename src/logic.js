@@ -4,8 +4,25 @@ export function safeName(input, fallback = 'video') {
     .replace(/\s+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 90);
   return name || fallback;
 }
-export function mediaProxyUrl(url, profile = 'web') {
-  return '/api/media?url=' + encodeURIComponent(url) + '&profile=' + (profile === 'app' ? 'app' : 'web');
+export function normalizeWorkerOrigin(input) {
+  const text = String(input || '').trim().replace(/\\/+$/, '');
+  if (!text) return '';
+  let url;
+  try { url = new URL(text); } catch { throw new Error('請輸入有效的 Cloudflare Worker HTTPS 網址'); }
+  const local = ['localhost', '127.0.0.1'].includes(url.hostname);
+  if (!(url.protocol === 'https:' || (local && url.protocol === 'http:')) ||
+      url.username || url.password || (url.pathname && url.pathname !== '/') || url.search || url.hash) {
+    throw new Error('Worker API 必須是 HTTPS 網域根目錄（本機 localhost 可使用 HTTP）');
+  }
+  return url.origin;
+}
+export function apiUrl(path, workerOrigin = '') {
+  if (!path.startsWith('/api/')) throw new Error('不允許非 /api/ 的 Worker 路徑');
+  return normalizeWorkerOrigin(workerOrigin) + path;
+}
+export function mediaProxyUrl(url, profile = 'web', workerOrigin = '') {
+  return apiUrl('/api/media?url=' + encodeURIComponent(url) +
+    '&profile=' + (profile === 'app' ? 'app' : 'web'), workerOrigin);
 }
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return '未知';
