@@ -29,6 +29,7 @@ export function classifyError(error) {
     INCOMPLETE: '下載內容不完整，收到的位元組數與 Content-Length 不符',
     EMPTY_MEDIA: '媒體內容為空，請重新取得來源',
     SOURCE_UNAVAILABLE: '目前無法取得片源，請重試或確認官方是否提供本集',
+    ERR_NETWORK: '連線無法建立，請檢查網路或 Cloudflare Worker 與來源主機的連線',
     CODEC_UNAVAILABLE: '所選編碼沒有可用片源，請改選不限編碼'
   };
   return { code, message: String(error?.message || descriptions[code] || '下載失敗').slice(0, 300) };
