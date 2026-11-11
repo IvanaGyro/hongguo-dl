@@ -218,31 +218,80 @@ async function relayMedia(request, raw) {
   }
   throw httpError(502, 'MEDIA_REDIRECT_LOOP', '媒體跳轉次數過多');
 }
+// CORS is only for the public GitHub Pages frontend and explicitly configured sites.
+// Origin restrictions are not authentication: use Cloudflare rate limiting for abuse protection.
+export function corsOrigin(origin, requestUrl, env = {}) {
+  if (!origin) return null;
+  const siteOrigin = new URL(requestUrl).origin;
+  if (origin === siteOrigin || origin === 'https://ivanagyro.github.io') return origin;
+  const extras = String(env.FRONTEND_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (extras.includes(origin)) return origin;
+  const host = new URL(requestUrl).hostname;
+  if (['localhost', '127.0.0.1'].includes(host) &&
+      /^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/.test(origin)) return origin;
+  return null;
+}
+function withCors(response, origin) {
+  if (!origin) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified');
+  headers.append('Vary', 'Origin');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    // When hosted on GitHub Pages, this Worker handles API routes only.
+    if (!url.pathname.startsWith('/api/'))
+      return asJson({ error: { code: 'NOT_FOUND', message: '此 Worker 僅提供 /api/*' } }, 404);
+
+    const origin = request.headers.get('Origin');
+    const allowed = corsOrigin(origin, request.url, env);
+    if (origin && !allowed)
+      return asJson({ error: { code: 'CROSS_ORIGIN', message: '不接受此來源的請求' } }, 403);
+
+    // GitHub Pages and Worker are separate origins, so browser preflight must succeed.
+    if (request.method === 'OPTIONS') {
+      const requestedMethod = request.headers.get('Access-Control-Request-Method') || 'GET';
+      const requestedHeaders = request.headers.get('Access-Control-Request-Headers') || '';
+      if (!['GET', 'HEAD'].includes(requestedMethod) ||
+          requestedHeaders.split(',').some(x => x.trim() && !['accept', 'range'].includes(x.trim().toLowerCase())))
+        return withCors(asJson({ error: { code: 'CORS_PREFLIGHT', message: '不支援的預檢方法或標頭' } }, 403), allowed);
+      const headers = new Headers({
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Accept, Range',
+        'Access-Control-Max-Age': '86400'
+      });
+      if (allowed) {
+        headers.set('Access-Control-Allow-Origin', allowed);
+        headers.set('Vary', 'Origin');
+      }
+      return new Response(null, { status: 204, headers });
+    }
+
     try {
-      const origin = request.headers.get('Origin');
-      if (origin && origin !== url.origin) throw httpError(403, 'CROSS_ORIGIN', '不接受跨來源請求');
-      if (request.method === 'OPTIONS') return new Response(null, { status: 405 });
-      if (url.pathname === '/api/health') return asJson({ ok: true, runtime: 'cloudflare-worker' });
-      if (request.method !== 'GET' && request.method !== 'HEAD') throw httpError(405, 'METHOD_NOT_ALLOWED', '不支援的 HTTP 方法');
+      if (url.pathname === '/api/health') return withCors(asJson({ ok: true, runtime: 'cloudflare-worker' }), allowed);
+      if (request.method !== 'GET' && request.method !== 'HEAD')
+        throw httpError(405, 'METHOD_NOT_ALLOWED', '不支援的 HTTP 方法');
+      let response;
       if (url.pathname === '/api/series') {
         const parsed = parseInput(url.searchParams.get('input') || '');
-        if (parsed.kind === 'media') return asJson({ kind: 'direct', title: '直接媒體網址',
+        if (parsed.kind === 'media') response = asJson({ kind: 'direct', title: '直接媒體網址',
           total: 1, episodes: [{ vid: 'direct', index: 1, url: parsed.url }] });
-        return asJson(await loadSeries(parsed.seriesId));
-      }
-      if (url.pathname === '/api/source') return asJson(await loadSource(url.searchParams.get('sid') || '',
-        url.searchParams.get('vid') || '', url.searchParams.get('codec') || 'auto',
-        url.searchParams.get('quality') || 'auto'));
-      if (url.pathname === '/api/media') return await relayMedia(request);
-      throw httpError(404, 'NOT_FOUND', '不存在的 API');
+        else response = asJson(await loadSeries(parsed.seriesId));
+      } else if (url.pathname === '/api/source') {
+        response = asJson(await loadSource(url.searchParams.get('sid') || '',
+          url.searchParams.get('vid') || '', url.searchParams.get('codec') || 'auto',
+          url.searchParams.get('quality') || 'auto'));
+      } else if (url.pathname === '/api/media') {
+        response = await relayMedia(request);
+      } else throw httpError(404, 'NOT_FOUND', '不存在的 API');
+      return withCors(response, allowed);
     } catch (error) {
-      return asJson({ error: { code: String(error.code || 'UNEXPECTED'),
+      return withCors(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
         message: String(error.message || '未知錯誤').slice(0, 300) } },
-        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502);
+        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), allowed);
     }
   }
 };
