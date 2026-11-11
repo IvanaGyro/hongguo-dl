@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, feat/cloudflare-browser-downloader]
+    branches: [main, feat/cloudflare-browser-downloader, feat/rust-wasm-crypto]
   pull_request:
 jobs:
   test-and-build:
