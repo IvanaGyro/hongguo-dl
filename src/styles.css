@@ -60,3 +60,8 @@ h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.01em; }
 footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
 @media (max-width: 850px) { .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } .top-hint { display: none; } }
 @media (max-width: 550px) { .settings { grid-template-columns: 1fr; } .input-row { flex-direction: column; } .section-title { flex-direction: column; } .job-head { flex-direction: column; } .episode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.api-settings { margin-top: 1.2rem; border-top: 1px solid #34425b; padding-top: 1rem; }
+.api-settings summary { cursor: pointer; color: #a9c7ff; font-weight: 600; }
+.api-settings form { padding: 1rem 0 .25rem; }
+.api-settings label { display: block; margin-bottom: .6rem; font-size: .88rem; }
