@@ -1,6 +1,12 @@
 import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
+import { MediaCache, episodeCacheKey } from './media-cache.js';
+import { recentSeries, rememberSeries, forgetSeries, watchRecords, playbackKey } from './library.js';
+import { createPlayer } from './player.js';
+import { runBulk } from './bulk.js';
+import { triggerArchiveDownload } from './archive-download.js';
+import { recordFailure } from './retry.js';
 
 const $ = id => document.getElementById(id);
 const STORE = 'hongguo-dl-queue-v1';
@@ -50,6 +56,11 @@ let jobs = restoreJobs();
 const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
+let currentMode = 'download';
+let player = null;
+let bulkController = null;
+const mediaCache = new MediaCache();
+const retryTimers = new Map();
 
 function restoreJobs() {
   try {
@@ -66,9 +77,10 @@ function saveJobs() {
   lastPersisted = Date.now();
   try {
     localStorage.setItem(STORE, JSON.stringify(jobs.map(({ id, seriesId, vid, index, title,
-      quality, codec, mode, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec }) => ({
+      quality, codec, mode, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
+      lastErrorKey, errorStreak, failureAttempts }) => ({
       id, seriesId, vid, index, title, quality, codec, mode, status, bytes, totalBytes, error, errorCode,
-      attempts, sourceCodec
+      attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts
     }))));
   } catch { /* Browser storage may be disabled. */ }
 }
@@ -89,7 +101,7 @@ function renderQueue() {
   const counts = { completed: 0, failed: 0, downloading: 0, processing: 0, queued: 0 };
   for (const job of jobs) {
     if (job.status in counts) counts[job.status]++;
-    else if (job.status === 'resolving') counts.downloading++;
+    else if (job.status === 'resolving' || job.status === 'retrying') counts.downloading++;
   }
   $('queue-summary').textContent = jobs.length ?
     jobs.length + ' 項 · ' + (counts.downloading + counts.processing) + ' 進行中 · ' +
@@ -102,7 +114,7 @@ function renderQueue() {
     return;
   }
   $('queue').innerHTML = jobs.map(job => {
-    const busy = ['resolving', 'downloading', 'processing'].includes(job.status);
+    const busy = ['resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const progress = Number.isFinite(job.totalBytes) && job.totalBytes > 0
       ? Math.min(100, Math.round(100 * (job.bytes || 0) / job.totalBytes)) : null;
     const detail = job.segment
@@ -127,20 +139,78 @@ function renderQueue() {
       '</div></div><div class="progress-track"><div class="progress-bar" style="width:' +
       (job.status === 'completed' ? 100 : progress || 0) + '%"></div></div><div class="job-meta">' +
       escapeHtml(job.status === 'resolving' ? '正在解析播放來源…' :
-        job.status === 'queued' ? '等待可用下載通道' : bytesText) + '</div>' + message + '</div>';
+        job.status === 'queued' ? '等待可用下載通道' :
+        job.status === 'retrying' ? '自動重試中 · 相同錯誤 ' + (job.errorStreak || 1) + '/3' : bytesText) + '</div>' + message + '</div>';
   }).join('');
 }
 function renderEpisodes() {
+  if (!series) return;
+  const watch = watchRecords(localStorage);
+  const current = player?.current()?.vid;
   $('episodes').innerHTML = series.episodes.map(ep => {
+    const record = watch[playbackKey(series.seriesId, ep.vid)];
+    const watched = !!record?.completed;
+    const partial = !watched && record?.seconds > 1;
+    if (currentMode === 'play') {
+      const mark = watched ? '已看完' : partial ? '續看 ' + Math.floor(record.seconds / 60) + ' 分' : '';
+      return '<button type="button" class="episode play-episode ' +
+        (watched ? 'watched ' : partial ? 'in-progress ' : '') +
+        (ep.vid === current ? 'current' : '') + '" data-play-vid="' +
+        escapeHtml(ep.vid) + '"><span>' +
+        (series.kind === 'direct' ? '媒體直連' : '第 ' + ep.index + ' 集') +
+        '</span>' + (mark ? '<small>' + escapeHtml(mark) + '</small>' : '') +
+        (ep.available === false ? '<small>可能受限制</small>' : '') + '</button>';
+    }
     const checked = selected.has(ep.vid);
     return '<label class="episode ' + (checked ? 'selected' : '') + '"><input type="checkbox" data-vid="' +
       escapeHtml(ep.vid) + '"' + (checked ? ' checked' : '') + '><span>' +
       (series.kind === 'direct' ? '媒體直連' : '第 ' + ep.index + ' 集') + '</span>' +
       (ep.available === false ? '<small>官網可能限制</small>' : '') + '</label>';
   }).join('');
-  $('series-count').textContent = series.total + ' 集 · 已選擇 ' + selected.size + ' 集' +
-    (series.accessible != null ? ' · 官網標示可用 ' + series.accessible + ' 集' : '');
+  const complete = series.episodes.filter(ep =>
+    watch[playbackKey(series.seriesId, ep.vid)]?.completed).length;
+  $('series-count').textContent = currentMode === 'play'
+    ? series.total + ' 集 · 已看完 ' + complete + ' 集'
+    : series.total + ' 集 · 已選擇 ' + selected.size + ' 集' +
+      (series.accessible != null ? ' · 官網標示可用 ' + series.accessible + ' 集' : '');
   $('add-queue').disabled = !selected.size;
+  $('bulk-zip').disabled = !selected.size || !!bulkController;
+  $('bulk-concat').disabled = selected.size < 2 || !!bulkController;
+  $('select-all').hidden = currentMode === 'play';
+  $('select-none').hidden = currentMode === 'play';
+}
+function renderRecentSeries() {
+  const items = recentSeries(localStorage);
+  $('recent-series').innerHTML = items.length
+    ? '<h3>最近查詢的影集（儲存在此瀏覽器）</h3><div class="recent-list">' +
+      items.map(item => '<button type="button" data-recent-id="' +
+        escapeHtml(item.seriesId) + '">' + escapeHtml(item.title) + ' · ' +
+        item.total + ' 集</button>').join('') + '</div>'
+    : '';
+}
+function showSeries(result, fromHistory = false) {
+  player?.stop();
+  series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
+  selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
+  $('series-title').textContent = series.title || '未命名短劇';
+  $('series').hidden = false;
+  if (series.kind === 'series') rememberSeries(localStorage, series);
+  renderRecentSeries();
+  renderEpisodes();
+  setMode(currentMode);
+}
+function setMode(mode) {
+  currentMode = mode === 'play' ? 'play' : 'download';
+  $('mode-download').classList.toggle('selected', currentMode === 'download');
+  $('mode-play').classList.toggle('selected', currentMode === 'play');
+  $('mode-download').setAttribute('aria-pressed', String(currentMode === 'download'));
+  $('mode-play').setAttribute('aria-pressed', String(currentMode === 'play'));
+  $('queue-panel').hidden = currentMode === 'play';
+  $('download-controls').hidden = currentMode === 'play';
+  $('player-panel').hidden = currentMode !== 'play' || !series;
+  if (series) renderEpisodes();
+  if (currentMode === 'play' && series) player?.activate();
+  else player?.pause();
 }
 async function apiJson(route) {
   const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' } });
@@ -150,6 +220,11 @@ async function apiJson(route) {
     data?.error?.message || '請求失敗（HTTP ' + response.status + '）');
   return data;
 }
+async function getSource(seriesId, vid, quality = 'auto', codec = 'auto') {
+  return apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
+    '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
+    '&codec=' + encodeURIComponent(codec));
+}
 async function lookup(event) {
   event.preventDefault();
   const input = $('input-url').value.trim();
@@ -158,12 +233,7 @@ async function lookup(event) {
   $('lookup-error').hidden = true;
   try {
     const response = await apiJson('/api/series?input=' + encodeURIComponent(input));
-    series = response;
-    series.episodes = response.episodes.map(x => ({ ...x, url: x.url || null }));
-    selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
-    $('series-title').textContent = response.title || '未命名短劇';
-    $('series').hidden = false;
-    renderEpisodes();
+    showSeries(response);
   } catch (error) {
     $('lookup-error').textContent = classifyError(error).message;
     $('lookup-error').hidden = false;
@@ -193,7 +263,8 @@ function queueSelected() {
       series.title + ' · 第 ' + String(ep.index).padStart(3, '0') + ' 集';
     jobs.unshift({ id: crypto.randomUUID(), seriesId: series.seriesId || null, vid: ep.vid,
       directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
-      bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null });
+      bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null,
+      lastErrorKey: '', errorStreak: 0, failureAttempts: 0 });
   }
   saveJobs(); schedulePaint(); pump();
 }
@@ -204,13 +275,18 @@ function queueRetry(job) {
       error: '重新載入後不會保留媒體直連網址；請重新輸入網址加入新工作' });
     return;
   }
+  const timer = retryTimers.get(job.id);
+  if (timer) { clearTimeout(timer); retryTimers.delete(job.id); }
   update(job, { status: 'queued', bytes: 0, totalBytes: 0, progress: null, segment: null,
-    error: '', errorCode: '' });
+    error: '', errorCode: '', lastErrorKey: '', errorStreak: 0, failureAttempts: 0 });
   pump();
 }
 function cancel(job) {
+  const timer = retryTimers.get(job.id);
+  if (timer) { clearTimeout(timer); retryTimers.delete(job.id); }
   if (active.has(job.id)) active.get(job.id).abort();
-  else if (job.status === 'queued') update(job, { status: 'canceled', error: '使用者取消', errorCode: 'CANCELED' });
+  else if (['queued', 'retrying'].includes(job.status))
+    update(job, { status: 'canceled', error: '使用者取消', errorCode: 'CANCELED' });
 }
 function pump() {
   const concurrency = Number($('concurrency').value) || 2;
@@ -237,7 +313,8 @@ function outputFileName(job, source, processed) {
   return title + '_' + job.id.slice(0, 8) + extension;
 }
 function triggerSave(bytes, name) {
-  const blob = new Blob(Array.isArray(bytes) ? bytes : [bytes], { type: 'application/octet-stream' });
+  const blob = bytes instanceof Blob ? bytes :
+    new Blob(Array.isArray(bytes) ? bytes : [bytes], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = name;
@@ -317,7 +394,11 @@ async function streamToDestination(job, source, signal) {
     if (!bytes) throw errorWith('EMPTY_MEDIA', '影片回傳零位元組');
     if (length && length !== bytes) throw errorWith('INCOMPLETE', 'Content-Length：預期 ' + length + '，實收 ' + bytes);
     if (writer) await writer.close();
-    else triggerSave(chunks, name);
+    else {
+      const blob = new Blob(chunks, { type: 'video/mp4' });
+      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec), blob);
+      triggerSave(blob, name);
+    }
     complete = true;
   } finally {
     if (writer && !complete) await writer.abort().catch(() => {});
@@ -326,10 +407,16 @@ async function streamToDestination(job, source, signal) {
 async function runJob(job, signal) {
   update(job, { status: 'resolving', attempts: job.attempts + 1, bytes: 0, totalBytes: 0, error: '', errorCode: '' });
   try {
+    const cached = mediaCache.get(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec));
+    if (cached) {
+      update(job, { status: 'downloading', bytes: cached.size, totalBytes: cached.size });
+      await saveProcessed(new Uint8Array(await cached.arrayBuffer()), safeName(job.title) + '_cached.mp4');
+      update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
+      return;
+    }
     const data = job.vid === 'direct'
       ? { variants: [{ url: job.directUrl, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await apiJson('/api/source?sid=' + encodeURIComponent(job.seriesId) +
-          '&vid=' + encodeURIComponent(job.vid) + '&quality=' + job.quality + '&codec=' + job.codec);
+      : await getSource(job.seriesId, job.vid, job.quality, job.codec);
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
     const source = data.variants?.[0];
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
@@ -349,6 +436,8 @@ async function runJob(job, signal) {
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
+      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
+        new Blob([out], { type: 'video/mp4' }));
       await saveProcessed(out, outputFileName(job, source, true));
     } else {
       const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
@@ -359,14 +448,33 @@ async function runJob(job, signal) {
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
+      mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
+        new Blob([out], { type: 'video/mp4' }));
       await saveProcessed(out, outputFileName(job, source, true));
     }
     update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
   } catch (error) {
     const result = classifyError(error);
-    update(job, { status: result.code === 'CANCELED' || signal.aborted ? 'canceled' : 'failed',
-      errorCode: signal.aborted ? 'CANCELED' : result.code,
-      error: signal.aborted ? '使用者已取消' : result.message });
+    if (result.code === 'CANCELED' || signal.aborted) {
+      update(job, { status: 'canceled', errorCode: 'CANCELED', error: '使用者已取消' });
+      return;
+    }
+    const failure = recordFailure({
+      key: job.lastErrorKey, streak: job.errorStreak || 0, attempts: job.failureAttempts || 0
+    }, result, 3);
+    update(job, { status: failure.retry ? 'retrying' : 'failed',
+      errorCode: result.code, error: result.message,
+      lastErrorKey: failure.key, errorStreak: failure.streak, failureAttempts: failure.attempts });
+    if (failure.retry) {
+      const timer = setTimeout(() => {
+        retryTimers.delete(job.id);
+        if (job.status === 'retrying') {
+          update(job, { status: 'queued' });
+          pump();
+        }
+      }, failure.delay);
+      retryTimers.set(job.id, timer);
+    }
   }
 }
 
