@@ -28,10 +28,10 @@
             <label for="worker-origin">Worker 網址（GitHub Pages 部署時必填）</label>
             <div class="input-row">
               <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
-              <button type="submit">儲存 API 網址</button>
+              <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
             </div>
             <p id="worker-status" class="help"></p>
-            <p class="help">設定僅儲存在此瀏覽器。網站會將分集查詢與影片下載請求傳送到指定的 Cloudflare Worker。</p>
+            <p class="help">預設網址由 GitHub Pages 建置時設定的 PROXY 提供；自行修改後只儲存在此瀏覽器。網站會將分集查詢與影片下載請求傳送到指定的 Cloudflare Worker。</p>
             <div id="api-settings-error" class="alert" role="alert" hidden></div>
           </form>
         </details>
