@@ -98,6 +98,8 @@ export function parseInput(input) {
     return { kind: 'media', url: u.href };
   }
   safeUrl(text, API_HOSTS);
+  if (u.hostname === 'hongguoduanju.com' && u.pathname.startsWith('/video/public/'))
+    return { kind: 'media', url: u.href };
   const id = u.searchParams.get('video_series_id') || u.searchParams.get('series_id') ||
     /^\/player\/(\d{1,30})(?:\/|$)/.exec(u.pathname)?.[1];
   if (!ID.test(id || '')) throw httpError(400, 'ID_NOT_FOUND', '網址中找不到劇集 ID；請貼官方劇集或播放頁連結');
