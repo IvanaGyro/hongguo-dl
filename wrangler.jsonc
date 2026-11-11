@@ -2,6 +2,6 @@
   "name": "hongguo-dl",
   "main": "./worker/worker.js",
   "compatibility_date": "2026-11-12",
-  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true }
 }
