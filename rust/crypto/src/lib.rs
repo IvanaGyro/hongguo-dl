@@ -190,6 +190,52 @@ pub unsafe extern "C" fn rust_ladon_transform(
     0
 }
 
+
+// Gorgon legacy signing mixer. The peculiar state update (s[i] = s[j],
+// without swapping s[j]) is protocol-defined and must not be "fixed"
+// to conventional RC4. Includes the dependent reverse-bit finishing pass.
+pub fn gorgon_transform(input: &[u8; 20], random: u16) -> [u8; 20] {
+    let key = [
+        0x4a, 0x40, 0x16, (random >> 8) as u8,
+        0x47, 0x6c, 0x01, random as u8,
+    ];
+    let mut state = std::array::from_fn::<_, 256, _>(|i| i as u8);
+    let mut j = 0u8;
+    for i in 0..256 {
+        j = j.wrapping_add(state[i]).wrapping_add(key[i % 8]);
+        state[i] = state[j as usize];
+    }
+    let mut output = *input;
+    j = 0;
+    for (index, value) in output.iter_mut().enumerate() {
+        let i = index + 1;
+        let x = state[i];
+        j = j.wrapping_add(x);
+        let y = state[j as usize];
+        state[i] = y;
+        *value ^= state[y.wrapping_add(y) as usize];
+    }
+    for i in 0..20 {
+        let value = output[i].rotate_left(4);
+        let next = if i + 1 < 20 { output[i + 1] } else { output[0] };
+        output[i] = !((next ^ value).reverse_bits() ^ 20);
+    }
+    output
+}
+
+/// # Safety
+/// Input and output point to separate valid 20-byte buffers in wasm memory.
+#[no_mangle]
+pub unsafe extern "C" fn rust_gorgon_transform(
+    input_ptr: *const u8, random: u32, output_ptr: *mut u8,
+) -> u32 {
+    if input_ptr.is_null() || output_ptr.is_null() || random > 65535 { return 1; }
+    let input: &[u8; 20] = &*(input_ptr as *const [u8; 20]);
+    let out = gorgon_transform(input, random as u16);
+    std::ptr::copy_nonoverlapping(out.as_ptr(), output_ptr, 20);
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +279,18 @@ mod tests {
         ];
         assert_eq!(got, want);
         assert!(ladon_transform(&digest, b"bad-length").is_none());
+    }
+
+    #[test]
+    fn gorgon_legacy_rc4_matches_fixed_vectors() {
+        let bytes = std::array::from_fn::<_, 20, _>(|i| i as u8);
+        let hex = |value: [u8; 20]| value.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(hex(gorgon_transform(&bytes, 0)),
+            "7c6ea4f8fd1b19a64fb5f17cf2c09ce864510400");
+        assert_eq!(hex(gorgon_transform(&bytes, 0x1234)),
+            "aa1bde6f7b948ad7823d322065098be5ba8a2733");
+        assert_eq!(hex(gorgon_transform(&bytes, 0xffff)),
+            "cb95f3729edc67f5cf7a645210f698674fd40085");
     }
 
     #[test]
