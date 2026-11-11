@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { safeName, formatBytes, selectHlsVariant, assertHlsManifest,
-  classifyError, isHlsUrl, mediaProxyUrl, apiUrl, normalizeWorkerOrigin } from '../src/logic.js';
+  classifyError, isHlsUrl, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin } from '../src/logic.js';
 
 test('filename sanitization preserves Traditional Chinese and blocks unsafe characters', () => {
   assert.equal(safeName('台灣<第1集>:?*'), '台灣_第1集____');
@@ -37,4 +37,14 @@ test('separate Worker origin uses HTTPS and preserves API path', () => {
   assert.throws(() => apiUrl('/ffmpeg/core.js', 'https://test.example'));
   assert.throws(() => normalizeWorkerOrigin('http://attacker.example'));
   assert.throws(() => normalizeWorkerOrigin('https://test.example/malicious-path'));
+});
+
+test('PROXY-provided default is used unless a valid browser override exists', () => {
+  const built = 'https://hongguo-dl.example.workers.dev/';
+  assert.equal(chooseWorkerOrigin('', built), 'https://hongguo-dl.example.workers.dev');
+  assert.equal(chooseWorkerOrigin(null, built), 'https://hongguo-dl.example.workers.dev');
+  assert.equal(chooseWorkerOrigin('https://custom.example/', built), 'https://custom.example');
+  assert.equal(chooseWorkerOrigin('not a URL', built), 'https://hongguo-dl.example.workers.dev');
+  assert.equal(chooseWorkerOrigin('http://unsafe.example', built), 'https://hongguo-dl.example.workers.dev');
+  assert.equal(chooseWorkerOrigin('', ''), '');
 });
