@@ -1,5 +1,9 @@
-// SM3 (GB/T 32905), pure JavaScript: Electron's bundled crypto may omit SM3.
-module.exports = function sm3(input) {
+// SM3 compatibility shim. Production workerd uses Rust/WASM; the original
+// JS implementation remains a native-test fallback until the entire
+// signing pipeline has been migrated to Rust.
+let rustBackend = null;
+function sm3(input) {
+  if (rustBackend) return rustBackend(input);
   const source = Buffer.isBuffer(input) ? input : Buffer.from(input);
   const data = Buffer.alloc(Math.ceil((source.length + 9) / 64) * 64);
   source.copy(data);
@@ -33,4 +37,9 @@ module.exports = function sm3(input) {
   const digest = Buffer.alloc(32);
   for (let i = 0; i < 8; i++) digest.writeUInt32BE(state[i], i * 4);
   return digest;
+}
+sm3.setRustBackend = function setRustBackend(fn) {
+  if (typeof fn !== 'function') throw new TypeError('Rust SM3 backend must be callable');
+  rustBackend = fn;
 };
+module.exports = sm3;
