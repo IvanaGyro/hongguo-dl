@@ -468,6 +468,53 @@ pub unsafe extern "C" fn rust_medusa_aes_v3(
     0
 }
 
+
+// Medusa selector/init checksums. Integer shifts and overflow match
+// JavaScript's unsigned 32-bit bitwise operations exactly.
+pub fn medusa_get_iv(mut iv: u32, data: &[u8]) -> u32 {
+    for (i, &byte) in data.iter().enumerate() {
+        if i & 1 == 0 {
+            iv = (iv >> 4) ^ iv ^ (iv << 6) ^ byte as u32;
+        } else {
+            iv = !((iv >> 7) ^ iv ^ (byte as u32 | (iv << 12)));
+        }
+    }
+    iv
+}
+
+pub fn medusa_sum_md5(data: &[u8]) -> Option<u32> {
+    if data.len() < 12 { return None; }
+    let mut check = 0x20220420u32;
+    for (i, &byte) in data.iter().take(12).enumerate() {
+        let temp = if i & 1 == 0 { (check >> 3) ^ check }
+                   else { (check >> 5) ^ check };
+        check = if i & 1 == 0 { (byte as u32) ^ (check << 7) }
+                else { (byte as u32) | (check << 11) };
+        if i & 1 != 0 { check = !check; }
+        check ^= temp;
+    }
+    Some((check | 4) ^ 0x01000000)
+}
+
+/// # Safety
+/// data_ptr must be valid for len bytes, even when len is zero (JS always
+/// allocates a non-null buffer). Returns the unsigned 32-bit selector.
+#[no_mangle]
+pub unsafe extern "C" fn rust_medusa_get_iv(
+    iv: u32, data_ptr: *const u8, len: usize,
+) -> u32 {
+    if data_ptr.is_null() || len > 16 * 1024 * 1024 { return 0; }
+    medusa_get_iv(iv, std::slice::from_raw_parts(data_ptr, len))
+}
+
+/// # Safety
+/// data_ptr must be valid for at least 12 bytes of WASM linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn rust_medusa_sum_md5(data_ptr: *const u8, len: usize) -> u32 {
+    if data_ptr.is_null() || !(12..=16 * 1024 * 1024).contains(&len) { return 0; }
+    medusa_sum_md5(std::slice::from_raw_parts(data_ptr, len)).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +608,18 @@ mod tests {
             assert_eq!(output, medusa_aes_v3_encrypt(&data, &box_values, &key, &iv, khronos).unwrap());
         }
         assert!(medusa_aes_v3_encrypt(&data[..247], &box_values, &key, &iv, 1).is_none());
+    }
+
+    #[test]
+    fn medusa_iv_and_sum_md5_match_vendor_vectors() {
+        let data: Vec<u8> = (0..32).map(|i| ((i * 29 + 1) & 255) as u8).collect();
+        assert_eq!(medusa_get_iv(0x20230928, &data[..0]), 0x20230928);
+        assert_eq!(medusa_get_iv(0x20230928, &data[..4]), 0x3853833e);
+        assert_eq!(medusa_get_iv(0x20230928, &data[..12]), 0xdec0b87f);
+        assert_eq!(medusa_get_iv(0x20230928, &data[..16]), 0xcaad61ff);
+        assert_eq!(medusa_get_iv(0x20230928, &data[..32]), 0xd7ccee29);
+        assert_eq!(medusa_sum_md5(&data[..32]), Some(0x99a979e5));
+        assert!(medusa_sum_md5(&data[..11]).is_none());
     }
 
     #[test]
