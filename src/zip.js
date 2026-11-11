@@ -62,7 +62,7 @@ function trailer(count, directorySize, directoryOffset) {
   h.u32(88, 0xffffffff); h.u32(92, 0xffffffff);
   return h.data;
 }
-export async function* zipChunks(entries, { signal, onEntry } = {}) {
+export async function* zipChunks(entries, { signal, onEntry, onComplete } = {}) {
   const directory = [];
   let written = 0n;
   for await (const entry of entries) {
@@ -101,6 +101,7 @@ export async function* zipChunks(entries, { signal, onEntry } = {}) {
     written += BigInt(record.length);
   }
   yield trailer(BigInt(directory.length), written - directoryOffset, directoryOffset);
+  onComplete?.();
 }
 export function zipReadableStream(entries, options) {
   const iterator = zipChunks(entries, options)[Symbol.asyncIterator]();
@@ -110,8 +111,11 @@ export function zipReadableStream(entries, options) {
         const { done, value } = await iterator.next();
         if (done) controller.close();
         else controller.enqueue(value);
-      } catch (error) { controller.error(error); }
+      } catch (error) { options?.onError?.(error); controller.error(error); }
     },
-    async cancel() { await iterator.return?.(); }
+    async cancel() {
+      options?.onError?.(new Error('ZIP 串流被取消'));
+      await iterator.return?.();
+    }
   });
 }
