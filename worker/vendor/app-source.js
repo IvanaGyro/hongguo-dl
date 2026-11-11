@@ -115,11 +115,28 @@ function rc4Gorgon(data, key) {
     let i = 0; j = 0;
     return Buffer.from(data.map((value) => { i += 1; const x = s[i]; j += x; const y = s[j & 255]; s[i] = y; return value ^ s[(y + y) & 255]; }));
 }
+// Production workerd installs the Rust/WASM port. The JS reference stays for
+// independent protocol-parity regression tests.
+let rustGorgon = null;
+function setRustGorgonBackend(backend) {
+    if (typeof backend !== 'function') throw new TypeError('Gorgon Rust backend must be callable');
+    rustGorgon = backend;
+}
 function xGorgon(query, body, timestamp, random) {
     const sdk = Buffer.alloc(4); sdk.writeUInt32LE(67503104);
     const input = Buffer.concat([crypto.createHash('md5').update(query).digest().subarray(0, 4), body ? crypto.createHash('md5').update(body).digest().subarray(0, 4) : Buffer.alloc(4), Buffer.alloc(4), sdk, be32(timestamp)]);
-    const key = [0x4a, 0x40, 0x16, (random >> 8) & 255, 0x47, 0x6c, 0x01, random & 255]; const out = rc4Gorgon([...input], key);
-    for (let i = 0; i < out.length; i += 1) { let value = out[i]; value = ((value >> 4) | (value << 4)) & 255; const next = i + 1 < out.length ? out[i + 1] : out[0]; out[i] = (~(reverseBits((next ^ value) & 255) ^ 20)) & 255; }
+    let out;
+    if (rustGorgon) {
+        out = rustGorgon(input, random);
+    } else {
+        const key = [0x4a, 0x40, 0x16, (random >> 8) & 255, 0x47, 0x6c, 0x01, random & 255];
+        out = rc4Gorgon([...input], key);
+        for (let i = 0; i < out.length; i += 1) {
+            let value = out[i]; value = ((value >> 4) | (value << 4)) & 255;
+            const next = i + 1 < out.length ? out[i + 1] : out[0];
+            out[i] = (~(reverseBits((next ^ value) & 255) ^ 20)) & 255;
+        }
+    }
     return Buffer.concat([Buffer.from('8404', 'hex'), Buffer.from([random & 255, (random >> 8) & 255, 0x40, 0x01]), out]).toString('hex');
 }
 function deviceProto(deviceId) { return proto([[1,1,'sint'],[2,2,'sint'],[3,'8662'],[4,deviceId],[5,getProcessIdentity().nonce],[6,'!noperm!'],[7,-888888,'sint'],[8,-888888,'sint'],[9,3,'sint'],[10,-888888,'sint'],[11,'!notset!'],[12,'Asia/Shanghai,8'],[13,'zh_CN'],[14,4,'sint'],[16,0,'float'],[17,0,'float'],[18,0,'float'],[19,0,'float'],[20,0,'float'],[21,0,'float'],[22,'16'],[23,41,'sint'],[24,36,'sint'],[25,getProcessIdentity().started,'sint'],[26,getProcessIdentity().started,'sint'],[27,getProcessIdentity().started,'sint'],[28,getProcessIdentity().started,'sint'],[29,-1,'sint'],[30,'25053RT47C'],[31,'Redmi'],[32,'25053RT47C'],[33,'25053RT47C'],[34,'Xiaomi'],[35,'Redmi'],[36,'Redmi'],[38,31,'sint']]); }
@@ -597,4 +614,4 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
         });
 }
 
-module.exports = { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios };
+module.exports = { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend };
