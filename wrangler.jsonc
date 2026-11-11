@@ -1,0 +1,7 @@
+{
+  "name": "hongguo-dl",
+  "main": "./worker/worker.js",
+  "compatibility_date": "2026-11-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,67 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif; color: #eaf0ff; background: #101727; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: radial-gradient(ellipse 70% 40% at 50% -12%, #233659, transparent), #101727; }
+button, input, select { font: inherit; }
+button { padding: .58rem .9rem; background: #222f46; border: 1px solid #3b4b67; color: #eff3ff; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: #82aaff; background: #2b3e5c; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #88b4ff; outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { color: #08152a; background: #93b9ff; border-color: #93b9ff; font-weight: 700; }
+button.primary:hover:not(:disabled) { background: #c0d6ff; }
+button.quiet { background: transparent; }
+.topbar { height: 68px; border-bottom: 1px solid #2c3952; padding: 0 clamp(1rem, 4vw, 3rem); display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: .7rem; font-size: 1.13rem; letter-spacing: -.02em; font-weight: 800; }
+.brand-mark { display: inline-flex; width: 32px; height: 32px; border-radius: 10px; align-items: center; justify-content: center; color: #101727; background: #9dbdf8; font-size: 1.3rem; }
+.top-hint, .subtle, .help, footer, .job-meta { color: #a1b0ca; }
+.top-hint { font-size: .86rem; }
+.layout { max-width: 1120px; margin: 0 auto; padding: 0 1.25rem 4rem; }
+.hero { padding: 3.8rem 0 2rem; }
+.eyebrow { font-size: .73rem; font-weight: 800; letter-spacing: .16em; color: #97b8f5; }
+h1 { margin: .7rem 0 .8rem; max-width: 750px; font-size: clamp(2rem, 4.5vw, 3.4rem); line-height: 1.17; letter-spacing: -.035em; }
+.hero p { margin: 0; max-width: 760px; line-height: 1.75; color: #bfcbde; }
+.panel { padding: clamp(1rem, 2.6vw, 1.8rem); margin: 1.3rem 0; background: #182236; border: 1px solid #34425b; border-radius: 17px; box-shadow: 0 14px 40px #0002; }
+label { font-weight: 650; }
+.lookup label { display: block; margin-bottom: .75rem; }
+.input-row { display: flex; gap: .65rem; }
+.input-row input { min-width: 0; flex: 1; padding: .8rem .9rem; border-radius: 10px; border: 1px solid #3c4e69; background: #10192c; color: #fff; }
+.input-row input::placeholder { color: #8291ad; }
+.alert { background: #4a2731; border: 1px solid #b66579; color: #ffd3da; padding: .85rem; margin-top: 1rem; border-radius: 9px; }
+.section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-top: 1.35rem; padding-bottom: 1.15rem; }
+h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.01em; }
+.section-title p { margin: .45rem 0 0; font-size: .88rem; }
+.actions, .toolbar { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }
+.episode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: .65rem; max-height: 310px; overflow-y: auto; padding: .25rem; }
+.episode { display: flex; align-items: center; gap: .5rem; padding: .75rem; border-radius: 10px; border: 1px solid #3a4b65; background: #142034; cursor: pointer; font-weight: 500; }
+.episode.selected { border-color: #8ab3fb; background: #233857; }
+.episode input { accent-color: #91b7ff; width: 17px; height: 17px; }
+.episode small { font-size: .65rem; color: #e8bd89; }
+.settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .9rem; border-top: 1px solid #36455e; padding-top: 1.3rem; margin-top: 1.2rem; }
+.settings label { display: flex; flex-direction: column; gap: .55rem; font-size: .88rem; }
+.settings select { min-width: 0; width: 100%; background: #111b2d; border: 1px solid #44536e; color: #eaf0ff; border-radius: 9px; padding: .65rem .55rem; }
+.toolbar { margin-top: 1.3rem; }
+.toolbar #folder-status { flex: 1; font-size: .88rem; }
+.help { font-size: .82rem; line-height: 1.7; margin: 1.1rem 0 0; }
+.job { padding: 1rem; border: 1px solid #3b4b65; border-radius: 11px; background: #141f32; margin-bottom: .7rem; }
+.job-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.job-head b { line-height: 1.5; overflow-wrap: anywhere; }
+.job-controls { display: flex; align-items: center; gap: .6rem; }
+.job-controls button { font-size: .8rem; padding: .35rem .7rem; }
+.status { font-size: .78rem; font-weight: 750; border: 1px solid #62718a; border-radius: 50px; padding: .25rem .6rem; white-space: nowrap; color: #d6dfed; }
+.s-downloading, .s-resolving, .s-processing { color: #a6c6ff; border-color: #618bd5; }
+.s-completed { color: #a5e7c0; border-color: #529a79; }
+.s-failed { color: #ffb6b5; border-color: #b26d6d; }
+.s-canceled { color: #bec6d4; }
+.job-meta { font-size: .82rem; margin-top: .34rem; }
+.progress-track { height: 5px; width: 100%; margin-top: 1rem; border-radius: 4px; background: #2d3b53; overflow: hidden; }
+.progress-bar { height: 100%; background: #93b9ff; transition: width .13s linear; }
+.s-completed + .progress-bar { background: #a5e7c0; }
+.job-error { margin-top: .7rem; font-size: .82rem; color: #ffc4c4; overflow-wrap: anywhere; }
+.empty { padding: 2.8rem 1rem; text-align: center; color: #899ab5; border: 1px dashed #40516e; border-radius: 12px; }
+footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
+@media (max-width: 850px) { .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } .top-hint { display: none; } }
+@media (max-width: 550px) { .settings { grid-template-columns: 1fr; } .input-row { flex-direction: column; } .section-title { flex-direction: column; } .job-head { flex-direction: column; } .episode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.api-settings { margin-top: 1.2rem; border-top: 1px solid #34425b; padding-top: 1rem; }
+.api-settings summary { cursor: pointer; color: #a9c7ff; font-weight: 600; }
+.api-settings form { padding: 1rem 0 .25rem; }
+.api-settings label { display: block; margin-bottom: .6rem; font-size: .88rem; }
