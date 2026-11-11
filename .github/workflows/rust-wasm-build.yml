@@ -1,0 +1,28 @@
+name: Build Rust SM3 WebAssembly
+on:
+  push:
+    branches: [feat/rust-wasm-crypto]
+    paths:
+      - 'rust/crypto/Cargo.toml'
+      - 'rust/crypto/src/**'
+      - '.github/workflows/rust-wasm-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-and-wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Rust unit tests
+        run: cargo test --manifest-path rust/crypto/Cargo.toml --locked
+      - name: Compile Rust to wasm32
+        run: cargo build --manifest-path rust/crypto/Cargo.toml --release --target wasm32-unknown-unknown
+      - name: Upload WebAssembly artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hongguo-rust-sm3
+          path: rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm
