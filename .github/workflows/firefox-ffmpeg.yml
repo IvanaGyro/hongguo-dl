@@ -34,6 +34,8 @@ jobs:
         run: bun run build
       - name: Create a tiny synthetic video fixture
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
           ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=32x32:r=1 -t 1 \
             -c:v mpeg4 -q:v 5 -movflags +faststart -y /tmp/ffmpeg-smoke.mp4
           test -s /tmp/ffmpeg-smoke.mp4
