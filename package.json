@@ -9,7 +9,7 @@
     "dev": "vite --host",
     "dev:worker": "wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/*.test.mjs worker/vendor/playback-signature.test.cjs",
     "check": "npm run test && npm run build"
   },
   "dependencies": {
