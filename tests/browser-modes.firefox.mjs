@@ -19,14 +19,20 @@ page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
 page.route(url => url.pathname.startsWith('/api/'), route => {
   const url = new URL(route.request().url());
-  if (url.pathname === '/api/series') return route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({
-      kind: 'series', seriesId: '42', title: '播放測試短劇', total: 2, accessible: 2,
-      episodes: [{ vid: '101', index: 1, available: true },
-        { vid: '102', index: 2, available: true }]
-    })
-  });
+  if (url.pathname === '/api/series') {
+    const many = url.searchParams.get('input') === '60';
+    const count = many ? 60 : 2;
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        kind: 'series', seriesId: many ? '60' : '42',
+        title: many ? '六十集測試' : '播放測試短劇', total: count, accessible: count,
+        episodes: Array.from({ length: count }, (_, i) => ({
+          vid: String((many ? 1000 : 101) + i), index: i + 1, available: true
+        }))
+      })
+    });
+  }
   if (url.pathname === '/api/source') {
     calls.push(url.searchParams.toString());
     return route.fulfill({
@@ -86,6 +92,24 @@ with zipfile.ZipFile(sys.argv[1]) as f:
  assert f.testzip() is None`, file, process.argv[2]], { encoding: 'utf8' });
   assert.equal(check.status, 0, check.stderr || check.error?.message);
   console.log('Firefox play/library/quality/autonext/ZIP64 single-download smoke PASSED; archive size:', statSync(file).size);
+  // Reproduce the Android Firefox use case: 60 episodes with exactly one
+  // download event, without loading 60 separate download prompts.
+  await page.locator('#input-url').fill('60');
+  await page.locator('#lookup-button').click();
+  await page.waitForFunction(() => document.querySelector('#series-title').textContent === '六十集測試');
+  const seriesDownload = page.waitForEvent('download', { timeout: 120000 });
+  await page.locator('#bulk-zip').click();
+  const downloaded = await seriesDownload;
+  const manyFile = await downloaded.path();
+  assert(manyFile && statSync(manyFile).size > sample.length * 60);
+  const inspect = spawnSync('python3', ['-c', `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as f:
+ assert len(f.namelist()) == 60, len(f.namelist())
+ assert f.namelist()[0].endswith('第001集.mp4')
+ assert f.namelist()[-1].endswith('第060集.mp4')
+ assert f.testzip() is None`, manyFile], { encoding: 'utf8' });
+  assert.equal(inspect.status, 0, inspect.stderr || inspect.error?.message);
+  console.log('Firefox sixty-episode ZIP64 single-download test PASSED; bytes:', statSync(manyFile).size);
 } catch (error) {
   console.error('Browser integration failure:', error);
   console.error('Page diagnostics:', errors);
