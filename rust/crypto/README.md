@@ -1,4 +1,4 @@
-# Rust computation kernel
+# Rust cryptographic computation kernel
 
 This crate is the first stage of migrating the project's **computational**
 functions out of JavaScript. The production Cloudflare Worker loads
@@ -7,13 +7,18 @@ functions out of JavaScript. The production Cloudflare Worker loads
 
 ## Implemented
 
-- SM3 hashing used by the Worker signing path, with a dependency-free
-  standard Rust implementation.
-- Fixed ABI exports: `rust_alloc`, `rust_dealloc`, `rust_sm3`.
-- A narrow memory-copy bridge at `worker/rust-sm3.cjs` used by the
-  Cloudflare Worker entrypoint and the golden-vector test.
-- Official SM3 vectors, JS-legacy comparison on boundary lengths,
-  and Argus hash golden vectors.
+- SM3 hashing used by the Worker signing path (Rust, dependency-free).
+- **Simon 72-round permutation** used to encrypt Argus 551 signing blocks.
+  A full Argus message is encrypted in one Rust/WASM call.
+- **Ladon 34-round key expansion and block permutation**, with exact
+  compatibility against the original JS signer.
+- Stable ABI: `rust_alloc`, `rust_dealloc`, `rust_sm3`,
+  `rust_simon_encrypt`, `rust_ladon_transform`.
+- Thin memory-copy bridge at `worker/rust-sm3.cjs` shared by the real
+  Worker entrypoint and the golden-vector tests.
+- SM3 official vectors, Simon and Ladon fixed vectors, full Argus/Ladon
+  signed request byte-for-byte parity tests (including body signatures),
+  plus Cloudflare workerd cold-start verification.
 - Pinned Rust 1.99.1 and byte-for-byte precompiled WASM verification.
 
 ## Why precompile and check in the .wasm file?
@@ -34,13 +39,17 @@ cp rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm rust/cr
 
 ## Deliberate scope boundary
 
-This migration does **not** yet rewrite Argus/Ladon signing, Medusa, Gorgon,
-the browser HLS orchestration, or the FFmpeg engine. Their current algorithms
-are still implemented or called through JavaScript; SM3 in the production
-Worker uses Rust/WASM, while the legacy JS SM3 remains solely as a test
-fallback. The FFmpeg.wasm core is already native **C compiled to WebAssembly**,
-not media processing performed in JavaScript, and replacing it with Rust
-would require an independent codec implementation or wrapper.
+Argus and Ladon **round-based computation** now runs in Rust/WASM in
+production. JavaScript still assembles protobuf/query parameters, computes
+MD5 and AES through native `node:crypto`, and handles the browser/Worker
+interfaces; it does not perform the heavy Simon/Ladon loops on the deployed
+Worker. The JavaScript reference implementations remain so golden tests can
+detect protocol regressions.
+
+Medusa, Gorgon, other app-signature variants, and browser HLS orchestration
+have **not** been ported to Rust. The FFmpeg.wasm core is already native
+**C compiled to WebAssembly**, not media processing implemented in JavaScript;
+reimplementing the codecs in Rust is unnecessary.
 
 Rust/WASM does not eliminate the need for minimal JavaScript platform glue:
 browser file access, Worker `fetch` handlers, streams, and importing Wasm
