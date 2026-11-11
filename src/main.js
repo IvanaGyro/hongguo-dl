@@ -1,13 +1,14 @@
 import './styles.css';
-import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
+import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 
 const $ = id => document.getElementById(id);
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
-let workerOrigin = '';
-try { workerOrigin = normalizeWorkerOrigin(localStorage.getItem(API_STORE) || import.meta.env.VITE_API_ORIGIN || ''); }
-catch { workerOrigin = ''; }
+const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.VITE_API_ORIGIN || '');
+let workerOrigin = defaultWorkerOrigin;
+try { workerOrigin = chooseWorkerOrigin(localStorage.getItem(API_STORE), defaultWorkerOrigin); }
+catch { /* localStorage can be blocked; use the site-provided PROXY default */ }
 function requireWorkerOrigin() {
   if (!workerOrigin && location.hostname.endsWith('.github.io'))
     throw errorWith('WORKER_NOT_CONFIGURED', '請先在「Cloudflare Worker API 設定」填入已部署的 Worker 網址');
@@ -16,8 +17,10 @@ function requireWorkerOrigin() {
 function apiRoute(path) { return apiUrl(path, requireWorkerOrigin()); }
 function updateApiSettings() {
   $('worker-origin').value = workerOrigin;
-  $('worker-status').textContent = workerOrigin ? 'API：' + workerOrigin : location.hostname.endsWith('.github.io')
-    ? '尚未設定 Cloudflare Worker 網址' : '同源 API：/api/';
+  $('worker-status').textContent = workerOrigin
+    ? (workerOrigin === defaultWorkerOrigin ? '網站預設 API：' : '自訂 API：') + workerOrigin
+    : location.hostname.endsWith('.github.io') ? '尚未設定 Cloudflare Worker 網址' : '同源 API：/api/';
+  $('reset-worker-origin').hidden = !defaultWorkerOrigin || workerOrigin === defaultWorkerOrigin;
 }
 function saveApiSettings(event) {
   event.preventDefault();
@@ -32,6 +35,12 @@ function saveApiSettings(event) {
     $('api-settings-error').textContent = error.message;
     $('api-settings-error').hidden = false;
   }
+}
+function resetApiSettings() {
+  workerOrigin = defaultWorkerOrigin;
+  try { localStorage.removeItem(API_STORE); } catch { /* privacy/storage restrictions */ }
+  $('api-settings-error').hidden = true;
+  updateApiSettings();
 }
 const MAX_BROWSER_BLOB = 300 * 1024 * 1024;
 let series = null;
@@ -362,6 +371,7 @@ async function runJob(job, signal) {
 }
 
 $('api-settings-form').addEventListener('submit', saveApiSettings);
+$('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
 $('lookup-form').addEventListener('submit', lookup);
 $('choose-folder').addEventListener('click', chooseFolder);
