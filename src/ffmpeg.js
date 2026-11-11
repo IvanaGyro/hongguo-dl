@@ -122,7 +122,7 @@ export async function convertHls(url, {
         if (unique.has(full)) return unique.get(full);
         if (signal?.aborted) throw cancelError();
         const extension = key ? '.key' : (/\.(m4s|mp4|aac|m4a|ts)(?:$|\?)/i.exec(uri)?.[1] || 'ts');
-        const name = id + '_part_' + (seq++) + (key ? '' : '.') + (key ? 'key' : extension.replace(/^\./, ''));
+        const name = id + '_part_' + (seq++) + '.' + (key ? 'key' : extension.replace(/^\./, ''));
         // Reserve a conservative per-segment ceiling and total FFmpeg FS limit.
         const data = await fetchBytes(full, signal, Math.min(64 * 1024 * 1024, MAX_FFMPEG_INPUT - size));
         if (!data.length) throw errorWith('EMPTY_MEDIA', 'HLS 分片沒有資料');
