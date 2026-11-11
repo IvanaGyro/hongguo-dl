@@ -84,7 +84,7 @@ fn md5_v3_step(kind: usize, a: u32, b: u32, c: u32, d: u32,
 fn branch2(iv: u32, query: &[u8; 32], body: &[u8; 16], ts: &[u8; 4], khronos: u32) -> Vec<u8> {
     let v = (iv & 13) * 86;
     let index = (((v >> 15) & 255) + ((v >> 8) & 255)) as usize;
-    let n1 = [0x8980f29b, 0xeb549c7f, 0xb08726db, 0xd40cb5e6, 0xe8f559e4][index];
+    let n1: u32 = [0x8980f29b, 0xeb549c7f, 0xb08726db, 0xd40cb5e6, 0xe8f559e4][index];
     let count_v1 = n1.wrapping_add(khronos).wrapping_add(1) & 255;
     let count_v2 = n1.wrapping_add(khronos);
     let shift = count_v2.wrapping_add(5) & 7;
