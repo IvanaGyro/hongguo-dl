@@ -290,6 +290,184 @@ pub unsafe extern "C" fn rust_medusa_xmxor(
     0
 }
 
+
+// Medusa AES-V3 is a vendor-specific transform, NOT AES-128-CBC. The SDK
+// dynamically selects a 256-byte S-box and changes row/column permutations
+// according to khronos & 3. The caller provides that selected S-box.
+const MEDUSA_CON2: [[usize; 4]; 4] = [
+    [1, 0, 2, 3], [2, 0, 3, 1], [0, 1, 3, 2], [1, 0, 2, 3],
+];
+const MEDUSA_ORDER: [[usize; 16]; 4] = [
+    [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3],
+    [0, 9, 14, 15, 4, 13, 2, 7, 8, 1, 6, 3, 12, 5, 10, 11],
+    [0, 9, 14, 7, 4, 13, 2, 11, 8, 1, 6, 3, 12, 5, 10, 15],
+    [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3],
+];
+const MEDUSA_INIT: [u32; 4] = [0xca025ddc, 0x823dc546, 0xc9420583, 0xc298225f];
+
+fn medusa_aes_v3_round_keys(box_values: &[u8; 256], key: &[u8; 16], variant: usize) -> [[u8; 4]; 12] {
+    let init = MEDUSA_INIT[variant];
+    let mut expanded = [0u8; 48];
+    for i in 0..4 {
+        for j in 0..4 {
+            expanded[i * 4 + j] = init.to_le_bytes()[j] ^ key[i * 4 + j];
+        }
+    }
+    let mut rounds = 8u32;
+    for i in 4..12 {
+        let at = 4 * (i - 1);
+        let (mut a, mut b, mut c, mut d) = (
+            expanded[at], expanded[at + 1], expanded[at + 2], expanded[at + 3]
+        );
+        if i & 3 == 0 {
+            // JS >> is a sign-preserving 32-bit shift, but only the low byte
+            // participates in this key-expansion expression.
+            let shifted = ((init as i32) >> (rounds & 24)) as u8;
+            let t = shifted ^ box_values[b as usize];
+            b = box_values[c as usize];
+            c = box_values[d as usize];
+            d = box_values[a as usize];
+            a = t;
+        }
+        rounds += 2;
+        expanded[at + 4] = a ^ expanded[at - 12];
+        expanded[at + 5] = b ^ expanded[at - 11];
+        expanded[at + 6] = c ^ expanded[at - 10];
+        expanded[at + 7] = d ^ expanded[at - 9];
+    }
+    std::array::from_fn(|i| expanded[i * 4..i * 4 + 4].try_into().unwrap())
+}
+
+fn medusa_aes_v3_block(
+    mut rows: [u8; 16], box_values: &[u8; 256],
+    keys: &[[u8; 4]; 12], variant: usize,
+) -> [u8; 16] {
+    let con = MEDUSA_CON2[variant];
+    // addCon(rows, keys.slice(0,4))
+    for i in 0..4 {
+        for j in 0..4 {
+            rows[i * 4 + j] ^= keys[i][con[j]];
+        }
+    }
+    for round in 1..3 {
+        // sub: substitute the bytes, then permute rows
+        let prev = rows.map(|b| box_values[b as usize]);
+        for i in 0..4 {
+            rows[i * 4..i * 4 + 4].copy_from_slice(&prev[con[i] * 4..con[i] * 4 + 4]);
+        }
+        // shift rows using the vendor's 16-element index map
+        let old = rows;
+        for i in 0..16 {
+            rows[i] = old[MEDUSA_ORDER[variant][i]];
+        }
+        if round == 1 {
+            // shiftCon: permute columns within each row.
+            let old = rows;
+            for i in 0..4 {
+                for j in 0..4 {
+                    rows[i * 4 + j] = old[i * 4 + con[j]];
+                }
+            }
+            // vendor AES-like column mixing
+            for j in 0..4 {
+                let t = rows[j] ^ rows[4 + j] ^ rows[8 + j] ^ rows[12 + j];
+                let u = rows[j];
+                let xt = |x: u8| (x << 1) ^ if x & 0x80 != 0 { 0x1b } else { 0 };
+                let a = rows[j];
+                let b = rows[4 + j];
+                let c = rows[8 + j];
+                let d = rows[12 + j];
+                rows[j] ^= t ^ xt(a ^ b);
+                rows[4 + j] ^= t ^ xt(b ^ c);
+                rows[8 + j] ^= t ^ xt(c ^ d);
+                rows[12 + j] ^= t ^ xt(d ^ u);
+            }
+        }
+        // addCon(rows, keys.slice(round*4))
+        for i in 0..4 {
+            for j in 0..4 {
+                rows[i * 4 + j] ^= keys[round * 4 + i][con[j]];
+            }
+        }
+    }
+    // add(rows, keys.slice(4)) -- exact vendor operation, not round 3.
+    for i in 0..4 {
+        for j in 0..4 {
+            rows[i * 4 + j] ^= keys[i + 4][j];
+        }
+    }
+    rows
+}
+
+/// Produces the vendor's 1-byte prefix followed by the input with modified
+/// bit positions. Requires 31 complete 8-byte source groups (248 bytes).
+pub fn medusa_aes_v3_encrypt(
+    source: &[u8], box_values: &[u8; 256], key: &[u8; 16],
+    iv: &[u8; 16], khronos: u32,
+) -> Option<Vec<u8>> {
+    if source.len() < 248 { return None; }
+    let variant = (khronos & 3) as usize;
+    let keys = medusa_aes_v3_round_keys(box_values, key, variant);
+    let mut plain = [0u8; 32];
+    for i in 0..31 {
+        let at = i * 8;
+        plain[i] = ((source[at] >> 4) & 2)
+            | (source[at + 1] & 64)
+            | ((source[at + 2] >> 2) & 1)
+            | ((source[at + 3] << 3) & 128)
+            | ((source[at + 4] >> 1) & 4)
+            | ((source[at + 5] << 3) & 16)
+            | ((source[at + 6] << 5) & 32)
+            | ((source[at + 7] >> 4) & 8);
+    }
+    plain[31] = 1;
+    let mut expanded_key = [0u8; 32];
+    let mut previous = *iv;
+    for i in 0..2 {
+        let block = std::array::from_fn(|j| plain[i * 16 + j] ^ previous[j]);
+        let next = medusa_aes_v3_block(block, box_values, &keys, variant);
+        expanded_key[i * 16..(i + 1) * 16].copy_from_slice(&next);
+        previous = next;
+    }
+    let mut out = Vec::with_capacity(source.len() + 1);
+    out.push(expanded_key[31]);
+    out.extend_from_slice(source);
+    for (i, &k) in expanded_key.iter().enumerate().take(31) {
+        let at = 1 + i * 8;
+        out[at] = (out[at] & !0x20) | ((k << 4) & 0x20);
+        out[at + 1] = (out[at + 1] & !0x40) | (k & 0x40);
+        out[at + 2] = (out[at + 2] & !0x04) | ((k << 2) & 0x04);
+        out[at + 3] = (out[at + 3] & !0x10) | ((k >> 3) & 0x10);
+        out[at + 4] = (out[at + 4] & !0x08) | (k.wrapping_add(k) & 0x08);
+        out[at + 5] = (out[at + 5] & !0x02) | ((k >> 3) & 0x02);
+        out[at + 6] = (out[at + 6] & !0x01) | ((k >> 5) & 0x01);
+        out[at + 7] = (out[at + 7] & !0x80) | ((k << 4) & 0x80);
+    }
+    Some(out)
+}
+
+/// # Safety
+/// box_ptr, key_ptr, iv_ptr point to 256, 16 and 16 valid bytes.
+/// data_ptr points to len bytes, out_ptr points to at least len + 1 writable
+/// bytes in disjoint wasm allocations.
+#[no_mangle]
+pub unsafe extern "C" fn rust_medusa_aes_v3(
+    box_ptr: *const u8, key_ptr: *const u8, iv_ptr: *const u8, khronos: u32,
+    data_ptr: *const u8, len: usize, out_ptr: *mut u8,
+) -> u32 {
+    if box_ptr.is_null() || key_ptr.is_null() || iv_ptr.is_null()
+        || data_ptr.is_null() || out_ptr.is_null()
+        || !(248..=16 * 1024 * 1024).contains(&len) { return 1; }
+    let box_values: &[u8; 256] = &*(box_ptr as *const [u8; 256]);
+    let key: &[u8; 16] = &*(key_ptr as *const [u8; 16]);
+    let iv: &[u8; 16] = &*(iv_ptr as *const [u8; 16]);
+    let data = std::slice::from_raw_parts(data_ptr, len);
+    let Some(encrypted) = medusa_aes_v3_encrypt(data, box_values, key, iv, khronos)
+    else { return 2; };
+    std::ptr::copy_nonoverlapping(encrypted.as_ptr(), out_ptr, len + 1);
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +546,21 @@ mod tests {
         assert_ne!(output, original);
         assert_eq!(output, medusa_xmxor(&original, &key).unwrap());
         assert_ne!(output, medusa_xmxor(b"medusa-signature-protocoL", &key).unwrap());
+    }
+
+    #[test]
+    fn medusa_aes_v3_handles_all_four_variants() {
+        let box_values = std::array::from_fn::<u8, 256, _>(|i| i as u8);
+        let key = [0x51u8; 16];
+        let iv = [0x82u8; 16];
+        let data: Vec<u8> = (0..299).map(|i| (i * 13 & 255) as u8).collect();
+        for khronos in 0..4 {
+            let output = medusa_aes_v3_encrypt(&data, &box_values, &key, &iv, khronos).unwrap();
+            assert_eq!(output.len(), data.len() + 1);
+            assert_ne!(&output[1..], data);
+            assert_eq!(output, medusa_aes_v3_encrypt(&data, &box_values, &key, &iv, khronos).unwrap());
+        }
+        assert!(medusa_aes_v3_encrypt(&data[..247], &box_values, &key, &iv, 1).is_none());
     }
 
     #[test]
