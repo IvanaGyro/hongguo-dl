@@ -194,6 +194,13 @@ export function createPlayer({
       if (s) open(suggestedEpisode(s, watchRecords(storage)));
     },
     stop() { savePosition(); clearSource(); current = null; playToken++; label.textContent = '尚未播放'; buttons(); },
+    pause() { video.pause(); savePosition(); },
+    activate() {
+      if (!current) this.resume();
+      else if (video.paused && video.src) {
+        video.play().catch(() => setStatus('請按播放器的播放鍵繼續'));
+      }
+    },
     refresh: buttons
   };
 }
