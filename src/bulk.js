@@ -139,8 +139,16 @@ export async function runBulk({
       }
     }
   }
-  await saveZip(zipReadableStream(entries(), { signal,
+  let resolveDone, rejectDone;
+  const finished = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  const stream = zipReadableStream(entries(), { signal,
     onEntry: () => onStatus?.('ZIP：' + (completed + failed) + '/' + ordered.length + ' 集已寫入'),
-  }), title + '_第' + ordered[0].index + '-' + ordered[ordered.length - 1].index + '集.zip');
-  onStatus?.('已啟動 ZIP 下載；將依序處理 ' + ordered.length + ' 集（失敗集數會附錯誤說明檔）');
+    onComplete: resolveDone,
+    onError: rejectDone
+  });
+  await saveZip(stream, title + '_第' + ordered[0].index + '-' + ordered[ordered.length - 1].index + '集.zip');
+  onStatus?.('ZIP 串流已啟動；正在依集數順序寫入 ZIP…');
+  await finished;
+  onStatus?.('ZIP 已完成：' + completed + ' 集成功' +
+    (failed ? '、' + failed + ' 集失敗（ZIP 內含原因說明）' : '') + '。');
 }
