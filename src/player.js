@@ -13,7 +13,7 @@ export function createPlayer({
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress
 }) {
   let current = null, controller = null, lastSaved = 0, playToken = 0;
-  let activeBlobUrl = null, loading = false, failure = null;
+  let activeBlobUrl = null, loading = false, failure = null, recoveryStart = 0;
   function setStatus(text) { status.textContent = text; }
   function episodes() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
@@ -105,7 +105,7 @@ export function createPlayer({
     if (!prior?.completed && prior?.seconds > 1 && prior.seconds < video.duration - 2) {
       try { video.currentTime = prior.seconds; } catch { /* nonseekable */ }
     }
-    failure = null;
+    recoveryStart = video.currentTime;
     setStatus('第 ' + ep.index + ' 集 · ' + (video.duration > 0 ? Math.round(video.duration / 60) + ' 分鐘' : '串流播放'));
     if (autoplay) {
       try { await video.play(); }
@@ -154,7 +154,11 @@ export function createPlayer({
     if (next) open(next);
   }
   video.addEventListener('timeupdate', () => {
-    if (!current || !Number.isFinite(video.currentTime) || Date.now() - lastSaved < 4000) return;
+    if (!current || !Number.isFinite(video.currentTime)) return;
+    // Merely loading metadata is not a successful playback. Preserve the
+    // identical-error streak until the video actually advances by 5 seconds.
+    if (failure && video.currentTime - recoveryStart >= 5) failure = null;
+    if (Date.now() - lastSaved < 4000) return;
     lastSaved = Date.now();
     savePosition();
   });
