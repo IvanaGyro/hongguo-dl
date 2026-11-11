@@ -91,12 +91,148 @@ pub unsafe extern "C" fn rust_sm3(input: *const u8, len: usize, output: *mut u8)
     0
 }
 
+
+// The 551 Argus signing cipher uses a Simon-like 72-round permutation.
+// Keys and blocks are little-endian, matching the upstream JS implementation.
+// This is protocol compatibility logic, not a general-purpose authenticated cipher.
+pub fn simon_encrypt_blocks(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
+    if plaintext.len() % 16 != 0 { return None; }
+    let mut expanded = [0u64; 72];
+    for (i, part) in key.chunks_exact(8).enumerate() {
+        expanded[i] = u64::from_le_bytes(part.try_into().unwrap());
+    }
+    const Z: u64 = 0x3dc94c3a046d678b;
+    for i in 4..72 {
+        let mut tmp = expanded[i - 1].rotate_right(3) ^ expanded[i - 3];
+        tmp ^= tmp.rotate_right(1);
+        let bit = (Z >> ((i - 4) % 62)) & 1;
+        expanded[i] = !expanded[i - 4] ^ tmp ^ bit ^ 3;
+    }
+    let mut output = Vec::with_capacity(plaintext.len());
+    for block in plaintext.chunks_exact(16) {
+        let mut x = u64::from_le_bytes(block[..8].try_into().unwrap());
+        let mut y = u64::from_le_bytes(block[8..16].try_into().unwrap());
+        for &round_key in &expanded {
+            let next_y = x ^ (y.rotate_left(1) & y.rotate_left(8))
+                ^ y.rotate_left(2) ^ round_key;
+            x = y;
+            y = next_y;
+        }
+        output.extend_from_slice(&x.to_le_bytes());
+        output.extend_from_slice(&y.to_le_bytes());
+    }
+    Some(output)
+}
+
+// Ladon 551 block transform. JS still derives the MD5 and formats the
+// parameters; all 64-bit key expansion and 34 encryption rounds run in Rust.
+pub fn ladon_transform(md5_ascii: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
+    if plaintext.len() % 16 != 0 { return None; }
+    let mut words = [0u64; 4];
+    for (i, chunk) in md5_ascii.chunks_exact(8).enumerate() {
+        words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+    }
+    let mut table = [0u64; 35];
+    table[0] = words[0];
+    let mut queue = std::collections::VecDeque::from([words[2], words[3]]);
+    let (mut b0, mut b8) = (words[0], words[1]);
+    for i in 0..34 {
+        let mut x8 = b8.rotate_right(8).wrapping_add(b0) ^ (i as u64);
+        queue.push_back(x8);
+        x8 ^= b0.rotate_left(3);
+        table[i + 1] = x8;
+        b0 = x8;
+        b8 = queue.pop_front().expect("Ladon queue always has elements");
+    }
+    let mut output = Vec::with_capacity(plaintext.len());
+    for block in plaintext.chunks_exact(16) {
+        let mut a = u64::from_le_bytes(block[..8].try_into().unwrap());
+        let mut b = u64::from_le_bytes(block[8..16].try_into().unwrap());
+        for &round_key in table.iter().take(34) {
+            b = round_key ^ a.wrapping_add(b.rotate_right(8));
+            a = b ^ a.rotate_left(3);
+        }
+        output.extend_from_slice(&a.to_le_bytes());
+        output.extend_from_slice(&b.to_le_bytes());
+    }
+    Some(output)
+}
+
+/// # Safety
+/// JS must allocate valid, disjoint WebAssembly memory for each input and
+/// output pointer. The output buffer must have capacity for len bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rust_simon_encrypt(
+    key_ptr: *const u8, input_ptr: *const u8, len: usize, output_ptr: *mut u8,
+) -> u32 {
+    if key_ptr.is_null() || input_ptr.is_null() || output_ptr.is_null()
+        || len % 16 != 0 || len > 16 * 1024 * 1024 { return 1; }
+    let key: &[u8; 32] = &*(key_ptr as *const [u8; 32]);
+    let input = std::slice::from_raw_parts(input_ptr, len);
+    let Some(encrypted) = simon_encrypt_blocks(key, input) else { return 2; };
+    std::ptr::copy_nonoverlapping(encrypted.as_ptr(), output_ptr, len);
+    0
+}
+
+/// # Safety
+/// JS must supply a valid 32-byte MD5-hex ASCII digest and disjoint,
+/// allocated plaintext/output buffers of exactly len bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rust_ladon_transform(
+    digest_ptr: *const u8, input_ptr: *const u8, len: usize, output_ptr: *mut u8,
+) -> u32 {
+    if digest_ptr.is_null() || input_ptr.is_null() || output_ptr.is_null()
+        || len % 16 != 0 || len > 16 * 1024 * 1024 { return 1; }
+    let digest: &[u8; 32] = &*(digest_ptr as *const [u8; 32]);
+    let input = std::slice::from_raw_parts(input_ptr, len);
+    let Some(encrypted) = ladon_transform(digest, input) else { return 2; };
+    std::ptr::copy_nonoverlapping(encrypted.as_ptr(), output_ptr, len);
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn simon_matches_external_golden_vector() {
+        let key: [u64; 4] = [
+            1111111111111111111, 2222222222222222222,
+            3333333333333333333, 4444444444444444444,
+        ];
+        let mut key_bytes = [0u8; 32];
+        for (i, word) in key.iter().enumerate() {
+            key_bytes[i * 8..i * 8 + 8].copy_from_slice(&word.to_le_bytes());
+        }
+        let mut block = Vec::new();
+        block.extend_from_slice(&1234567890123456789u64.to_le_bytes());
+        block.extend_from_slice(&9876543210987654321u64.to_le_bytes());
+        let output = simon_encrypt_blocks(&key_bytes, &block).unwrap();
+        let left = u64::from_le_bytes(output[0..8].try_into().unwrap());
+        let right = u64::from_le_bytes(output[8..16].try_into().unwrap());
+        assert_eq!((left, right), (6071150433487837324, 2027321285990159935));
+        assert!(simon_encrypt_blocks(&key_bytes, b"wrong-length").is_none());
+    }
+
+    #[test]
+    fn ladon_matches_fixed_independent_vector() {
+        let digest = *b"de0b56f1b46af782a3c13a78476be326";
+        let mut input = b"1700000000-1611921764-1967".to_vec();
+        let pad = 16 - input.len() % 16;
+        input.extend(std::iter::repeat_n(pad as u8, pad));
+        let got = ladon_transform(&digest, &input).unwrap();
+        let want = [
+            0xa3,0x3b,0x63,0xb6,0xd6,0x9c,0xe2,0x14,
+            0x5e,0x64,0xf2,0x6c,0x3e,0xbf,0x32,0x91,
+            0x9b,0xba,0x07,0xb8,0xb0,0x1c,0x14,0x26,
+            0xcc,0x87,0x56,0x2b,0xe1,0xb4,0xcb,0x07,
+        ];
+        assert_eq!(got, want);
+        assert!(ladon_transform(&digest, b"bad-length").is_none());
     }
 
     #[test]
