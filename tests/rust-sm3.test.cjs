@@ -17,10 +17,28 @@ const unicode = Buffer.from('繁體中文與 Rust WASM ✨');
 // Capture legacy reference vectors BEFORE installing the Rust implementation.
 const expected = payloads.map(input => sm3(input).toString('hex'));
 const expectedUnicode = sm3(unicode).toString('hex');
+const signing = require('../worker/vendor/playback-signature.js');
+const FIXTURES = [
+  { query: 'aid=1967&device_id=dev_aaaaaaaa&iid=111', ts: 1700000000,
+    randField: 659662259, ladonRandom: Buffer.from('01020304', 'hex') },
+  { query: 'aid=1967&device_id=dev_bbbbbbbbbbbbbbbb&iid=222', ts: 1700000001,
+    randField: 1315257197, ladonRandom: Buffer.from('05060708', 'hex') },
+  { query: 'aid=1967&device_id=X&iid=333', ts: 1234567890,
+    randField: 554000487, ladonRandom: Buffer.from('99aabbcc', 'hex') },
+  { query: 'aid=1967&device_id=test_device_id&iid=456&version_name=6.5.1.32',
+    ts: 1700000000, randField: 420072733, ladonRandom: Buffer.from('01020304', 'hex') },
+  { query: 'aid=1967&device_id=test_device_id&iid=456&version_name=6.5.1.32',
+    ts: 1700000000, randField: 420072733, ladonRandom: Buffer.from('01020304', 'hex'),
+    body: Buffer.from('{"x":1}') },
+  { query: 'aid=1967&device_id=中文&version_name=7.4.3.32',
+    ts: 1740000000, randField: -1234567, ladonRandom: Buffer.from('11223344', 'hex'),
+    body: Buffer.from('Hello Rust!') }
+];
+const originalSignatures = FIXTURES.map(data => signing.signPlayer(data));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
-const rustSm3 = require('../worker/rust-sm3.cjs')(wasmModule);
-const { Argus } = require('../worker/vendor/playback-signature.js');
+const { sm3: rustSm3, simonBlocks, ladonTransform } = require('../worker/rust-sm3.cjs')(wasmModule);
+const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
   assert.equal(rustSm3(Buffer.from('abc')).toString('hex'),
@@ -37,4 +55,45 @@ test('Rust SM3 wasm handles empty, Unicode, and block boundaries', () => {
     assert.equal(rustSm3(payloads[i]).toString('hex'), expected[i], 'mismatch at length ' + lengths[i]);
   }
   assert.equal(rustSm3(unicode).toString('hex'), expectedUnicode);
+});
+
+test('Rust Simon 72-round blocks match fixed 64-bit golden', () => {
+  const key = [1111111111111111111n, 2222222222222222222n,
+    3333333333333333333n, 4444444444444444444n];
+  const keyBytes = Buffer.alloc(32);
+  for (let i = 0; i < 4; i++) keyBytes.writeBigUInt64LE(key[i], i * 8);
+  const block = Buffer.alloc(16);
+  block.writeBigUInt64LE(1234567890123456789n, 0);
+  block.writeBigUInt64LE(9876543210987654321n, 8);
+  const result = simonBlocks(keyBytes, block);
+  assert.deepEqual([result.readBigUInt64LE(0), result.readBigUInt64LE(8)],
+    [6071150433487837324n, 2027321285990159935n]);
+  assert.deepEqual(Simon.encrypt(1234567890123456789n, 9876543210987654321n, key),
+    [6071150433487837324n, 2027321285990159935n]);
+});
+
+test('Rust Ladon 34-round transform preserves fixed golden', () => {
+  const random = Buffer.from('01020304', 'hex');
+  const digest = Buffer.from('de0b56f1b46af782a3c13a78476be326');
+  const payload = Buffer.from('1700000000-1611921764-1967');
+  const pad = 16 - payload.length % 16;
+  const input = Buffer.concat([payload, Buffer.alloc(pad, pad)]);
+  const output = ladonTransform(digest, input);
+  assert.equal(output.toString('hex'),
+    'a33b63b6d69ce2145e64f26c3ebf32919bba07b8b01c1426cc87562be1b4cb07');
+  assert.equal(Ladon.encrypt(1700000000, 1611921764, 1967, random),
+    'AQIDBKM7Y7bWnOIUXmTybD6/MpGbuge4sBwUJsyHVivhtMsH');
+});
+
+test('Production Rust signing matches existing JS protocol byte-for-byte', () => {
+  for (let i = 0; i < FIXTURES.length; ++i) {
+    assert.deepEqual(signing.signPlayer(FIXTURES[i]), originalSignatures[i],
+      'full signed request differs at fixture ' + i);
+  }
+});
+
+test('Rust signing bridge rejects invalid or unsafe input lengths', () => {
+  assert.throws(() => simonBlocks(Buffer.alloc(31), Buffer.alloc(16)), /32-byte key/);
+  assert.throws(() => simonBlocks(Buffer.alloc(32), Buffer.alloc(17)), /aligned input/);
+  assert.throws(() => ladonTransform(Buffer.alloc(32), Buffer.alloc(16 * 1024 * 1024 + 16)), /aligned input/);
 });
