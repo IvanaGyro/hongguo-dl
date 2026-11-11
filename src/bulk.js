@@ -45,7 +45,7 @@ export async function getEpisodeBytes({
   cache, signal, onUpdate
 }) {
   const key = episodeCacheKey(series.seriesId, episode.vid, quality, codec);
-  const cached = cache.get(key);
+  const cached = outputMode === 'h264' ? null : cache.get(key);
   if (cached) {
     onUpdate?.('第 ' + episode.index + ' 集：共用記憶體快取');
     return { bytes: new Uint8Array(await cached.arrayBuffer()), ext: '.mp4', codec: null };
@@ -73,7 +73,8 @@ export async function getEpisodeBytes({
   }
   if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '第 ' + episode.index + ' 集下載結果為空');
   const ext = extensionFor(source, process);
-  if (ext === '.mp4') cache.put(key, new Blob([bytes], { type: 'video/mp4' }));
+  if (ext === '.mp4' && outputMode !== 'h264')
+    cache.put(key, new Blob([bytes], { type: 'video/mp4' }));
   return { bytes, ext, codec: source.codec, width: source.width, height: source.height };
 }
 export async function runBulk({
