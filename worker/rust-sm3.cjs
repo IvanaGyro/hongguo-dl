@@ -6,9 +6,11 @@ const { installRustSigningBackend } = require('./vendor/playback-signature.js');
 function installRustSm3(wasmModule) {
   const { exports: kernel } = new WebAssembly.Instance(wasmModule, {});
   const { memory, rust_alloc, rust_dealloc, rust_sm3,
-    rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform } = kernel;
+    rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform,
+    rust_medusa_xmxor } = kernel;
   if (!memory || !rust_alloc || !rust_dealloc || !rust_sm3 ||
-      !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform)
+      !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform ||
+      !rust_medusa_xmxor)
     throw new Error('The Rust signing wasm ABI is missing required exports');
 
   const allocate = length => {
@@ -75,6 +77,27 @@ function installRustSm3(wasmModule) {
     }
   }
 
+  function medusaXmXor(data, key) {
+    if (!Buffer.isBuffer(key) || key.length !== 32 ||
+        !Buffer.isBuffer(data) || data.length < 5 || data.length > 16 * 1024 * 1024)
+      throw new TypeError('Medusa XM-XOR requires a 32-byte key and at least 5 data bytes');
+    const keyPtr = allocate(32);
+    let inputPtr = 0, outputPtr = 0;
+    try {
+      inputPtr = allocate(data.length);
+      outputPtr = allocate(data.length);
+      new Uint8Array(memory.buffer, keyPtr, 32).set(key);
+      new Uint8Array(memory.buffer, inputPtr, data.length).set(data);
+      const status = rust_medusa_xmxor(keyPtr, inputPtr, data.length, outputPtr);
+      if (status !== 0) throw new Error('Rust Medusa XM-XOR error ' + status);
+      return Buffer.from(new Uint8Array(memory.buffer, outputPtr, data.length));
+    } finally {
+      if (outputPtr) rust_dealloc(outputPtr, data.length);
+      if (inputPtr) rust_dealloc(inputPtr, data.length);
+      rust_dealloc(keyPtr, 32);
+    }
+  }
+
   const simonBlocks = (key, input) => transform(rust_simon_encrypt, key, input);
   const ladonTransform = (md5Ascii, input) => transform(rust_ladon_transform, md5Ascii, input);
 
@@ -85,7 +108,9 @@ function installRustSm3(wasmModule) {
 
   sm3.setRustBackend(rustSm3);
   installRustSigningBackend({ simonBlocks, ladonTransform });
-  require('./vendor/app-source.js').setRustGorgonBackend(gorgonTransform);
-  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform };
+  const appSource = require('./vendor/app-source.js');
+  appSource.setRustGorgonBackend(gorgonTransform);
+  appSource.setRustXmXorBackend(medusaXmXor);
+  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor };
 }
 module.exports = installRustSm3;
