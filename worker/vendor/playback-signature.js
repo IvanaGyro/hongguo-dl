@@ -5,6 +5,14 @@
 // Upstream attributes GPL-3.0-only ch6vip/fqapp rust/src/sign/{argus,simon,ladon,protobuf}.rs.
 // Public protocol constants below are not account credentials. Legacy Gorgon/registration code is excluded.
 const crypto = require('node:crypto');
+// The deployed Cloudflare Worker installs the Rust/WASM implementations.
+// Keep the JavaScript reference path for deterministic comparison tests only.
+let rustSigning = null;
+function installRustSigningBackend(backend) {
+  if (!backend || typeof backend.simonBlocks !== 'function' || typeof backend.ladonTransform !== 'function')
+    throw new TypeError('Rust Simon/Ladon backend is invalid');
+  rustSigning = Object.freeze(backend);
+}
 const sm3 = require('./sm3');
 const LICENSE_ID = 1611921764n;
 const SIGN_KEY = Buffer.from('fc78e0a9657a0c748ce51559903ccf03510e51d3cff232d71343e88a321c5304', 'hex');
@@ -50,6 +58,15 @@ const Simon = {
     return expanded;
   },
   encrypt(left, right, key) {
+    if (rustSigning) {
+      if (!Array.isArray(key) || key.length !== 4) throw new TypeError('Four Simon key words required');
+      const keyBytes = Buffer.alloc(32), block = Buffer.alloc(16);
+      for (let i = 0; i < 4; i++) keyBytes.writeBigUInt64LE(u64(integer(key[i])), i * 8);
+      block.writeBigUInt64LE(u64(integer(left)), 0);
+      block.writeBigUInt64LE(u64(integer(right)), 8);
+      const encrypted = rustSigning.simonBlocks(keyBytes, block);
+      return [encrypted.readBigUInt64LE(0), encrypted.readBigUInt64LE(8)];
+    }
     let x = u64(integer(left)), y = u64(integer(right));
     for (const roundKey of Simon.keyExpansion(key)) {
       const previous = y;
@@ -86,13 +103,22 @@ const Argus = {
       .putProtobuf(15, new ProtoBuf().putVarint(1, 1).putVarint(2, 1).putVarint(3, 1).putVarint(7, 0xc792eccc))
       .putUtf8(16, installId).putUtf8(20, 'none').putVarint(21, 738)
       .putProtobuf(23, new ProtoBuf().putUtf8(1, 'NX551J').putVarint(2, 8196).putVarint(4, 0x80e0d800)).putVarint(25, 2);
-    const protobuf = pad16(bean.toBuf()), key = Array.from({ length: 4 }, (_, i) => SIGN_KEY.readBigUInt64LE(i * 8));
-    const blocks = [];
-    for (let at = 0; at < protobuf.length; at += 16) {
-      const encrypted = Simon.encrypt(protobuf.readBigUInt64LE(at), protobuf.readBigUInt64LE(at + 8), key);
-      blocks.push(le64(encrypted[0]), le64(encrypted[1]));
+    const protobuf = pad16(bean.toBuf());
+    let encryptedBlocks;
+    if (rustSigning) {
+      // Encrypt the complete set of blocks in a single WASM call rather than
+      // repeatedly crossing the JavaScript ↔ WebAssembly boundary.
+      encryptedBlocks = rustSigning.simonBlocks(SIGN_KEY, protobuf);
+    } else {
+      const key = Array.from({ length: 4 }, (_, i) => SIGN_KEY.readBigUInt64LE(i * 8));
+      const blocks = [];
+      for (let at = 0; at < protobuf.length; at += 16) {
+        const encrypted = Simon.encrypt(protobuf.readBigUInt64LE(at), protobuf.readBigUInt64LE(at + 8), key);
+        blocks.push(le64(encrypted[0]), le64(encrypted[1]));
+      }
+      encryptedBlocks = Buffer.concat(blocks);
     }
-    const framed = Buffer.concat([MAGIC8, ...blocks, TAIL9]);
+    const framed = Buffer.concat([MAGIC8, encryptedBlocks, TAIL9]);
     for (let i = 8; i < framed.length; i++) framed[i] ^= MAGIC8[i % 8];
     const padded = pad16(Buffer.concat([framed.reverse(), Buffer.from('ao', 'ascii')]));
     const cipher = crypto.createCipheriv('aes-128-cbc', AES_KEY, AES_IV);
@@ -105,7 +131,13 @@ const Ladon = {
     if (!Buffer.isBuffer(randomBytes) || randomBytes.length !== 4) throw new TypeError('Four Ladon random bytes required');
     const aidText = integer(aid).toString();
     const digest = crypto.createHash('md5').update(Buffer.concat([randomBytes, Buffer.from(aidText)])).digest('hex');
-    const ascii = Buffer.from(digest, 'ascii'), words = Array.from({ length: 4 }, (_, i) => ascii.readBigUInt64LE(i * 8));
+    const ascii = Buffer.from(digest, 'ascii');
+    const input = pad16(Buffer.from(`${integer(ts)}-${integer(licenseId)}-${aidText}`, 'ascii'));
+    if (rustSigning) {
+      const ciphertext = rustSigning.ladonTransform(ascii, input);
+      return Buffer.concat([randomBytes, ciphertext]).toString('base64');
+    }
+    const words = Array.from({ length: 4 }, (_, i) => ascii.readBigUInt64LE(i * 8));
     const table = [words[0]], queue = words.slice(2);
     let b0 = words[0], b8 = words[1];
     for (let i = 0; i < 34; i++) {
@@ -114,7 +146,7 @@ const Ladon = {
       x8 ^= rol64(b0, 3);
       table.push(u64(x8)); b0 = u64(x8); b8 = queue.shift();
     }
-    const input = pad16(Buffer.from(`${integer(ts)}-${integer(licenseId)}-${aidText}`, 'ascii')), out = Buffer.alloc(input.length);
+    const out = Buffer.alloc(input.length);
     for (let at = 0; at < input.length; at += 16) {
       let a = input.readBigUInt64LE(at), b = input.readBigUInt64LE(at + 8);
       for (let i = 0; i < 34; i++) { b = table[i] ^ u64(a + ror64(b, 8)); a = b ^ rol64(a, 3); }
@@ -140,4 +172,4 @@ function signPlayer({ query, body = null, ts, randField, ladonRandom }) {
   if (stub) headers['x-ss-stub'] = stub;
   return headers;
 }
-module.exports = { signPlayer, Argus, Ladon, ProtoBuf, Simon };
+module.exports = { signPlayer, Argus, Ladon, ProtoBuf, Simon, installRustSigningBackend };
