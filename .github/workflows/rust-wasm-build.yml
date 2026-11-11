@@ -4,11 +4,12 @@ on:
     branches: [feat/rust-wasm-crypto]
     paths:
       - 'rust/crypto/Cargo.toml'
+      - 'rust/crypto/Cargo.lock'
       - 'rust/crypto/src/**'
       - '.github/workflows/rust-wasm-build.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   native-and-wasm:
     runs-on: ubuntu-24.04
@@ -21,6 +22,15 @@ jobs:
         run: cargo test --manifest-path rust/crypto/Cargo.toml --locked
       - name: Compile Rust to wasm32
         run: cargo build --manifest-path rust/crypto/Cargo.toml --release --target wasm32-unknown-unknown
+      - name: Check in reproducible WebAssembly binary
+        run: |
+          mkdir -p rust/crypto/dist
+          cp rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm rust/crypto/dist/hongguo_crypto.wasm
+          git add rust/crypto/dist/hongguo_crypto.wasm
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(rust): commit compiled SM3 WebAssembly module'
+            git push origin HEAD:feat/rust-wasm-crypto
+          fi
       - name: Upload WebAssembly artifact
         uses: actions/upload-artifact@v4
         with:
