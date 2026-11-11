@@ -348,6 +348,16 @@ mod tests {
     }
 
     #[test]
+    fn medusa_xmxor_matches_vendor_golden() {
+        let mut key = [0u8; 32];
+        for (i, b) in key.iter_mut().enumerate() { *b = ((i * 19 + 5) & 255) as u8; }
+        let input: Vec<u8> = (0..32).map(|i| ((i * 23 + 3) & 255) as u8).collect();
+        let out = medusa_xmxor(&input, &key).unwrap();
+        let got: String = out.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, "dcfab15d2dc75f251f7aff27d678bd714ba88d42b99621222e3cf81d6c69c793");
+    }
+
+    #[test]
     fn medusa_xmxor_is_deterministic_and_rejects_invalid_lengths() {
         let mut key = [0u8; 32];
         for (i, b) in key.iter_mut().enumerate() { *b = (i * 19) as u8; }
