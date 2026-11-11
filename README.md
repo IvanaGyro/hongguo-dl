@@ -28,7 +28,7 @@ Worker 是**唯一需要執行的服務端運算**。GitHub Pages 沒有反向�
 安裝 [Bun](https://bun.sh/) 後，於儲存庫目錄執行：
 
 ```sh
-bun install
+bun ci
 bun run test
 bun run build
 ```
