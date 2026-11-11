@@ -10,14 +10,18 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-      - name: Install
-        run: npm install --no-audit --no-fund
-      - name: Unit tests
-        run: npm test
-      - name: Static build
-        run: npm run build
-      - name: Wrangler dry-run
-        run: npx wrangler deploy --dry-run --outdir /tmp/hongguo-worker
+          bun-version: '1.3.3'
+      - name: Install using Bun
+        run: bun install
+      - name: Tests using Bun
+        run: bun run test
+      - name: Build GitHub Pages assets
+        env:
+          VITE_BASE_PATH: /hongguo-dl/
+        run: bun run build
+      - name: Verify Pages asset base
+        run: grep -q '/hongguo-dl/assets/' dist/index.html
+      - name: Cloudflare Worker dry-run
+        run: bunx wrangler deploy --dry-run --outdir /tmp/hongguo-worker
