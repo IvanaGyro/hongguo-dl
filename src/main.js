@@ -1,9 +1,38 @@
 import './styles.css';
-import { safeName, mediaProxyUrl, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
+import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 
 const $ = id => document.getElementById(id);
 const STORE = 'hongguo-dl-queue-v1';
+const API_STORE = 'hongguo-dl-worker-origin-v1';
+let workerOrigin = '';
+try { workerOrigin = normalizeWorkerOrigin(localStorage.getItem(API_STORE) || import.meta.env.VITE_API_ORIGIN || ''); }
+catch { workerOrigin = ''; }
+function requireWorkerOrigin() {
+  if (!workerOrigin && location.hostname.endsWith('.github.io'))
+    throw errorWith('WORKER_NOT_CONFIGURED', '請先在「Cloudflare Worker API 設定」填入已部署的 Worker 網址');
+  return workerOrigin;
+}
+function apiRoute(path) { return apiUrl(path, requireWorkerOrigin()); }
+function updateApiSettings() {
+  $('worker-origin').value = workerOrigin;
+  $('worker-status').textContent = workerOrigin ? 'API：' + workerOrigin : location.hostname.endsWith('.github.io')
+    ? '尚未設定 Cloudflare Worker 網址' : '同源 API：/api/';
+}
+function saveApiSettings(event) {
+  event.preventDefault();
+  try {
+    const value = normalizeWorkerOrigin($('worker-origin').value);
+    if (!value && location.hostname.endsWith('.github.io')) throw new Error('GitHub Pages 必須填入 Cloudflare Worker 網址');
+    workerOrigin = value;
+    localStorage.setItem(API_STORE, workerOrigin);
+    $('api-settings-error').hidden = true;
+    updateApiSettings();
+  } catch (error) {
+    $('api-settings-error').textContent = error.message;
+    $('api-settings-error').hidden = false;
+  }
+}
 const MAX_BROWSER_BLOB = 300 * 1024 * 1024;
 let series = null;
 let selected = new Set();
@@ -105,7 +134,7 @@ function renderEpisodes() {
   $('add-queue').disabled = !selected.size;
 }
 async function apiJson(route) {
-  const response = await fetch(route, { headers: { Accept: 'application/json' } });
+  const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' } });
   let data;
   try { data = await response.json(); } catch { throw errorWith('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
   if (!response.ok) throw errorWith(data?.error?.code || 'HTTP_' + response.status,
@@ -225,7 +254,7 @@ function assertOk(response) {
 }
 async function fetchBytes(url, profile, signal, max, onRead) {
   if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
-  const res = await fetch(mediaProxyUrl(url, profile), { signal });
+  const res = await fetch(mediaProxyUrl(url, profile, requireWorkerOrigin()), { signal });
   if (!res.ok) { await assertOk(res); }
   const advertised = Number(res.headers.get('content-length') || 0);
   if (advertised > max) throw errorWith('MEMORY_LIMIT', '媒體超過下載／記憶體安全限制');
@@ -252,7 +281,7 @@ async function fetchBytes(url, profile, signal, max, onRead) {
   return result;
 }
 async function streamToDestination(job, source, signal) {
-  const res = await fetch(mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web'), { signal });
+  const res = await fetch(mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', requireWorkerOrigin()), { signal });
   if (!res.ok) { await assertOk(res); }
   if (!res.body) throw errorWith('EMPTY_MEDIA', '伺服器沒有回傳影片串流');
   const length = Number(res.headers.get('content-length') || 0);
@@ -332,6 +361,8 @@ async function runJob(job, signal) {
   }
 }
 
+$('api-settings-form').addEventListener('submit', saveApiSettings);
+updateApiSettings();
 $('lookup-form').addEventListener('submit', lookup);
 $('choose-folder').addEventListener('click', chooseFolder);
 $('add-queue').addEventListener('click', queueSelected);
