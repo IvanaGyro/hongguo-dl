@@ -1,0 +1,16 @@
+[package]
+name = "hongguo-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Portable Rust cryptography kernel for Hongguo DL Worker"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
