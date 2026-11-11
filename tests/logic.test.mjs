@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { safeName, formatBytes, selectHlsVariant, assertHlsManifest,
-  classifyError, isHlsUrl, mediaProxyUrl } from '../src/logic.js';
+  classifyError, isHlsUrl, mediaProxyUrl, apiUrl, normalizeWorkerOrigin } from '../src/logic.js';
 
 test('filename sanitization preserves Traditional Chinese and blocks unsafe characters', () => {
   assert.equal(safeName('台灣<第1集>:?*'), '台灣_第1集____');
@@ -27,4 +27,14 @@ test('HLS master selects highest bandwidth and rejects live/DRM', () => {
 test('errors are safe for UI display', () => {
   assert.equal(classifyError({ code: 'EMPTY_MEDIA', message: 'no bytes' }).code, 'EMPTY_MEDIA');
   assert.equal(classifyError({ name: 'AbortError' }).code, 'CANCELED');
+});
+
+test('separate Worker origin uses HTTPS and preserves API path', () => {
+  assert.equal(normalizeWorkerOrigin('https://test.example/'), 'https://test.example');
+  assert.equal(apiUrl('/api/health', 'https://test.example/'), 'https://test.example/api/health');
+  assert.equal(mediaProxyUrl('https://cdn.example/a.mp4', 'web', 'https://test.example'),
+    'https://test.example/api/media?url=https%3A%2F%2Fcdn.example%2Fa.mp4&profile=web');
+  assert.throws(() => apiUrl('/ffmpeg/core.js', 'https://test.example'));
+  assert.throws(() => normalizeWorkerOrigin('http://attacker.example'));
+  assert.throws(() => normalizeWorkerOrigin('https://test.example/malicious-path'));
 });
