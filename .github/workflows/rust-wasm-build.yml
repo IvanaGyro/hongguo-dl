@@ -42,10 +42,18 @@ jobs:
           set -euo pipefail
           built=rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm
           shipped=rust/crypto/dist/hongguo_crypto.wasm
+          git fetch origin main
+          # Do not publish a binary compiled from an obsolete Rust source.
+          if ! git diff --quiet HEAD origin/main -- rust/crypto/src/lib.rs rust/crypto/Cargo.toml rust/crypto/Cargo.lock; then
+            echo "A newer Rust source is already on main; skip this stale binary."
+            exit 0
+          fi
+          # Keep unrelated concurrent commits when updating only the Wasm asset.
+          git reset --hard origin/main
           if cmp -s "$built" "$shipped"; then exit 0; fi
           cp "$built" "$shipped"
           git add -f "$shipped"
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(rust): sync verified Simon/Ladon WebAssembly binary'
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(rust): sync verified Wasm binary'
           git push origin HEAD:main
       - name: Verify precompiled Wasm exactly matches Rust source
         run: cmp rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm rust/crypto/dist/hongguo_crypto.wasm
