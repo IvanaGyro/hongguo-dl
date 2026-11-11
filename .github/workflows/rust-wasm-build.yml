@@ -26,7 +26,7 @@ jobs:
         run: |
           mkdir -p rust/crypto/dist
           cp rust/crypto/target/wasm32-unknown-unknown/release/hongguo_crypto.wasm rust/crypto/dist/hongguo_crypto.wasm
-          git add rust/crypto/dist/hongguo_crypto.wasm
+          git add -f rust/crypto/dist/hongguo_crypto.wasm
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(rust): commit compiled SM3 WebAssembly module'
             git push origin HEAD:feat/rust-wasm-crypto
