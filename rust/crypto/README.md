@@ -10,15 +10,18 @@ functions out of JavaScript. The production Cloudflare Worker loads
 - SM3 hashing used by the Worker signing path (Rust, dependency-free).
 - **Simon 72-round permutation** used to encrypt Argus 551 signing blocks.
   A full Argus message is encrypted in one Rust/WASM call.
-- **Ladon 34-round key expansion and block permutation**, with exact
-  compatibility against the original JS signer.
+- **Ladon 34-round key expansion and block permutation**, shared by playback
+  `x-ladon` and App `x-helios` signatures with exact output compatibility.
+- **Gorgon 20-byte RC4-like mixing and bit reversal**, retaining the
+  upstream state mutation exactly rather than replacing it with standard RC4.
 - Stable ABI: `rust_alloc`, `rust_dealloc`, `rust_sm3`,
-  `rust_simon_encrypt`, `rust_ladon_transform`.
+  `rust_simon_encrypt`, `rust_ladon_transform`, `rust_gorgon_transform`.
 - Thin memory-copy bridge at `worker/rust-sm3.cjs` shared by the real
   Worker entrypoint and the golden-vector tests.
-- SM3 official vectors, Simon and Ladon fixed vectors, full Argus/Ladon
-  signed request byte-for-byte parity tests (including body signatures),
-  plus Cloudflare workerd cold-start verification.
+- SM3 official vectors; Simon, Ladon/Helios, and Gorgon fixed vectors;
+  full Argus/Ladon/Gorgon byte-for-byte parity checks against the original
+  implementation (including body signatures), plus Cloudflare workerd
+  cold-start verification.
 - Pinned Rust 1.99.1 and byte-for-byte precompiled WASM verification.
 
 ## Why precompile and check in the .wasm file?
@@ -46,8 +49,8 @@ interfaces; it does not perform the heavy Simon/Ladon loops on the deployed
 Worker. The JavaScript reference implementations remain so golden tests can
 detect protocol regressions.
 
-Medusa, Gorgon, other app-signature variants, and browser HLS orchestration
-have **not** been ported to Rust. The FFmpeg.wasm core is already native
+Medusa's custom AES-like mixer and other app-signature variants, plus
+browser HLS orchestration, have **not** been ported to Rust. The FFmpeg.wasm core is already native
 **C compiled to WebAssembly**, not media processing implemented in JavaScript;
 reimplementing the codecs in Rust is unnecessary.
 
