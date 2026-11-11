@@ -6,7 +6,7 @@
 
 - 逐集選取、批次佇列（同時 1–3 集）、下載百分比與位元組、HLS 分片數、取消、重試、錯誤代碼與原因。
 - 公開來源優先；可選自動畫質、720p、1080p，以及不限編碼、H.264、HEVC 或 ByteVC2。
-- Worker 以 **Rust/WASM** 計算 SM3、Argus Simon、Ladon／Helios 及 Gorgon 簽章；Bun 負責建置與測試，JavaScript 保留瀏覽器和網路 API。
+- Worker 以 **Rust/WASM** 計算 SM3、Argus Simon、Ladon／Helios、Gorgon，以及 Medusa 的 XM-XOR、自訂 AES V3、F13 雜湊與 IV／校驗碼；Bun 負責建置與測試，JavaScript 保留瀏覽器、網路與部分協定組裝 API。
 - 原始影片串流直接寫入本機；視需要載入 FFmpeg.wasm 無損封裝 MP4 或轉 H.264，HLS VOD 在瀏覽器端下載分片與整合。
 - 依照 `window.showDirectoryPicker()` 是否存在決定串流寫入資料夾或 Blob 下載，**不會以 Firefox/Chrome 名稱判斷**。
 - 本機下載紀錄保存在 localStorage，重開網頁後未完成工作需要重新開始，影片內容不傳回 GitHub Pages 或儲存在 Cloudflare。
