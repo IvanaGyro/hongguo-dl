@@ -5,6 +5,16 @@ on:
     paths:
       - 'src/ffmpeg.js'
       - 'src/main.js'
+      - 'src/player.js'
+      - 'src/bulk.js'
+      - 'src/zip.js'
+      - 'src/archive-download.js'
+      - 'src/library.js'
+      - 'src/media-cache.js'
+      - 'src/retry.js'
+      - 'public/bulk-download-sw.js'
+      - 'index.html'
+      - 'tests/browser-modes.firefox.mjs'
       - 'scripts/copy-ffmpeg.mjs'
       - 'tests/ffmpeg.firefox.mjs'
       - '.github/workflows/firefox-ffmpeg.yml'
@@ -39,6 +49,9 @@ jobs:
           ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=32x32:r=1 -t 1 \
             -c:v mpeg4 -q:v 5 -movflags +faststart -y /tmp/ffmpeg-smoke.mp4
           test -s /tmp/ffmpeg-smoke.mp4
+          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=320x180:r=24 -t 4 \
+            -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart -y /tmp/ffmpeg-playback.mp4
+          test -s /tmp/ffmpeg-playback.mp4
       - name: Run real FFmpeg.wasm remux in Firefox headless
         shell: bash
         run: |
@@ -57,3 +70,4 @@ jobs:
             sleep 1
           done
           node tests/ffmpeg.firefox.mjs /tmp/ffmpeg-smoke.mp4
+          node tests/browser-modes.firefox.mjs /tmp/ffmpeg-playback.mp4
