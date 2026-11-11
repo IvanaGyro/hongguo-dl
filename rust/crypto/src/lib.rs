@@ -2,6 +2,8 @@
 //! This low-level ABI targets wasm32-unknown-unknown and is also natively testable.
 //! Pointer-based exports are only called from our trusted JS Worker bridge.
 
+mod medusa_f13;
+
 const INITIAL_STATE: [u32; 8] = [
     0x7380166f, 0x4914b2b9, 0x172442d7, 0xda8a0600,
     0xa96f30bc, 0x163138aa, 0xe38dee4d, 0xb0fb0e4e,
@@ -515,6 +517,25 @@ pub unsafe extern "C" fn rust_medusa_sum_md5(data_ptr: *const u8, len: usize) ->
     medusa_sum_md5(std::slice::from_raw_parts(data_ptr, len)).unwrap_or(0)
 }
 
+
+/// # Safety
+/// input_ptr must address 52 bytes (query SM3 || body MD5 || LE timestamp).
+/// output_ptr must address a disjoint, writable 36-byte allocation. Returns
+/// 20 or 36 output bytes, or zero on validation failure.
+#[no_mangle]
+pub unsafe extern "C" fn rust_medusa_hash_f13(
+    input_ptr: *const u8, khronos: u32, output_ptr: *mut u8,
+) -> u32 {
+    if input_ptr.is_null() || output_ptr.is_null() { return 0; }
+    let input = std::slice::from_raw_parts(input_ptr, 52);
+    let query: &[u8; 32] = input[..32].try_into().unwrap();
+    let body: &[u8; 16] = input[32..48].try_into().unwrap();
+    let ts: &[u8; 4] = input[48..52].try_into().unwrap();
+    let out = medusa_f13::medusa_hash_f13(query, body, ts, khronos);
+    std::ptr::copy_nonoverlapping(out.as_ptr(), output_ptr, out.len());
+    out.len() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +629,16 @@ mod tests {
             assert_eq!(output, medusa_aes_v3_encrypt(&data, &box_values, &key, &iv, khronos).unwrap());
         }
         assert!(medusa_aes_v3_encrypt(&data[..247], &box_values, &key, &iv, 1).is_none());
+    }
+
+    #[test]
+    fn hash_f13_selects_all_three_output_branches() {
+        let query: [u8; 32] = std::array::from_fn(|i| (i * 3) as u8);
+        let body: [u8; 16] = std::array::from_fn(|i| (i * 5) as u8);
+        for (timestamp, length) in [(1700000000u32, 36), (1700000002, 20), (1700000007, 20)] {
+            let ts = timestamp.to_le_bytes();
+            assert_eq!(medusa_f13::medusa_hash_f13(&query, &body, &ts, timestamp).len(), length);
+        }
     }
 
     #[test]
