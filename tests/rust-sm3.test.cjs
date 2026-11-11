@@ -54,9 +54,15 @@ const MEDUSA_AES_FIXTURES = [248, 249, 264, 299, 512].flatMap(size =>
   })));
 const originalMedusaAesV3 = MEDUSA_AES_FIXTURES.map(
   f => appSource.medusaAesV3Encrypt(f.bytes, f.khronos));
+const MEDUSA_HASH_FIXTURES = [0, 1, 4, 12, 16, 32, 64, 511].map(n =>
+  Buffer.from(Array.from({ length: n }, (_, i) => (i * 29 + 1) & 255)));
+const originalMedusaIv = MEDUSA_HASH_FIXTURES.map(x => appSource.getIv(0x20230928, x));
+const originalMedusaSums = MEDUSA_HASH_FIXTURES
+  .filter(x => x.length >= 12).map(x => appSource.sumMd5(x));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
-const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor, medusaAesV3 } = require('../worker/rust-sm3.cjs')(wasmModule);
+const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform,
+  medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5 } = require('../worker/rust-sm3.cjs')(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -177,4 +183,24 @@ test('Medusa custom AES-V3 in Rust exactly matches the JS vendor for all 4 time 
   assert.throws(() => medusaAesV3(box, key, iv, 0, Buffer.alloc(247)), />=248/);
   assert.throws(() => medusaAesV3(Buffer.alloc(255), key, iv, 0, Buffer.alloc(248)), /256-byte/);
   assert.throws(() => medusaAesV3(box, key, iv, 0, Buffer.alloc(16 * 1024 * 1024 + 1)), />=248/);
+});
+
+test('Medusa Rust IV and checksum exactly match vendor JS selectors', () => {
+  assert.equal(medusaGetIv(0x20230928, MEDUSA_HASH_FIXTURES[2]), 0x3853833e);
+  assert.equal(medusaSumMd5(MEDUSA_HASH_FIXTURES[3]), 0x99a979e5);
+  for (let i = 0; i < MEDUSA_HASH_FIXTURES.length; ++i) {
+    const bytes = MEDUSA_HASH_FIXTURES[i];
+    assert.equal(medusaGetIv(0x20230928, bytes), originalMedusaIv[i],
+      'Rust IV mismatch at ' + bytes.length);
+    assert.equal(appSource.getIv(0x20230928, bytes), originalMedusaIv[i],
+      'production IV mismatch at ' + bytes.length);
+  }
+  for (let i = 0; i < originalMedusaSums.length; ++i) {
+    const bytes = MEDUSA_HASH_FIXTURES[i + 3];
+    assert.equal(medusaSumMd5(bytes), originalMedusaSums[i],
+      'Rust MD5 checksum mismatch at ' + bytes.length);
+    assert.equal(appSource.sumMd5(bytes), originalMedusaSums[i],
+      'production checksum mismatch at ' + bytes.length);
+  }
+  assert.throws(() => medusaSumMd5(Buffer.alloc(11)), /length/);
 });
