@@ -236,6 +236,60 @@ pub unsafe extern "C" fn rust_gorgon_transform(
     0
 }
 
+
+// Medusa XM-XOR byte permutation. This deliberately preserves the vendor's
+// unusual reverse-order write and dependent post-mixing, with u8 wrapping
+// arithmetic equivalent to the JavaScript bitwise operations.
+pub fn medusa_xmxor(data: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
+    if data.len() < 5 { return None; }
+    let n = data.len();
+    let mut encoded = vec![0u8; n];
+    for (i, &value) in data.iter().enumerate() {
+        let at = (i * 4) & 28;
+        let d0 = key[at];
+        let d1 = key[at + 1];
+        let mut d2 = value.rotate_left(4).wrapping_add(d0);
+        d2 = !d2 ^ d1;
+        d2 = d2.rotate_left(3);
+        d2 = d2.wrapping_add(d1) ^ d0;
+        encoded[n - i - 1] = !d2;
+    }
+    let last = encoded[n - 1] ^ encoded[n - 2];
+    let first = encoded[0];
+    encoded[0] = (!last).wrapping_add(first);
+    encoded[1] = (encoded[0] ^ encoded[n - 1] ^ 254).wrapping_add(encoded[1]);
+    encoded[2] = encoded[2].wrapping_add(
+        last.wrapping_sub(first) ^ encoded[1].rotate_left(3) ^ 2
+    );
+    for i in 0..n - 4 {
+        let temp = encoded[i + 2].rotate_left(3) ^ encoded[i + 1] ^ ((i + 3) as u8);
+        encoded[i + 3] = (!temp).wrapping_add(encoded[i + 3]);
+    }
+    encoded[n - 1] ^= encoded[n - 2];
+    let mut sum = 0u8;
+    for i in 0..n - 1 {
+        sum = sum.wrapping_add(encoded[i + 1]);
+    }
+    encoded[0] = (encoded[0] ^ encoded[1]).wrapping_add(sum);
+    Some(encoded)
+}
+
+/// # Safety
+/// All pointers must address correctly sized, disjoint, allocated Wasm memory.
+/// key_ptr points to 32 bytes; data_ptr/out_ptr each point to len bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rust_medusa_xmxor(
+    key_ptr: *const u8, data_ptr: *const u8, len: usize, output_ptr: *mut u8,
+) -> u32 {
+    if key_ptr.is_null() || data_ptr.is_null() || output_ptr.is_null()
+        || !(5..=16 * 1024 * 1024).contains(&len) { return 1; }
+    let key: &[u8; 32] = &*(key_ptr as *const [u8; 32]);
+    let data = std::slice::from_raw_parts(data_ptr, len);
+    let Some(encoded) = medusa_xmxor(data, key) else { return 2; };
+    std::ptr::copy_nonoverlapping(encoded.as_ptr(), output_ptr, len);
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +345,19 @@ mod tests {
             "aa1bde6f7b948ad7823d322065098be5ba8a2733");
         assert_eq!(hex(gorgon_transform(&bytes, 0xffff)),
             "cb95f3729edc67f5cf7a645210f698674fd40085");
+    }
+
+    #[test]
+    fn medusa_xmxor_is_deterministic_and_rejects_invalid_lengths() {
+        let mut key = [0u8; 32];
+        for (i, b) in key.iter_mut().enumerate() { *b = (i * 19) as u8; }
+        assert!(medusa_xmxor(b"abcd", &key).is_none());
+        let original = b"medusa-signature-protocol".to_vec();
+        let output = medusa_xmxor(&original, &key).unwrap();
+        assert_eq!(output.len(), original.len());
+        assert_ne!(output, original);
+        assert_eq!(output, medusa_xmxor(&original, &key).unwrap());
+        assert_ne!(output, medusa_xmxor(b"medusa-signature-protocoL", &key).unwrap());
     }
 
     #[test]
