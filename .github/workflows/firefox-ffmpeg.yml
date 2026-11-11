@@ -1,0 +1,57 @@
+name: Firefox FFmpeg.wasm browser test
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/ffmpeg.js'
+      - 'src/main.js'
+      - 'scripts/copy-ffmpeg.mjs'
+      - 'tests/ffmpeg.firefox.mjs'
+      - '.github/workflows/firefox-ffmpeg.yml'
+      - 'package.json'
+      - 'bun.lock'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - name: Install locked app dependencies
+        run: bun ci
+      - name: Install Playwright only in CI runner
+        run: bun add --dev playwright@1.58.0
+      - name: Install Firefox browser dependencies
+        run: bunx playwright install --with-deps firefox
+      - name: Build production site for GitHub Pages
+        env:
+          VITE_BASE_PATH: /hongguo-dl/
+        run: bun run build
+      - name: Create a tiny synthetic video fixture
+        run: |
+          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=32x32:r=1 -t 1 \
+            -c:v mpeg4 -q:v 5 -movflags +faststart -y /tmp/ffmpeg-smoke.mp4
+          test -s /tmp/ffmpeg-smoke.mp4
+      - name: Run real FFmpeg.wasm remux in Firefox headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:4173/hongguo-dl/ -o /dev/null; then
+              break
+            fi
+            if ! kill -0 "$preview_pid" 2>/dev/null; then
+              cat /tmp/vite-preview.log
+              exit 1
+            fi
+            sleep 1
+          done
+          node tests/ffmpeg.firefox.mjs /tmp/ffmpeg-smoke.mp4
