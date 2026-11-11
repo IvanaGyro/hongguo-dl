@@ -1,61 +1,77 @@
 # Hongguo DL
 
-靜態網頁＋Cloudflare Worker 的紅果短劇**下載管理器**。不提供影片搜尋或播放功能，僅支援劇集 ID、官方劇集／播放網址，以及列入白名單的媒體直連網址。請只下載您有權保存的內容。
+紅果短劇下載管理器，採用 **Bun + GitHub Pages 靜態網頁 + Cloudflare Worker API**。介面只處理劇集 ID、官方劇集網址或列入白名單的媒體直連網址，不搜尋或播放影片。請只下載您有權保存的內容。
 
 ## 功能
 
-- 選擇分集、批次佇列（同時 1–3 集）、目前進度、成功／失敗／取消、錯誤代碼與原因、重試；HLS 另顯示分片進度。
-- 來源優先使用官網公開影片（自動畫質／編碼）；其他情況使用上游 App 取源模組。
-- 可選不限編碼、H.264、HEVC/H.265、ByteVC2。**不限 H.264 不代表保證能轉碼 ByteVC2**。
-- 未加密原始串流直接保存；按需使用本機 FFmpeg.wasm 無損封裝 MP4 或轉成 H.264，HLS VOD 透過 FFmpeg.wasm 整合。
-- 瀏覽器若提供 `window.showDirectoryPicker()`，就能直接串流寫入選取的資料夾；否則退回 Blob 儲存單集（以實際功能偵測為準，不以瀏覽器品牌判斷）。
-- 佇列狀態保存在 localStorage，重開網頁後未完成工作標示中斷，需要重試；不會保留 CDN 簽章連結或影片密鑰。
+- 逐集選取、批次佇列（同時 1–3 集）、下載百分比與位元組、HLS 分片數、取消、重試、錯誤代碼與原因。
+- 公開來源優先；可選自動畫質、720p、1080p，以及不限編碼、H.264、HEVC 或 ByteVC2。
+- 原始影片串流直接寫入本機；視需要載入 FFmpeg.wasm 無損封裝 MP4 或轉 H.264，HLS VOD 在瀏覽器端下載分片與整合。
+- 依照 `window.showDirectoryPicker()` 是否存在決定串流寫入資料夾或 Blob 下載，**不會以 Firefox/Chrome 名稱判斷**。
+- 本機下載紀錄保存在 localStorage，重開網頁後未完成工作需要重新開始，影片內容不傳回 GitHub Pages 或儲存在 Cloudflare。
 
-## 部署到 Cloudflare
-
-需 Node.js 20+、Cloudflare 帳號，安裝依賴後執行：
-
-```sh
-npm install
-npm test
-npm run build
-npx wrangler login
-npm run deploy
-```
-
-`wrangler.jsonc` 將 `dist/` 靜態檔案與 `worker/worker.js` 一起部署在同一個 Cloudflare Worker 網域。**不需要獨立的 Node.js 伺服器，也不需要跨來源 CORS 設定。**
-
-本機測試：
-
-```sh
-npm install
-npm run build
-npm run dev:worker
-```
-
-然後開啟 `http://127.0.0.1:8787`。若要使用 Vite 熱更新，可另開 `npm run dev`，其 `/api` 請求會轉發到 8787。
-
-## 使用限制
-
-- 未提供 `showDirectoryPicker()` 的環境會使用 Blob 儲存，限制 **每集 300 MiB**，避免無限制使用記憶體。Firefox 支援 OPFS 與選擇資料夾上傳，不等於一定提供此存取本機任意目錄的寫入 API。
-- FFmpeg.wasm 本機讀寫與處理限制 **每集 320 MiB 輸入**；單執行緒核心成本高。標準版未保證支援 ByteVC2/VVC 解碼，尤其不能保證轉成 H.264。
-- 不實作登入、DRM 授權或影片搜尋；不支援 SAMPLE-AES / Widevine 或直播 HLS。僅接受白名單 HTTPS 來源和受驗證的官方劇集資料。
-- 不支援斷點續傳。HLS 工作先將分片放入 FFmpeg.wasm 虛擬檔案系統；原始 MP4 可直接串流寫入資料夾。
-- 受來源 API、反爬限制、地區及 Cloudflare 出站網路環境影響；**目前尚未完成真實紅果片源端對端測試**，請勿把通過單元測試視為實際可下載的證明。
-- 公開部署前建議設定 Cloudflare WAF / Rate Limiting，避免代理遭大量濫用。
-
-## 架構
+## 架構與限制
 
 ```text
-靜態前端（Vite） -- /api/series --> Worker -- 官網劇集資料
-     |              -- /api/source --> Worker -- 公開頁／App 取源
-     |              -- /api/media  --> Worker -- 官方 CDN（串流）
-     +-- File System Access／Blob（原始媒體）
-     +-- FFmpeg.wasm（HLS、選用 MP4 封裝／轉碼）
+GitHub Pages                  Cloudflare Workers                  官方來源
+/ hongguo-dl/ (Vite)       →  /api/series                     →   官網分集資料
+  Bun 建置的靜態頁面       →  /api/source                     →   App / 公開片源
+  下載管理器 + FFmpeg.wasm →  /api/media (串流與 Range)       →   影片 CDN
+         ↓
+   使用者的本機檔案系統（若 API 不支援，則 Blob 下載）
 ```
 
-Worker 限制請求主機與路徑，逐次檢查重新導向，並不轉送使用者 Cookie、Authorization 或其他不必要 Header。影片不儲存於 Cloudflare 伺服器。
+Worker 是**唯一需要執行的服務端運算**。GitHub Pages 沒有反向代理能力，無法直接替代 Worker。因為是不同網域，Worker 僅允許設定的網站 Origin 存取 API，預設包含 `https://ivanagyro.github.io`（不會因為頁面子路徑而改變 Origin）。亦可設定 Worker 環境變數 `FRONTEND_ORIGINS`，例如 `https://www.example.org,https://another.example.org`。CORS 不是驗證機制，公開部署前仍建議設置 Cloudflare Rate Limiting / WAF。
 
-## 來源、授權
+### 1. 安裝 Bun 與執行驗證
 
-本專案與衍生檔案依 GPL-3.0-only 授權；`worker/vendor/` 改寫自 [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)，沿用其中的 Argus、Ladon、SM3、匿名裝置註冊及取源演算法。FFmpeg.wasm 套件在安裝／建置期間取得，不提交大型 WASM 二進位檔。詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 與 [LICENSE](LICENSE)。
+安裝 [Bun](https://bun.sh/) 後，於儲存庫目錄執行：
+
+```sh
+bun install
+bun run test
+bun run build
+```
+
+FFmpeg.wasm 核心由建置腳本 gzip 壓縮成約 9.8 MiB，避免 Cloudflare Worker Assets 的 25 MiB 限制。此版實際部署在 GitHub Pages，不再需要把此檔案放進 Worker。
+
+### 2. 部署 Cloudflare Worker
+
+```sh
+bunx wrangler login
+bun run deploy:worker
+```
+
+記下 Wrangler 提供的 HTTPS Worker 網址，例如 `https://hongguo-dl.<your-subdomain>.workers.dev`。**Worker 只託管 `/api/*`，不託管靜態檔案**。每次更新 Worker 可再執行 `bun run deploy:worker`；不用重新建置 GitHub Pages 前端。
+
+### 3. 部署 GitHub Pages
+
+1. 進入 [此儲存庫 GitHub Pages 設定](https://github.com/IvanaGyro/hongguo-dl/settings/pages)，在 **Build and deployment → Source** 選取 **GitHub Actions**。
+2. 在 `main` 分支包含此工作流程之後，`.github/workflows/pages.yml` 會在每次 push main 時，用 Bun 建置並部署 `dist/`；也可在 Actions 手動執行 `workflow_dispatch`。
+3. 網站預期網址為 `https://ivanagyro.github.io/hongguo-dl/`，Vite base path 已設定為 `/hongguo-dl/`，FFmpeg.wasm 壓縮核心亦使用此路徑。
+4. 前端可以透過「**Cloudflare Worker API 設定**」填入上一步的 Worker 網址（僅儲存於此瀏覽器）；也可在 GitHub 儲存庫 **Settings → Secrets and variables → Actions → Variables** 設定 `HONGGUO_WORKER_ORIGIN`，讓後續 Pages 建置自動預填 Worker 網址。若未設定，在 GitHub Pages 中會提示使用者填入。
+
+**請注意：**目前的程式碼在 PR 分支中，只有合併到 `main` 並啟用 Pages 工作流程後，前端才會公開。這次未登入您的 Cloudflare 帳號，因此 Worker 也尚未正式部署。
+
+### 本機開發
+
+使用兩個終端機：
+
+```sh
+bun run dev:worker   # http://127.0.0.1:8787
+bun run dev          # http://localhost:5173
+```
+
+Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_ORIGIN`，即可使用此代理。
+
+## 已知限制
+
+- 未對真實紅果片源執行端對端驗證；來源 API 可能因區域、反爬措施或來源變更失敗。
+- Blob fallback 上限每集 300 MiB；FFmpeg.wasm 輸入／HLS 分片 staging 上限約 320 MiB。只有未加密且無需轉碼的原始串流能直接串流寫入資料夾。
+- 標準 FFmpeg.wasm **不保證 ByteVC2/VVC 解碼**，因此允許選取 ByteVC2 不代表可以轉成 H.264。
+- 不支援 DRM 授權、直播 HLS、斷點續傳或使用者登入。重新載入頁面會中斷下載；不會保存已簽章媒體 URL 或影片密鑰。
+- 不接受任意網域的反向代理請求。Worker 驗證 HTTPS 網址與每次重新導向，使用者 Cookie 與授權標頭不會被透傳。
+
+## 授權與第三方來源
+
+本專案及衍生檔案採 GPL-3.0-only。 `worker/vendor/` 修改自 [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama) 的播放取源模組；FFmpeg.wasm 於建置時取得，並遵循相關授權。詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和 [LICENSE](LICENSE)。
