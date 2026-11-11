@@ -196,10 +196,10 @@ function outputFileName(job, source, processed) {
       if (ext) extension = '.' + ext[1].toLowerCase();
     } catch { /* filename defaults to mp4 */ }
   }
-  return title + extension;
+  return title + '_' + job.id.slice(0, 8) + extension;
 }
 function triggerSave(bytes, name) {
-  const blob = new Blob([bytes], { type: 'application/octet-stream' });
+  const blob = new Blob(Array.isArray(bytes) ? bytes : [bytes], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = name;
