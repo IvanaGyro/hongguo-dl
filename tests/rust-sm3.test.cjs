@@ -59,10 +59,24 @@ const MEDUSA_HASH_FIXTURES = [0, 1, 4, 12, 16, 32, 64, 511].map(n =>
 const originalMedusaIv = MEDUSA_HASH_FIXTURES.map(x => appSource.getIv(0x20230928, x));
 const originalMedusaSums = MEDUSA_HASH_FIXTURES
   .filter(x => x.length >= 12).map(x => appSource.sumMd5(x));
+// Choose representative timestamps for each selector branch, with different
+// content so F13 errors cannot hide behind a single fixed 20-byte result.
+const F13_FIXTURES = [
+  [0, [1700000000, 1700000002, 1700000007]],
+  [1, [1700000000, 1700000001, 1700000003]],
+  [2, [1700000000, 1700000002, 1700000007]],
+  [3, [1700000000, 1700000001, 1700000002]]
+].flatMap(([seed, timestamps]) => timestamps.map(khronos => {
+  const query = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 3 + seed * 7) & 255));
+  const body = Buffer.from(Array.from({ length: 16 }, (_, i) => (i * 5 + seed * 7) & 255));
+  const ts = Buffer.alloc(4); ts.writeUInt32LE(khronos);
+  return { query, body, ts, khronos };
+}));
+const originalF13 = F13_FIXTURES.map(f => appSource.hashF13(f.query, f.body, f.ts, f.khronos));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
 const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform,
-  medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5 } = require('../worker/rust-sm3.cjs')(wasmModule);
+  medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5, medusaHashF13 } = require('../worker/rust-sm3.cjs')(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -203,4 +217,20 @@ test('Medusa Rust IV and checksum exactly match vendor JS selectors', () => {
       'production checksum mismatch at ' + bytes.length);
   }
   assert.throws(() => medusaSumMd5(Buffer.alloc(11)), /length/);
+});
+
+test('Medusa Rust F13 exactly matches all three vendor selector branches', () => {
+  const lengths = new Set();
+  for (let i = 0; i < F13_FIXTURES.length; ++i) {
+    const f = F13_FIXTURES[i];
+    const expected = originalF13[i];
+    lengths.add(expected.length);
+    assert.deepEqual(medusaHashF13(f.query, f.body, f.ts, f.khronos), expected,
+      'raw Rust F13 differs at fixture ' + i + ', len=' + expected.length);
+    assert.deepEqual(appSource.hashF13(f.query, f.body, f.ts, f.khronos), expected,
+      'production Rust F13 differs at fixture ' + i + ', len=' + expected.length);
+  }
+  assert.deepEqual([...lengths].sort((a, b) => a - b), [20, 36]);
+  assert.throws(() => medusaHashF13(Buffer.alloc(31), Buffer.alloc(16), Buffer.alloc(4), 1),
+    /32-byte query SM3/);
 });
