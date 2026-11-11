@@ -18,8 +18,19 @@ async function compressedWasmUrl() {
     if (!res.ok || !res.body) throw errorWith('FFMPEG_ERROR', '無法取得 FFmpeg.wasm 壓縮核心（HTTP ' + res.status + '）');
     // The compressed artifact is smaller than Cloudflare's 25 MiB per-asset limit.
     // Unpack only on first demand, preserving an ordinary static-site deployment.
-    const stream = res.body.pipeThrough(new DecompressionStream('gzip'));
-    const wasm = await new Response(stream).blob();
+    // Some static hosts send Content-Encoding: gzip and the browser already
+    // transparently decompresses the response. Sniff the actual payload so
+    // Firefox never attempts to gunzip an already-decoded WebAssembly module.
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let wasm;
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      wasm = await new Response(new Blob([bytes]).stream()
+        .pipeThrough(new DecompressionStream('gzip'))).blob();
+    } else if (bytes[0] === 0 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d) {
+      wasm = new Blob([bytes], { type: 'application/wasm' });
+    } else {
+      throw errorWith('FFMPEG_ERROR', 'FFmpeg.wasm 核心資料格式錯誤（不是 gzip 或 WebAssembly）');
+    }
     wasmBlobUrl = URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' }));
     return wasmBlobUrl;
   })().catch(error => { wasmPromise = null; throw error; });
