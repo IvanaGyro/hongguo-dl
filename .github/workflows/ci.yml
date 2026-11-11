@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+    branches: [main, feat/cloudflare-browser-downloader]
+  pull_request:
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Unit tests
+        run: npm test
+      - name: Static build
+        run: npm run build
+      - name: Wrangler dry-run
+        run: npx wrangler deploy --dry-run --outdir /tmp/hongguo-worker
