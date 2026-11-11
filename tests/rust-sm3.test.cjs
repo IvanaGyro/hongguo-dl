@@ -42,9 +42,13 @@ const GORGON_FIXTURES = [
   ['query=%E4%B8%AD%E6%96%87', Buffer.from('a different payload'), 1700123456, 65535],
 ];
 const originalGorgon = GORGON_FIXTURES.map(args => appSource.xGorgon(...args));
+const XM_KEY = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 19 + 5) & 255));
+const XM_FIXTURES = [5, 6, 8, 16, 32, 64, 128, 257, 1024].map(n =>
+  Buffer.from(Array.from({ length: n }, (_, i) => (i * 23 + 3) & 255)));
+const originalXmXor = XM_FIXTURES.map(input => appSource.xmxor(input, XM_KEY));
 const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
 const wasmModule = new WebAssembly.Module(compiled);
-const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform } = require('../worker/rust-sm3.cjs')(wasmModule);
+const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor } = require('../worker/rust-sm3.cjs')(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -137,4 +141,17 @@ test('Rust Gorgon generates byte-for-byte compatible app signatures', () => {
     assert.equal(appSource.xGorgon(...GORGON_FIXTURES[i]), originalGorgon[i],
       'Gorgon signature differs at fixture ' + i);
   }
+});
+
+test('Rust Medusa XM-XOR matches vendor JS and independent 32-byte golden', () => {
+  assert.equal(medusaXmXor(XM_FIXTURES[4], XM_KEY).toString('hex'),
+    'dcfab15d2dc75f251f7aff27d678bd714ba88d42b99621222e3cf81d6c69c793');
+  for (let i = 0; i < XM_FIXTURES.length; i++) {
+    const name = 'XM-XOR length ' + XM_FIXTURES[i].length;
+    assert.deepEqual(medusaXmXor(XM_FIXTURES[i], XM_KEY), originalXmXor[i], name);
+    assert.deepEqual(appSource.xmxor(XM_FIXTURES[i], XM_KEY), originalXmXor[i],
+      'Production backend differs at ' + name);
+  }
+  assert.throws(() => medusaXmXor(Buffer.alloc(4), XM_KEY), /at least 5/);
+  assert.throws(() => medusaXmXor(XM_FIXTURES[0], Buffer.alloc(31)), /32-byte key/);
 });
