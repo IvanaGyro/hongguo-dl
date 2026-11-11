@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { safeUrl, parseInput, parseEpisodes, readRouterData, findPublicMedia } from '../worker/worker.js';
+import worker, { safeUrl, parseInput, parseEpisodes, readRouterData, findPublicMedia, corsOrigin } from '../worker/worker.js';
 
 const data = detail => '<script>window._ROUTER_DATA = ' + JSON.stringify({
   loaderData: { 'player_(series_id)/page': { seriesDetail: detail } }
@@ -44,9 +44,32 @@ test('public API rejects non-whitelisted media before network fetch', async () =
   assert.equal(response.status, 403);
   assert.equal((await response.json()).error.code, 'HOST_NOT_ALLOWED');
 });
-test('worker serves static assets outside api', async () => {
-  const response = await worker.fetch(new Request('https://site.example/'), {
-    ASSETS: { fetch: () => new Response('index') }
-  });
-  assert.equal(await response.text(), 'index');
+test('worker is API-only and never depends on static asset binding', async () => {
+  const response = await worker.fetch(new Request('https://site.example/'), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error.code, 'NOT_FOUND');
+});
+test('GitHub Pages cross-origin CORS and preflight', async () => {
+  const origin = 'https://ivanagyro.github.io';
+  const options = await worker.fetch(new Request('https://example.workers.dev/api/media', {
+    method: 'OPTIONS', headers: {
+      Origin: origin, 'Access-Control-Request-Method': 'GET',
+      'Access-Control-Request-Headers': 'Range'
+    }
+  }), {});
+  assert.equal(options.status, 204);
+  assert.equal(options.headers.get('Access-Control-Allow-Origin'), origin);
+  assert.match(options.headers.get('Access-Control-Allow-Headers'), /Range/);
+  const health = await worker.fetch(new Request('https://example.workers.dev/api/health', {
+    headers: { Origin: origin }
+  }), {});
+  assert.equal(health.status, 200);
+  assert.equal(health.headers.get('Access-Control-Allow-Origin'), origin);
+  const bad = await worker.fetch(new Request('https://example.workers.dev/api/health', {
+    headers: { Origin: 'https://attacker.example' }
+  }), {});
+  assert.equal(bad.status, 403);
+  assert.equal(bad.headers.get('Access-Control-Allow-Origin'), null);
+  assert.equal(corsOrigin('https://my.site', 'https://example.workers.dev/api/health',
+    { FRONTEND_ORIGINS: 'https://my.site,https://other.site' }), 'https://my.site');
 });
