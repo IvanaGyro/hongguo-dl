@@ -16,6 +16,14 @@ export function normalizeWorkerOrigin(input) {
   }
   return url.origin;
 }
+// A previously saved custom origin overrides the build-time default. Invalid
+// stale browser settings must not hide a valid GitHub Pages PROXY configuration.
+export function chooseWorkerOrigin(saved, configured) {
+  let fallback = '';
+  try { fallback = normalizeWorkerOrigin(configured); } catch { /* optional build setting */ }
+  if (!saved) return fallback;
+  try { return normalizeWorkerOrigin(saved); } catch { return fallback; }
+}
 export function apiUrl(path, workerOrigin = '') {
   if (!path.startsWith('/api/')) throw new Error('不允許非 /api/ 的 Worker 路徑');
   return normalizeWorkerOrigin(workerOrigin) + path;
