@@ -7,10 +7,10 @@ function installRustSm3(wasmModule) {
   const { exports: kernel } = new WebAssembly.Instance(wasmModule, {});
   const { memory, rust_alloc, rust_dealloc, rust_sm3,
     rust_simon_encrypt, rust_ladon_transform, rust_gorgon_transform,
-    rust_medusa_xmxor } = kernel;
+    rust_medusa_xmxor, rust_medusa_aes_v3 } = kernel;
   if (!memory || !rust_alloc || !rust_dealloc || !rust_sm3 ||
       !rust_simon_encrypt || !rust_ladon_transform || !rust_gorgon_transform ||
-      !rust_medusa_xmxor)
+      !rust_medusa_xmxor || !rust_medusa_aes_v3)
     throw new Error('The Rust signing wasm ABI is missing required exports');
 
   const allocate = length => {
@@ -98,6 +98,37 @@ function installRustSm3(wasmModule) {
     }
   }
 
+  function medusaAesV3(box, key, iv, khronos, data) {
+    if (!Buffer.isBuffer(box) || box.length !== 256 ||
+        !Buffer.isBuffer(key) || key.length !== 16 ||
+        !Buffer.isBuffer(iv) || iv.length !== 16 ||
+        !Buffer.isBuffer(data) || data.length < 248 || data.length > 16 * 1024 * 1024 ||
+        !Number.isInteger(khronos) || khronos < 0 || khronos > 0xffffffff)
+      throw new TypeError('Medusa AES-V3 requires 256-byte S-box, 16-byte key/IV, and >=248 data bytes');
+    const boxPtr = allocate(256);
+    let keyPtr = 0, ivPtr = 0, dataPtr = 0, outPtr = 0;
+    try {
+      keyPtr = allocate(16);
+      ivPtr = allocate(16);
+      dataPtr = allocate(data.length);
+      outPtr = allocate(data.length + 1);
+      // Allocation can grow wasm memory, so set all views only afterwards.
+      new Uint8Array(memory.buffer, boxPtr, 256).set(box);
+      new Uint8Array(memory.buffer, keyPtr, 16).set(key);
+      new Uint8Array(memory.buffer, ivPtr, 16).set(iv);
+      new Uint8Array(memory.buffer, dataPtr, data.length).set(data);
+      const status = rust_medusa_aes_v3(boxPtr, keyPtr, ivPtr, khronos, dataPtr, data.length, outPtr);
+      if (status !== 0) throw new Error('Rust Medusa AES-V3 error ' + status);
+      return Buffer.from(new Uint8Array(memory.buffer, outPtr, data.length + 1));
+    } finally {
+      if (outPtr) rust_dealloc(outPtr, data.length + 1);
+      if (dataPtr) rust_dealloc(dataPtr, data.length);
+      if (ivPtr) rust_dealloc(ivPtr, 16);
+      if (keyPtr) rust_dealloc(keyPtr, 16);
+      rust_dealloc(boxPtr, 256);
+    }
+  }
+
   const simonBlocks = (key, input) => transform(rust_simon_encrypt, key, input);
   const ladonTransform = (md5Ascii, input) => transform(rust_ladon_transform, md5Ascii, input);
 
@@ -111,6 +142,7 @@ function installRustSm3(wasmModule) {
   const appSource = require('./vendor/app-source.js');
   appSource.setRustGorgonBackend(gorgonTransform);
   appSource.setRustXmXorBackend(medusaXmXor);
-  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor };
+  appSource.setRustMedusaAesV3Backend(medusaAesV3);
+  return { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform, medusaXmXor, medusaAesV3 };
 }
 module.exports = installRustSm3;
