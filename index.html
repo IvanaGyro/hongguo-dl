@@ -16,7 +16,12 @@
         <h1>讓每一集的下載狀態都一目了然。</h1>
         <p>輸入劇集 ID、官方劇集網址或媒體直連網址。不提供影片搜尋與播放。僅下載您有權保存的內容。</p>
       </section>
+      <nav class="mode-tabs" aria-label="操作模式">
+        <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
+        <button id="mode-play" type="button" aria-pressed="false">播放模式</button>
+      </nav>
       <section class="panel">
+        <div id="recent-series" class="recent-library" aria-label="最近看過的影集"></div>
         <form id="lookup-form" class="lookup">
           <label for="input-url">劇集 ID 或網址</label>
           <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="例如：1234567890 或 https://hongguoduanju.com/detail?series_id=..." /><button type="submit" id="lookup-button" class="primary">讀取分集</button></div>
@@ -40,6 +45,7 @@
             <div class="actions"><button id="select-all" type="button" class="quiet">全選</button><button id="select-none" type="button" class="quiet">清空選取</button></div>
           </div>
           <div id="episodes" class="episode-grid" aria-label="分集選擇"></div>
+          <div id="download-controls">
           <div class="settings">
             <label>畫質 <select id="quality"><option value="auto">最佳可取得</option><option value="1080p">1080p 以上</option><option value="720p">720p 以上</option></select></label>
             <label>編碼 <select id="codec"><option value="auto">不限編碼</option><option value="h264">H.264</option><option value="hevc">HEVC / H.265</option><option value="bytevc2">ByteVC2</option></select></label>
@@ -48,9 +54,35 @@
           </div>
           <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle">依瀏覽器支援程度保存</span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
           <p id="browser-note" class="help"></p>
+          <div class="batch-tools">
+            <strong>整劇批次下載</strong>
+            <p class="help">下載每集仍可單獨儲存。ZIP 以一個檔案提供所選分集；無損合併不重新編碼、不加入獨立字幕，但受瀏覽器 FFmpeg 記憶體限制。</p>
+            <div class="actions">
+              <button type="button" id="bulk-zip">所選集數打包 ZIP（一次下載）</button>
+              <button type="button" id="bulk-concat">所選集數無損合併 MP4</button>
+              <button type="button" id="bulk-cancel" hidden>取消批次處理</button>
+            </div>
+            <p id="bulk-status" class="help" role="status" aria-live="polite"></p>
+          </div>
+          </div>
         </div>
+        <section id="player-panel" hidden aria-label="影集播放器">
+          <div class="player-header"><h2 id="player-episode">尚未播放</h2><span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span></div>
+          <video id="player-video" controls playsinline preload="metadata" aria-label="影集影片播放"></video>
+          <div class="player-controls">
+            <label>播放畫質
+              <select id="player-quality"><option value="auto">最佳可取得</option><option value="1080p">1080p 以上</option><option value="720p">720p 以上</option></select>
+            </label>
+            <label>播放編碼
+              <select id="player-codec"><option value="auto">不限編碼</option><option value="h264">H.264</option><option value="hevc">HEVC / H.265</option><option value="bytevc2">ByteVC2</option></select>
+            </label>
+            <button id="player-prev" type="button">上一集</button>
+            <button id="player-next" type="button">下一集</button>
+          </div>
+          <p class="help">已播集數與上次進度只記錄在此瀏覽器。播畢自動接續下一集；行動瀏覽器如限制自動播放，請按播放器的播放鍵。HLS 在 Firefox 可能需要先以 FFmpeg.wasm 無損封裝。</p>
+        </section>
       </section>
-      <section class="panel">
+      <section id="queue-panel" class="panel">
         <div class="section-title"><div><h2>下載管理器</h2><p id="queue-summary" class="subtle">尚未加入任何下載</p></div><div class="actions"><button id="retry-failed" type="button">重試失敗</button><button id="clear-finished" type="button">清除已完成</button></div></div>
         <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">佇列是空的。讀取劇集後即可選集下載。</div></div>
       </section>
