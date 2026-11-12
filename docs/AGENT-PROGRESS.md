@@ -339,3 +339,13 @@
 - **重大測試版本辨識**：[Browser #43285003886](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285003886) 雖然 **completed/success** 且讀到 300s/1800s PASS 行，但該 run HEAD 是 `b4d9440`（只新增測試程式），**尚未包含後來 [7b46f19](https://github.com/IvanaGyro/hongguo-dl/commit/7b46f19a3812dbfd742670e4fe438e52a1afac8c) 在 workflow 設定 `CENC_TEST_PAUSE=1` 的提交**，因此 **並無 paused backpressure PASS 行**，禁止把此結果當作暫停驗收。
 - [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) 為包含較新 workflow 的後續 run，最後一次查看仍 **in_progress**；其完成前暫停節流仍是 **NOT YET VERIFIED**。部分中間 run 被 GitHub concurrency 取消，不屬於功能失敗；避免不斷檢查被取消的執行。
 - 持續進行可靠性改善：下一步評估解碼器 WASM availability HEAD 探測的「首次 404／網路失敗被永久 cache」問題，先補可獨立單測的恢復邏輯，再讓 CENC 與 BVC2 共用。每階段提交 main 並記錄，不開 PR。
+
+## 階段 34 — 2026-11-13 CENC/BVC2 WASM HEAD 可用性恢復，不再將暫時失敗永久快取（待 CI）
+
+- [b8149ce](https://github.com/IvanaGyro/hongguo-dl/commit/b8149ce031ff75d7e361892caccf521b7ece88ff)：新增 `src/retryable-availability.js`，將可選 WASM 的 HEAD 探測做 single-flight Promise 共用；成功後 memoize，遇 404/503、temporary offline 或 mock fetch throw 則回傳 false 並清除 memoized state，下一次詢問會重新探測。
+- [7297b2c](https://github.com/IvanaGyro/hongguo-dl/commit/7297b2cc0178cfaca84172670178a99cb30cb880)：新增 3 個 Node 測試：首次 false 後成功、同步 throw 後成功、三個同時查詢只會發一次網路請求且成功後快取。
+- [effd215](https://github.com/IvanaGyro/hongguo-dl/commit/effd2155a071d8786ab397940fa4bd960fc9f03b)／[e3fd0a2](https://github.com/IvanaGyro/hongguo-dl/commit/e3fd0a2ab8c3f0909e6e7412bfe371d3ffe983ee)：`src/bvc2.js` 採用新 helper，沿用 WASM/manifest content-type、大小與兩檔 HEAD 檢查；**中間提交 effd215 的 regex escape 曾不正確，緊接的 e3fd0a2 已修正，務必以後者及更新的 main 為準**。
+- [205dc02](https://github.com/IvanaGyro/hongguo-dl/commit/205dc024c8d190df8162995e26d7191be1e11071)：`src/cenc-remux.js` 採用相同 helper，保留 wasm MIME/大小守門；首輪暫時缺檔或 HEAD 失敗不再讓當前 tab 永久判斷 CENC 不可用。仍以 Worker 的 manifest SHA256 驗證作為真正的 bundle 保護。
+- **驗收狀態：待新 main CI/build**。不能以舊成功 run 替代此次新 helper / JS syntax 的驗證；中間產生的 CI 若因過渡提交失敗，須以修復後最新 SHA 為準。後續如失敗，直接看那一個失敗 job 並修補，不反覆 poll。
+- **未完成關鍵外部條件不變**：真實 1080p HEVC+ CENC、Android Firefox、真實 ByteVC2 bitstream 仍不可標 PASS。新 pause backpressure acceptance 另需含 `CENC_TEST_PAUSE=1` 的 run 中實際 PASS 行。
+- 下一步：驗收此 helper 的三個測試，確認含暫停測試的 browser log；必要時追加最小修正，完成後立即寫進階段 35。
