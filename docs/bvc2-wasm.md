@@ -69,3 +69,20 @@ verifies actual playback and its observed startup cost.
   required. The low-latency EME path is **conditionally available**, not a
   guarantee for every HEVC browser or source. Use `原生串流解密` in the
   player source info as the runtime indicator.
+
+## 2026-11-13 後續：版本一致性及「真實正例」驗收工具
+
+- [BVC2 experimental WASM #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447)：專用解碼器與 x264 確實可編譯到 WebAssembly，Node 會拒絕普通 H.264 MP4 和無效位元組；**這是負例，不代表有解出 ByteVC2 實際影格**。
+- [BVC2 versioned WASM release #43280846374](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280846374) 已完成成功：正式版本化 `public/bvc2/bvc2-core.mjs`、`bvc2-core.wasm`、`manifest.json`；script 和瀏覽器 Worker 核對 SHA256、原始碼指紋與 Librempeg/x264 pin，拒絕版本混用。CI/Pages 使用 `node scripts/bvc2-wasm-bundle.mjs verify` 守門。
+- 給有合法本地 ByteVC2 測試檔案的使用者，**不要把影片、金鑰或明文輸出提交到 GitHub**，可以在自己的電腦執行：
+
+```bash
+node scripts/bvc2-wasm-bundle.mjs verify
+# 必須先在本機安裝 Node.js 與 FFmpeg/ffprobe；此例是未加密樣本
+node scripts/verify-bvc2-fixture.mjs /path/to/authorized-bvc2.mp4
+# 若需要 AES-CTR CENC 金鑰，從本機環境變數讀取，不要把金鑰寫在命令紀錄/CI
+```
+
+腳本會呼叫同一版公開的 BVC2→H.264 WASM，確認解碼後影片真實有可解碼畫格、FFmpeg 完整解碼、列出 codec、解析度、audio track、轉碼秒數和 Node RSS；清除暫存明文。程式碼不會網路下載來源，也不會記錄 signed URL/金鑰。
+
+**剩餘硬性 PASS 條件**：取得授權真實 ByteVC2 bitstream 後，在 Node native/WASM 和 Android Firefox/Windows 實際播放端驗證首影格、A/V 同步、速度和 RAM 高水位，再決定是否將 whole-file MEMFS 路徑替換為 AVIO streaming / H.264 fMP4 輸出。**目前禁止宣稱實驗性 BVC2 已達正式播放要求。**
