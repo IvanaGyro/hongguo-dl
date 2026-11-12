@@ -292,18 +292,18 @@ function setMode(mode) {
   if (currentMode === 'play' && series) player?.activate();
   else player?.pause();
 }
-async function apiJson(route) {
-  const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' } });
+async function apiJson(route, signal) {
+  const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' }, signal });
   let data;
   try { data = await response.json(); } catch { throw errorWith('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
   if (!response.ok) throw errorWith(data?.error?.code || 'HTTP_' + response.status,
     data?.error?.message || '請求失敗（HTTP ' + response.status + '）');
   return data;
 }
-async function getSource(seriesId, vid, quality = 'auto', codec = 'auto') {
+async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal) {
   return apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
     '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
-    '&codec=' + encodeURIComponent(codec));
+    '&codec=' + encodeURIComponent(codec), signal);
 }
 async function lookupIds(ids) {
   const list = [...new Set(ids)].slice(0, 20);
