@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mp4Boxes, cencKidFromMoov, probeCencKid, clearKeyLicense,
-  mimeForCodec, openClearKeyStream } from '../src/clear-key.js';
+  mimeForCodec, openClearKeyStream, commonCencPssh } from '../src/clear-key.js';
 
 const box = (name, payload) => {
   const ret = new Uint8Array(8 + payload.length);
@@ -73,6 +73,21 @@ test('clear key is exact 128-bit and codec selection excludes ByteVC2', () => {
   assert.equal(license.type, 'temporary');
   assert.equal(license.keys[0].kid, 'AQIDBAUGBwgJCgsMDQ4PEA');
   assert.equal(license.keys[0].k, 'AQEBAQEBAQEBAQEBAQEBAQ');
+});
+
+test('standard Common SystemID PSSH includes only the supplied KID', () => {
+  const bytes = commonCencPssh(KID);
+  const view = new DataView(bytes.buffer);
+  assert.equal(bytes.byteLength, 52);
+  assert.equal(view.getUint32(0), 52);
+  assert.equal(new TextDecoder().decode(bytes.subarray(4, 8)), 'pssh');
+  assert.equal(bytes[8], 1);
+  assert.equal(Buffer.from(bytes.subarray(12, 28)).toString('hex'),
+    '1077efecc0b24d02ace33c1e52e2fb4b');
+  assert.equal(view.getUint32(28), 1);
+  assert.deepEqual([...bytes.subarray(32, 48)], [...KID]);
+  assert.equal(view.getUint32(48), 0);
+  assert.throws(() => commonCencPssh(new Uint8Array(15)), /16 bytes/);
 });
 
 test('prefers browser native EME and prepares license before fetching media', async () => {
