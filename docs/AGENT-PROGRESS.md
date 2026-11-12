@@ -98,3 +98,14 @@
 - **瀏覽器觀察**：公開 Pages 的遠端 Linux Chromium 首集 UI 曾顯示 `Librempeg ByteVC2 → H.264 轉碼中…`；不是 HEVC 播放證據，也沒有可信任的完成影格與 A/V 同步驗收。該工作階段已關閉。
 - **已知後續**：須在使用者授權且來源可成功回 206 的環境進行實際 1080p HEVC／Android 測試；如無法存取，先以合成有界測試驗證錯誤、RAM、取消及 seek，再對真實片源區分 HTTP 403、格式或 decoder。
 - **PR 合併條件**：最新 commit 必須重新確認 PR CI、WASM proof、必要的瀏覽器 acceptance；若尚進行中就記錄並繼續可獨立工作，不等待 Actions 日誌。尚未開發 `avformat_seek_file` 的 unbuffered seek。
+
+## 階段 7 — 2026-11-12 使用者明確改為直接 main 提交（已執行；後續 CI 部分進行中）
+
+- **最新使用者指示（覆寫上文階段 5/6 的 PR 計畫）**：不建立或透過 PR 合併。日後直接在 `main` 實作、測試、提交，並在每階段直接更新本文件。不要再開 PR。
+- [PR #5](https://github.com/IvanaGyro/hongguo-dl/pull/5) 已關閉且 **未經 PR merge**。
+- 原 `fix/cenc-wasm-publish-and-stream-stability` 已確認相對 `main 19cba39` **ahead 23 / behind 0**，使用 expected SHA lease 直接 fast-forward `main` 至 `69c3fcf97c1024fd62a3761f6fcc80280d7634f4`；沒有 force push 或改寫歷史。功能內容（SHA256 manifest、Runtime JS/WASM 檢查、Bounded Range、MSE eviction/cancel、stsd/frma 解析及相關 tests）均進入 main。
+- **新 main 已驗證**：`69c3fcf` 的 [main CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238138286) **success**、[main 合成 Chromium/Firefox CENC browser](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238138456) **success**、[Pages](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238138325) **success**；仍非真實 HEVC、Android Firefox 或 ByteVC2 解碼通過的證據。
+- **後續 main 直接提交**：`b98522f43d987c0ae05dc0f5f32427bf93b7bd1b` 將 `.github/workflows/cenc-wasm-stream.yml` 改成 **合成 WASM 解碼通過後直接於 main 發布 JS/WASM/manifest**；若 commit 有差異，以 `gh workflow run pages.yml --ref main` 重新觸發部署，因 `GITHUB_TOKEN` push 不會自動觸發 Pages。此方式不經 PR。**新 workflow 實際「有需要重建二進位」的 publish/dispatch 分支尚未驗證**。
+- `7d053a77baf970294f43e71141306a83067f3456` 更新 [docs/NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md) 將舊 PR 交接規則明確標記為過時。
+- **CI 狀態快照**：`b98522f` [CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238419942) **success**、[Pages](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238419638) **success**、[WASM proof](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238420071) **in_progress**；`7d053a7` [CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238573530) **success**、[Pages](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43238573441) **in_progress**。不輪詢日誌，不把未完工作當 PASS。
+- **下一步仍按優先順序**：用有權存取並返回 HTTP 206 的真實 1080p HEVC 片源確認 MSE / A/V / EOF 前起播（目前先前 CDN 403，尚未成功）；P2 跳轉未緩衝處需 RAP 定位與 AVFormat seek；P3 300 秒以上 RAM/取消壓測；之後才做 ByteVC2 真實影格驗證與低延遲轉碼。保留下載佇列、ZIP/MP4、播放紀錄、解析度及連播。
