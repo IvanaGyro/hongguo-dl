@@ -1,0 +1,59 @@
+name: Progressive CENC AVIO WASM proof (experimental)
+on:
+  push:
+    branches: [feature/cenc-avio-mse-stream, main]
+    paths:
+      - '.github/workflows/cenc-wasm-stream.yml'
+      - 'scripts/cenc-stream-remux.c'
+      - 'scripts/build-cenc-stream-wasm.sh'
+      - 'scripts/verify-cenc-stream-wasm.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: emscripten/emsdk:3.1.74
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg and generate local synthetic encrypted HEVC + AAC progressive MP4
+        shell: bash
+        run: |
+          apt-get update -qq
+          apt-get install -y ffmpeg pkg-config >/dev/null
+          mkdir -p tests/fixtures
+          ffmpeg -nostdin -hide_banner -v error -threads 1 \
+            -f lavfi -i testsrc=size=320x180:rate=24 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 5 -c:v libx265 -preset ultrafast \
+            -x265-params pools=none:frame-threads=1:wpp=0:log-level=error:keyint=24:min-keyint=24:scenecut=0 \
+            -pix_fmt yuv420p -c:a aac -b:a 128k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y tests/fixtures/cenc-hevc-aac.mp4
+          test -s tests/fixtures/cenc-hevc-aac.mp4
+      - name: Compile and run async CENC AVIO WASM bridge
+        shell: bash
+        run: bash scripts/build-cenc-stream-wasm.sh /tmp/hongguo-cenc-stream
+      - name: Verify output HEVC and AAC can decode
+        shell: bash
+        run: |
+          node scripts/verify-cenc-stream-wasm.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.wasm \
+            tests/fixtures/cenc-hevc-aac.mp4 /tmp/clear-fmp4.mp4
+          ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/clear-fmp4.mp4
+          ffmpeg -v error -i /tmp/clear-fmp4.mp4 -f null -
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experimental-cenc-remux
+          path: |
+            /tmp/hongguo-cenc-stream/dist/
+            /tmp/hongguo-cenc-stream/configure.log
+            /tmp/hongguo-cenc-stream/build.log
+            /tmp/hongguo-cenc-stream/link.log
+          if-no-files-found: warn
