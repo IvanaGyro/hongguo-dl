@@ -4,7 +4,7 @@
 
 **首選：精簡 Librempeg/Libavformat WASM，經 HTTP Range 增量讀取，CENC 解密後保持 HEVC/AAC 壓縮封包不變，以 MSE 需要的 fMP4 逐段輸出。**
 
-原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**合成 H.264/AAC 的 unbuffered Seek/續播已在 Chromium/Firefox 通過，Chromium 合成 300 秒完整播畢已通過，另有合成 HEVC 1080p WASM stream-copy proof；紅果真實 1080p HEVC 與 Android Firefox 仍未驗證，1800 秒壓測仍需新的成功證據**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
+原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**合成 H.264/AAC 的 unbuffered Seek/續播已在 Chromium/Firefox 通過，Chromium 合成 300 秒完整播畢已通過，另有合成 HEVC 1080p WASM stream-copy proof；紅果真實 1080p HEVC 與 Android Firefox 仍未驗證，1800 秒合成 Chromium 完整播放、MSE 有界緩衝已通過，暫停網路節流仍須獨立驗證**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
 
 ### 已有證據
 
@@ -70,9 +70,9 @@
 - **1080p HEVC/AAC WASM remux**：合成 1920×1080 encrypted progressive MP4 經 WASM copy 成 clear fMP4；FFmpeg 真正解碼成功且未在首 moof 前讀到來源 EOF。[WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)。這**不是** Windows/Android 的 HEVC 瀏覽器解碼驗證。
 - **發行一致性**：已實作 main JS/WASM/manifest SHA256 pin、build provenance 驗證及 CI/Pages 部署阻擋；最近確認 [CI #43283368259](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368259) 和 [Pages #43283367990](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283367990) success。
 
-### 已定位問題、修補後仍待驗收
+### 已定位並修補的 1800 秒影片索引問題（合成端到端已通過）
 
-- **1800 秒合成 CENC**：首輪 [Browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) FAIL：MP4 moov/sample tables 超過當時的 1MiB 限制，未找到 KID，備援回整檔取得 HTTP 416；已提高 bounded metadata 限制到 8MiB，另加超限錯誤和單元回歸。後續 [#43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)、[#43283368141](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368141) 在最後查核時仍執行中／等待中，**未取得 PASS**。
+- **1800 秒合成 CENC**：首輪 [Browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) FAIL：MP4 moov/sample tables 超過當時的 1MiB 限制，未找到 KID，備援回整檔得到 HTTP 416；修補為 8MiB bounded metadata 與單元回歸後，[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) **completed/success 且有實際 PASS 行**：Chromium 16× 播至 1800.021402s、ended=true、videoError=null、104 Range、MSE buffered span 最大 72s、ahead 43.56s；首影格於 HTTP EOF 前且僅取得約 6.6% 來源。process-tree RSS 802.5→peak 838.8→last 838.2 MiB，是 Linux Node harness + browser 粗量測，不能當成精確 GPU/Android RAM。**新增加的暫停後 Range 節流測試（CENC_TEST_PAUSE=1）必須另外有 PASS 行，不能用這輪 1800s 成功代替。**
 
 ### 尚未驗證的最終產品條件
 
