@@ -173,8 +173,12 @@ static int execute(Stream *reader, const char *key, double start_seconds) {
     output->flags |= AVFMT_FLAG_CUSTOM_IO;
     // Do not normalize a nonzero seek time to zero in the fMP4 timeline.
     output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_DISABLED;
-    av_dict_set(&mov_options, "movflags",
-        "+frag_keyframe+empty_moov+default_base_moof", 0);
+    // For a nonzero seek, delay moov until the first RAP packet reveals
+    // its DTS, and mark the missing earlier fragments as a discontinuity.
+    // Otherwise MOV muxer silently normalizes the output near t=0.
+    av_dict_set(&mov_options, "movflags", start_seconds > 0.5
+        ? "+frag_keyframe+empty_moov+default_base_moof+delay_moov+frag_discont"
+        : "+frag_keyframe+empty_moov+default_base_moof", 0);
     if ((ret = avformat_write_header(output, &mov_options)) < 0) {
         ret = failure(ret, "write init fMP4"); goto done;
     }
