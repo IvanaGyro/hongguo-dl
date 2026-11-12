@@ -97,14 +97,13 @@ test('oversized MP4 moov is rejected without unbounded metadata downloads', asyn
   new DataView(header.buffer).setUint32(offset, 9 * 1024 * 1024);
   header.set([0x6d, 0x6f, 0x6f, 0x76], offset + 4); // moov
   let calls = 0;
-  const metadata = await probeCencKid('https://example.com/too-large.mp4', null,
+  await assert.rejects(probeCencKid('https://example.com/too-large.mp4', null,
     async () => {
       calls++;
       return new Response(header, { status: 206, headers: {
         'Content-Range': 'bytes 0-65535/10000000'
       } });
-    });
-  assert.equal(metadata, null);
+    }), error => error.code === 'CENC_METADATA_LIMIT' && /8 MiB/.test(error.message));
   assert.equal(calls, 1, 'A giant index must not trigger extra Range or whole-file fetch');
 });
 
