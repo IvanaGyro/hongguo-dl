@@ -31,3 +31,9 @@
 - 暫停 PASS 已同步到 [CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)；繼續合法真實 HEVC 及 ByteVC2 bitstream 正例驗收，無來源/裝置不得宣稱完成。
 - 避免更動 `scripts/cenc-stream-remux.c`、BVC2 C bridge 或 pinned WASM 二進位，除非能一同重建 manifest 並完整跑 WASM proof；不可以只提交 C 源碼卻沿用舊二進位。
 - 永遠使用最新 `main` SHA 和 path blob SHA 做寫入，不覆寫其他 agent 的同時提交；**文件 checkpoint 寫完不是停工條件**。
+
+## 最新工程 checkpoint（階段 39，2026-11-13）
+
+- main 程式修復：[`618bbab`](https://github.com/IvanaGyro/hongguo-dl/commit/618bbab523513ff01ce60143752616c75cc90bf5) 修正 HEVC 單測括號；[CI #43289090142](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289090142) **completed/success**，包含 Bun 全測試、雙 WASM verify、Vite Pages build、Wrangler dry-run 與 Worker cold-start；本地 Node `--check` PASS。
+- [Pages #43289089908](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289089908) 查詢時 **in_progress**，不是 PASS；後續 docs 或 code push 可能取消早一個 deploy。
+- **立即恢復點**：審查 `src/player.js` 對 HEVC 使用泛用 `hvc1` `canPlayType` 的 guard，與 `src/cenc-remux.js` 精確 `hvc1.<profile>...` MSE 判斷的語意，補回歸測試並直接 main 提交。不得用 HEVC MIME 宣告成功推論實際解碼或真實素材驗證。
