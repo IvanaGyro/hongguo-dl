@@ -44,6 +44,22 @@ test('parse nested tenc ID using only moov metadata', () => {
     ['ftyp', 'moov', 'mdat']);
 });
 
+test('recognize fragmented moov only when it contains mvex', async () => {
+  const fragmentedMoov = box('moov', concat(box('trak', box('schi', tenc)),
+    box('mvex', box('trex', new Uint8Array(24)))));
+  const fixture = concat(ftyp, fragmentedMoov, mdat);
+  const fragmented = {};
+  const f = mockFetch(fixture);
+  assert.deepEqual([...(await probeCencKid('https://example.com/f.mp4', null,
+    f.fetchImpl, fragmented))], [...KID]);
+  assert.equal(fragmented.fragmented, true);
+  assert.equal(fragmented.fileSize, fixture.length);
+  const regular = {};
+  await probeCencKid('https://example.com/regular.mp4', null,
+    mockFetch(concat(ftyp, moov, mdat)).fetchImpl, regular);
+  assert.equal(regular.fragmented, false);
+});
+
 test('find KID via single bounded Range when moov precedes media', async () => {
   const f = mockFetch(concat(ftyp, moov, mdat));
   const kid = await probeCencKid('https://example.com/test.mp4', null, f.fetchImpl);
