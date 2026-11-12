@@ -1,4 +1,4 @@
-const { chromium, firefox } = require(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES + '/playwright');
+const { chromium, firefox } = require('playwright');
 const { createServer } = require('node:http');
 const { readFileSync } = require('node:fs');
 (async()=>{
