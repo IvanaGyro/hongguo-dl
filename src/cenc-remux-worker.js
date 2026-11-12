@@ -2,6 +2,8 @@
 // Dedicated Worker: bounded HTTP Range reads -> Librempeg Asyncify AVIO ->
 // complete clear fMP4 init/media units. Main thread ACK provides backpressure.
 import { createFmp4Assembler } from './fmp4-assembler.js';
+import { readVerifiedRange } from './http-range.js';
+import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
 
 const WINDOW = 256 * 1024;
 const MAX_FILE = 260 * 1024 * 1024;
@@ -35,22 +37,10 @@ async function run({ url, key, fileSize }) {
     if (start >= cacheStart && start + wanted <= cacheStart + cacheBytes.length)
       return cacheBytes.subarray(start - cacheStart, start - cacheStart + wanted);
     const end = Math.min(fileSize, start + Math.max(wanted, WINDOW)) - 1;
-    const response = await fetch(mediaUrl.href, {
-      headers: { Range: 'bytes=' + start + '-' + end },
-      signal: controller.signal, cache: 'no-store'
-    });
-    if (response.status !== 206) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error('HTTP Range unavailable (status ' + response.status + ')');
-    }
-    const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(
-      response.headers.get('content-range') || '');
-    if (!range || Number(range[1]) !== start || Number(range[2]) !== end ||
-        Number(range[3]) !== fileSize)
-      throw new Error('Invalid Content-Range');
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength !== end - start + 1)
-      throw new Error('Truncated HTTP Range response');
+    // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
+    // the requested 256 KiB window even if it lies about Content-Length.
+    const bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
+      fileSize, controller.signal);
     cacheStart = start;
     cacheBytes = bytes;
     return bytes.subarray(0, wanted);
@@ -62,15 +52,34 @@ async function run({ url, key, fileSize }) {
   const base = new URL(import.meta.env.BASE_URL + 'cenc/', self.location.href);
   const moduleUrl = new URL('cenc-core.mjs', base);
   const wasmUrl = new URL('cenc-core.wasm', base);
-  const [{ default: createModule }, response] = await Promise.all([
-    import(/* @vite-ignore */ moduleUrl.href),
+  const manifestUrl = new URL('manifest.json', base);
+  const manifestResponse = await fetch(manifestUrl, {
+    signal: controller.signal, cache: 'no-store'
+  });
+  if (!manifestResponse.ok) throw new Error('CENC release manifest unavailable');
+  const manifestBytes = await readLimitedAsset(manifestResponse, 4096);
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+  if (manifest?.schema !== 1 ||
+      !/^[a-f0-9]{64}$/.test(manifest?.files?.['cenc-core.mjs']) ||
+      !/^[a-f0-9]{64}$/.test(manifest?.files?.['cenc-core.wasm']))
+    throw new Error('Invalid CENC release manifest');
+  // Content-address URLs prevent old HTTP cache entries from being reused
+  // across Pages deployments. Verify downloaded bytes before running code.
+  moduleUrl.searchParams.set('v', manifest.files['cenc-core.mjs']);
+  wasmUrl.searchParams.set('v', manifest.files['cenc-core.wasm']);
+  const [moduleResponse, wasmResponse] = await Promise.all([
+    fetch(moduleUrl, { signal: controller.signal, cache: 'force-cache' }),
     fetch(wasmUrl, { signal: controller.signal, cache: 'force-cache' })
   ]);
-  if (!response.ok || Number(response.headers.get('content-length') || 0) > 24 * 1024 * 1024)
-    throw new Error('CENC remux WASM core unavailable');
+  const [moduleBytes, wasmBytes] = await Promise.all([
+    readLimitedAsset(moduleResponse, 1024 * 1024),
+    readLimitedAsset(wasmResponse, 24 * 1024 * 1024)
+  ]);
+  await verifyCencRuntimeBundle(manifest, moduleBytes, wasmBytes);
+  if (controller.signal.aborted) throw new Error('Canceled');
+  const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
   const core = await createModule({
-    wasmBinary: new Uint8Array(await response.arrayBuffer()),
-    readRange, writeChunk: data => assembler.push(data)
+    wasmBinary: wasmBytes, readRange, writeChunk: data => assembler.push(data)
   });
   if (core._cenc_remux_available() !== 1)
     throw new Error('WASM missing MOV demuxer or MP4 muxer');
