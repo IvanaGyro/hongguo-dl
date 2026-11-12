@@ -55,6 +55,10 @@ export function createPlayer({
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
   const mimeSupport = mime => video.canPlayType(mime);
+  // Source selection uses a provisional HEVC probe; openClearKeyStream later
+  // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
+  const mseSupport = mime => typeof MediaSource !== 'undefined' &&
+    Boolean(MediaSource.isTypeSupported?.(mime));
   const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
   video.controls = false;
   const preferences = loadPrefs(storage);
@@ -288,7 +292,7 @@ export function createPlayer({
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
     const resolved = playbackRendition(variants,
-      { quality, codec }, mimeSupport, attempt, canTranscodeBvc2);
+      { quality, codec }, mimeSupport, attempt, canTranscodeBvc2, mseSupport);
     const source = resolved.source;
     if (!source?.url) {
       const tiers = availableRenditions(variants);
@@ -460,7 +464,11 @@ export function createPlayer({
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
       ? 'video/mp4; codecs="vvc1"' : 'video/mp4; codecs="avc1.42E01E"';
-    if (containerCodec && video.canPlayType(decoder) === '')
+    // The actual complete hvcC profile was already accepted by MSE for a
+    // remux stream; bare hvc1 canPlayType must not produce a false warning.
+    if (containerCodec &&
+        !(containerCodec === 'hevc' && resolved.native?.kind === 'cenc-remux') &&
+        video.canPlayType(decoder) === '')
       sourceInfo.textContent += ' · 此編碼可能無法在本瀏覽器播放';
     await keyCleanup;
     if (signal.aborted || currentToken !== token) return;

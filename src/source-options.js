@@ -65,7 +65,14 @@ export function codecsAtQuality(variants, quality = 'auto') {
     quality === 'auto' || qualityId(v) === quality)).codecs;
 }
 
-export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = false) {
+// Preliminary probes only: the actual encrypted track's hvcC must still be
+// parsed with bounded Range requests before creating a SourceBuffer.
+const HEVC_MSE_PROBES = [
+  'video/mp4; codecs="hvc1.1.6.L93, mp4a.40.2"',
+  'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"'
+];
+export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = false,
+  isMseTypeSupported = null) {
   const codec = codecId(variant?.codec);
   // ByteVC2 is not interchangeable with ISO VVC. A native vvc1 capability
   // says nothing about this proprietary bitstream.
@@ -76,16 +83,24 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
     hevc: 'video/mp4; codecs="hvc1"',
     bytevc2: 'video/mp4; codecs="vvc1"'
   };
-  return Boolean(canPlayType?.(codecs[codec]));
+  if (canPlayType?.(codecs[codec])) return true;
+  if (codec !== 'hevc') return false;
+  // Some browsers reject bare hvc1 via canPlayType but accept a complete
+  // Main/Main10 MIME via MSE. Only encrypted renditions can use the remux
+  // path; a support declaration does not prove that a frame can be decoded.
+  return HEVC_MSE_PROBES.some(mime => Boolean(canPlayType?.(mime)) ||
+    Boolean(variant?.contentKey && isMseTypeSupported?.(mime)));
 }
 
 // Return exactly the selected tier if playable; allow a clearly announced
 // substitute only when the user has chosen automatic codec selection.
 // Explicit codec selection never silently changes to another codec.
-export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0, canTranscodeBvc2 = false) {
+export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0,
+  canTranscodeBvc2 = false, isMseTypeSupported = null) {
   const requestedQuality = preferences.quality || 'auto';
   const requestedCodec = preferences.codec || 'auto';
-  const playable = source => browserCanPlayVariant(source, canPlayType, canTranscodeBvc2);
+  const playable = source => browserCanPlayVariant(source, canPlayType,
+    canTranscodeBvc2, isMseTypeSupported);
   const exact = candidateRenditions(variants, { quality: requestedQuality, codec: requestedCodec })
     .filter(playable);
   if (exact.length) return { source: exact[Math.max(0, attempt) % exact.length], fallback: false };

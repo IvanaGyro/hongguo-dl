@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { browserCanPlayVariant, playbackRendition } from '../src/source-options.js';
+
+const encryptedHevc = { codec: 'hevc', quality: '1080p',
+  contentKey: '00112233445566778899aabbccddeeff' };
+const main10 = 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"';
+
+test('precise HEVC Main10 MSE support can reach the encrypted rendition', () => {
+  const noGenericCanPlay = () => '';
+  const mseSupport = mime => mime === main10;
+  assert.equal(browserCanPlayVariant(encryptedHevc,
+    noGenericCanPlay, false, mseSupport), true);
+  const selected = playbackRendition([encryptedHevc],
+    { quality: '1080p', codec: 'auto' }, noGenericCanPlay, 0, false, mseSupport);
+  assert.equal(selected.source, encryptedHevc);
+  assert.equal(selected.fallback, false);
+});
+
+test('unsupported HEVC MSE does not create a false positive', () => {
+  assert.equal(browserCanPlayVariant(encryptedHevc, () => '', false,
+    () => false), false);
+  assert.equal(playbackRendition([encryptedHevc],
+    { quality: '1080p', codec: 'hevc' }, () => '', 0, false,
+    () => false).source, null);
+});
+
+test('MSE-only HEVC is not used to claim unencrypted progressive MP4 support', () => {
+  const clearHevc = { ...encryptedHevc, contentKey: null };
+  assert.equal(browserCanPlayVariant(clearHevc, () => '', false,
+    mime => mime === main10), false);
+  assert.equal(browserCanPlayVariant(clearHevc,
+    mime => mime === main10 ? 'maybe' : '', false, () => false), true);
+});
