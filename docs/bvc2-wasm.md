@@ -35,3 +35,20 @@ MP4 header ranges and asks the browser CDM to decrypt the media in streaming
 mode. It falls back to the existing FFmpeg.wasm implementation on unsupported
 browsers. The Firefox workflow generates a synthetic CENC test clip and
 verifies actual playback and its observed startup cost.
+
+## 實驗實測（2026-11-12）
+
+- Emscripten 3.1.74 已將固定 Librempeg 原始碼中的 `bvc2` 解碼器
+  連結到約 1.8 MiB WASM，並在 Node.js 確認 `avcodec_find_decoder_by_name("bvc2")`
+  有效。[CI 編譯成功](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43190032040)。
+- 正在驗證 `libx264` 靜態庫與 Librempeg 的 WASM 完整轉碼連結；
+  與「已有可播放的 BVC2 輸出」是不同程度的驗證，必須獨立標示。
+- [CENC Firefox 播放與同片源起播比較](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43189653163)：
+  15 秒 H.264 加密測試片，在同一 CI Runner 的單次量測，原生 EME
+  1,987 ms，FFmpeg.wasm 1,229 ms。這個極短小樣本反而是 FFmpeg
+  較快，且先後測量有冷／暖快取差異；不能用來推論較大影片的
+  上線收益。原生 EME 的核心優勢仍是 **不等待整集下載**。
+- 對於是否使用 Rust：目前 JS 只讀取最多 1 MiB 的 MP4 metadata，
+  網路與 CDM 的系統呼叫遠大於這部分運算。應先量測耗時與
+  WASM 初始化／資料複製成本，再評估是否移植 Rust；BVC2 核心
+  則已是可編譯到 WASM 的 C，不需要重新實作演算法。
