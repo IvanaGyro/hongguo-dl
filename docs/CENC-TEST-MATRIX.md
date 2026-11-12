@@ -30,7 +30,9 @@
 
 | 已選定 720p 只有 ByteVC2、WASM 不可用時保留品質並禁用 HEVC 選項 | Firefox + Node 合成來源；VVC-only 720p、HEVC 1080p | **PASS（Firefox E2E + Node 單元）** | [main 修復 005ad1a](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)；[Firefox #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) completed/success；[CI #43295729082](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729082) success，非真實 ByteVC2 decode |
 
-| CENC AVIO HTTP fetch／reader throw 不洩漏簽章 URL，abort 保持取消 | Node/Bun 合成異常與 AbortSignal | **PENDING（階段 53）** | [main 3939d30](https://github.com/IvanaGyro/hongguo-dl/commit/3939d30751907dc7abd357367fef6f7bd58ade35) 新增 mock fetch/read/abort 回歸；需等此版 CI PASS |
+| CENC AVIO HTTP fetch／reader throw 不洩漏簽章 URL，abort 保持取消 | Node/Bun 合成異常與 AbortSignal | **PASS（單元）** | [CI #43296748129](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748129) completed/success；`3939d30` mock fetch/read/abort 回歸；不證明真實 CDN 可接取 |
+
+| CENC SourceBuffer pending updateend／sourceopen 取消、ended 無限等候防護 | Node EventTarget + 模擬 Worker | **PENDING（階段 54）** | [main 0fab93e](https://github.com/IvanaGyro/hongguo-dl/commit/0fab93e5f0a084b5fc110c47b15768315b705015) 的 `tests/cenc-startup.test.mjs`，驗證 terminate／URL 單次 revoke／不得延遲 ACK；新 CI 未驗證 |
 
 ## 固定驗證指令
 

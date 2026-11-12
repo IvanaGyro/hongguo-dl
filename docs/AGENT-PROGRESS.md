@@ -517,3 +517,11 @@
 - **新增回歸**：mock fetch 或 reader.read 故意丟含私人 URL／`token=`／`key=` 的例外，要求公開錯誤完全不含私密片段，並確認 reader cancel/releaseLock；另 mock 在 signal.abort 後 fetch 才 reject，必須保留 `Canceled`。通過固定補丁規則，**CI 新回歸尚 PENDING**（不虛稱 Node 實跑）。
 - **基線證據**：[CI #43296135497](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135497)／[Pages #43296135463](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135463) 是前階段 52 `a4a30d0` 的 **completed/success**；[Browser #43296135487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135487) 查詢時仍 `in_progress`。另一前版 Firefox 全套 [#43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **success**。真實 HEVC/Android/Windows/BVC2 仍 **NOT TESTED**。
 - **下一個工程動作**：有 stage53 新 CI FAIL 先修；沒有則檢視 CENC Worker abort 與 MSE ACK stalled 的 lifecycle 回歸；對 Browser 真正三輪成功與 AAC packet warnings 保持獨立標記，絕不把主 CI 當瀏覽器驗收。
+
+
+## 階段 54 — 2026-11-13 MSE SourceBuffer 等待 ACK／sourceopen／ended 狀態生命週期
+
+- **直接 main 程式提交**：[0fab93e5f0a084b5fc110c47b15768315b705015](https://github.com/IvanaGyro/hongguo-dl/commit/0fab93e5f0a084b5fc110c47b15768315b705015)，修改 `src/cenc-remux.js` 與 `tests/cenc-startup.test.mjs`。既有 Worker ACK 需要等待 `SourceBuffer.updateend`；中途離開播放時，AbortSignal 必須打斷等待，不得 ACK 已取消的片段。另 `MediaSource.readyState==='ended'` 時，後續不可能再來 `sourceopen`，若意外收到 Worker unit 必須即刻 fail 並回收，而不是永遠 pending。
+- **新增隔離的 EventTarget/Worker 模擬測試**：(1) fake SourceBuffer append 後永不發 `updateend`，`AbortController.abort()` 後 Worker terminated、無 ACK，Object URL 只 revoke 一次；(2) fake MediaSource `closed`，pending `sourceopen` 時呼叫 stream.close()，確保 Worker/URL 釋放；(3) MediaSource `ended` 收 init unit 時即 fail、terminate/URL revoke，close 不二次 revoke。沒有真實 CDN、CENC key 或解碼能力宣稱。
+- **PENDING**：這次新增測試尚待 CI；上一階段 [CI #43296748129](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748129)、[Pages #43296748224](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748224) **completed/success**，是階段 53 的 AVIO transport 安全修正通過的證據。[Browser #43296748110](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748110) 前查 pending，不能填成功。[pinned WASM #43296748128](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748128) 尚 in_progress。
+- **下一步**：新 CI 若 FAIL，處理確切 assertion，不輪詢；瀏覽器三輪切換實際 E2E 通過後才更新矩陣；持續驗證 MOV AAC 錯誤訊息是否會影響音訊。不做整檔 CENC 回退、不將 synthetic 宣稱真實 Android/HEVC。
