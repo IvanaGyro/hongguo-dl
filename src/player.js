@@ -742,10 +742,19 @@ export function createPlayer({
       label.textContent = '尚未播放'; refreshButtons();
     },
     pause() { if (readyForHistory) savePosition(); video.pause(); },
+    deactivate() {
+      // Leaving the playback mode is not an ordinary pause: relinquish all
+      // Range fetches, remux workers, MSE buffers and pending prefetch.
+      // Keep current episode + history so returning to playback can resume.
+      cancelPrefetch();
+      savePosition();
+      if (current) { disposeSource(); token++; }
+    },
     activate() {
-      // Selecting play mode opens the episode suggested by history once.
-      // Do not force an unwanted autoplay on repeated tab switches.
+      // Reopen a previously selected episode without autoplay after the
+      // playback panel was left. Ordinary in-player pause stays buffered.
       if (!current) this.resume();
+      else if (!video.getAttribute('src')) open(current, false, true);
     },
     refresh: refreshButtons
   };
