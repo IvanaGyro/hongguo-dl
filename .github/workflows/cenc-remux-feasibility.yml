@@ -1,0 +1,22 @@
+name: CENC progressive to fMP4 feasibility (no re-encode)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/probe-cenc-remux.py'
+      - '.github/workflows/cenc-remux-feasibility.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-remux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify FFmpeg HEVC/AAC encoder and demuxer
+        run: |
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265
+          ffprobe -version | head -1
+      - name: Verify encrypted progressive input emits clear fMP4 before EOF
+        run: python3 scripts/probe-cenc-remux.py
