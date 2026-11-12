@@ -581,3 +581,11 @@
 - **long 實際日誌**：Chromium 300 秒合成片真實 pause window **120000 ms**，`rangesAtPause=9`、`rangesAfterPause=9`，恢復後播畢 **300.021402s**，`ended=true`、`videoError=null`、`rangeRequests=32`，MSE `maxBufferedSpan=76.021402s`、`maxBufferedAhead=41.88137s`；Linux Node+browser process-tree RSS first/peak/last 727.7/765.6/765.6 MiB。1800 秒合成片同樣 `ended=true`、`videoError=null`、`lastTime=1800.021402s`，104 次有界 Range，MSE span 最大 72.00s、ahead 43.077882s，RSS first/peak/last 800.9/837.3/834.7 MiB。前兩個 RSS 含測試 Node/瀏覽器子程序與 shared pages，不能當作單獨瀏覽器或 GPU/Android RAM。
 - **結論**：本版分流後 long 並未犧牲 120s 暫停／300s／1800s 完整驗收，也讓 fast 可先獨立成功。這是 **Linux Chromium/Firefox 合成 H264/AAC** 實證；不能自動延伸到實際紅果加密 HEVC、Android、Windows、ByteVC2 或 AAC 全程可聽性無 glitch。
 - **下一步**：確認 [913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15) 的 pinned WASM Worker 256 KiB AVIO parity proof；若 FAIL 不應掩蓋；另查快速取消時 Chromium 9 個 MOV 警訊是否傷害 AAC output。繼續維護必要的 CI / 裝置證據矩陣。
+
+
+## 階段 62 — 2026-11-13 pinned Librempeg WASM direct-memory 與 Worker 256 KiB 預讀結果逐 byte 完全相同
+
+- **實際成功證據**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) `completed/success`；job `131463360446` 在完成 70 秒 H264/AAC 加密合成片 Seek 7、35、55、63 秒後，逐一輸出 `PASS H264/AAC pinned WASM seek strict decode: [second]` 與 `PASS pinned Worker-window AVIO fMP4 exact output: [second]` 四組 PASS；前後兩份由 pinned WASM 產生的 clear fMP4 Buffer 是 **byte-for-byte identical**。Worker-style 256 KiB AVIO 預讀會跨不同 offset 實際模擬 cache hit/miss，對應 partial final window 行為；各 window 輸出經 `ffmpeg -xerror` 實際音視訊解碼成功。
+- **同版 CI**：[CI #43298585704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585704)／[Pages #43298585569](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585569) `completed/success`，證明新增 WASM 驗證程式亦通過主測試與建置。
+- **可收斂／未解**：四次獨立 seek 沒有因 256 KiB AVIO window 而改變解密後 sample/MP4 bytes；Chromium 快速 Seek 時 9 個 libavformat MOV stderr 仍可能屬中途取消，或另有時間敏感問題，**此 parity 不證明音訊完全無 glitch**。已知完整 CENC Browser fast/long [#43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) 兩組 success。
+- **剩餘需要外部／更深測試的工程**：若要宣稱真實 HEVC/Android/Windows 完全可播，仍需合法 HTTP 206 來源、HEVC MSE 解碼設備；ByteVC2 需真實合法 bitstream；合成 Chromium AAC 快速取消訊息若要徹底排除可聽影響，需音訊樣本層級或真正播放裝置證據。

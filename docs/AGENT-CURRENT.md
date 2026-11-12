@@ -1,14 +1,16 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 61）
+# Hongguo DL — 目前狀態（2026-11-13，階段 62）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
 
+- **階段 62 pinned Worker-window cache parity 逐位元組 PASS**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) `completed/success`，job 131463360446 明確列 `PASS pinned Worker-window AVIO fMP4 exact output: 7, 35, 55, 63` 各一行，並在每次 `ffmpeg -xerror` 嚴格 H264/AAC 解碼後才比對輸出；此證據排除 **256 KiB cache 自身改變 clear fMP4 bytes** 的假說（上述四個獨立合成 Seek），但不排除 Chromium **快速取消/Worker 競態時**的 9 個 MOV demux 警訊。當版 [CI #43298585704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585704) 與 [Pages #43298585569](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585569) 亦 success。
+
 - **階段 61 全新 CENC Browser fast/long E2E 全部完成成功**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) `completed/success`；fast job 131460511145 參見階段 58；long job **131460510236** 另實際列印 Chromium 120000ms 暫停 Range **9→9**，300.021s 播畢（32 Range、MSE span 最大 **76.021s**、ahead **41.881s**，process-tree RSS first/peak/last **727.7/765.6/765.6 MiB**），1800.021s 播畢（104 Range、MSE span **72s**、ahead **43.078s**，RSS **800.9/837.3/834.7 MiB**）。長片均 videoError=null，合成素材非真實 HEVC/Android、非 GPU RAM；快測 Chromium 9 個 MOV 警訊仍待 AAC 可聽性定量。
 
 - **階段 60 技術文件與現行程式對齊**：[72f05e0](https://github.com/IvanaGyro/hongguo-dl/commit/72f05e087b147b83dabf5a560a51d3349c194871)：README 修正 ByteVC2 720p 明確選定不跨畫質 fallback、CENC 來源 403/429/錯誤 206 不整檔 fallback；`docs/cenc-progressive-to-fmp4.md` 修正 mux flags 為實際 `frag_keyframe+empty_moov+default_base_moof`，120s pause [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 已 PASS。此階段僅是已核實現況文件修正，無新程式或 CI 正例宣稱。
 
-- **階段 59 WASM 對照 Worker 256 KiB 快取**：[913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)：`scripts/verify-cenc-stream-wasm.mjs` 新增 opt-in `CENC_VERIFY_WORKER_WINDOW=1` 模擬 Worker 256 KiB 範圍快取／命中／最後短窗；WASM proof 對 70s H264/AAC 的 7、35、55、63s 進行 direct-memory vs Worker-window 各自解密 remux，`ffmpeg -xerror` 解碼並**逐 byte 比對兩份 clear fMP4**。**新的 WASM proof PENDING**，不得提前宣稱相等。
+- **階段 59 WASM 對照 Worker 256 KiB 快取（已 PASS）**：[913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)：`scripts/verify-cenc-stream-wasm.mjs` 新增 opt-in `CENC_VERIFY_WORKER_WINDOW=1` 模擬 Worker 256 KiB 範圍快取／命中／最後短窗；WASM proof 對 70s H264/AAC 的 7、35、55、63s 進行 direct-memory vs Worker-window 各自解密 remux，`ffmpeg -xerror` 解碼並**逐 byte 比對兩份 clear fMP4**。[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) **completed/success**，四個 seek 都有 bytes 完全相等證據。
 
 - **階段 58 Browser fast 兩瀏覽器全部 PASS（但 Chromium 有 MOV 警訊）**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488)，fast job 131460511145 `completed/success`，日誌實際有 Chromium+Firefox CENC EOF 前首影格、55s RAP seek/reload、7→63→35→5→63s 多次跳轉、90% 重整續播、**三輪播放／下載模式切換**且 Worker/Range 停止、5 個 MSE URL 建立/4 個撤銷、剩餘僅當前 1 個、切回後 **video 時間軸真的前進**。Chromium warning 仍有 9 個 MOV subsample/corrupt-packet/partial-file；Firefox 0。**不聲稱 AAC 可聽性或無 glitch 已被證明**。long job 131460510236 查詢時仍 `in_progress`，120s/1800s 此版本尚待結果。
 
@@ -40,7 +42,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：先確認階段 59 WASM direct/window 對照真正結論；Browser fast+long 均已 PASS。Chromium 9 個快速 Seek MOV/AAC 日誌警訊仍需區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：Browser fast+long 與 Worker-window pinned WASM 全部 PASS；剩 Chromium 9 個快速 Seek MOV/AAC 日誌警訊需區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 

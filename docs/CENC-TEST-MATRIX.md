@@ -38,7 +38,7 @@
 
 | CENC Browser fast（首影格／Seek／三輪切換）與 long（120s 暫停／1800s）可獨立報告 | GitHub Actions matrix / Linux Chromium+Firefox | **PASS（fast / long）** | [main b5211a6](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3) 新 workflow matrix，[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) fast job 131460511145、long job 131460510236 均 completed/success；兩者分別有具體 PASS 行 |
 
-| pinned WASM direct memory vs Worker 256 KiB HTTP Range window 快取對照；4 次 H264/AAC Seek | 自產 70s CENC；Node Asyncify／FFmpeg 嚴格影音解碼／clear fMP4 byte-equality | **PENDING（階段 59）** | [main 913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)；新增 `CENC_VERIFY_WORKER_WINDOW=1`，需等新 WASM proof 完成 |
+| pinned WASM direct memory vs Worker 256 KiB HTTP Range window 快取對照；4 次 H264/AAC Seek | 自產 70s CENC；Node Asyncify／FFmpeg 嚴格影音解碼／clear fMP4 byte-equality | **PASS（四組 bytes 全同＋嚴格 AAC/H264 解碼）** | [WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) job 131463360446 四行 `PASS pinned Worker-window AVIO fMP4 exact output`，限獨立 synthetic Seek，非 Chromium 中途取消的聲音保證 |
 
 | CENC 分流 long：暫停 120s Range 不增、300s/1800s EOF、MSE buffer/RSS 有界趨勢 | Chromium Linux 合成 H264/AAC；真正牆鐘 120000 ms | **PASS（long job）** | [Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) long 131460510236：Range 9→9；300s 32 Range/span 76.021s；1800s 104 Range/span 72s，非 Android/GPU RAM |
 
