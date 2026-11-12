@@ -6,7 +6,7 @@ import { errorWith, classifyError, isHlsUrl, mediaProxyUrl } from './logic.js';
 import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage } from './retry.js';
-import { convertBytes, convertHls } from './ffmpeg.js';
+import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, renditionForAttempt, codecId } from './source-options.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -196,8 +196,26 @@ export function createPlayer({
         segmentProgress: x => setStatus('準備串流 ' + x.current + '/' + x.total)
       });
     } else {
+      // Encrypted MP4s still require the complete source before decryption.
+      // Initialize FFmpeg after the first media chunk, in parallel with the
+      // remaining download, so the initial startup stages do not run serially.
+      let warmup = null, received = 0, lastUpdate = 0;
+      setStatus('載入影片…');
+      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
+        (length, total) => {
+          if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
+          received += length;
+          const now = Date.now();
+          if (now - lastUpdate > 250) {
+            lastUpdate = now;
+            setStatus(total ? '載入影片 ' + Math.min(100, Math.round(100 * received / total)) + '%'
+              : '載入影片…');
+          }
+        });
+      const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
+      if (warmupError) throw warmupError;
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       setStatus('解密並封裝影片…');
-      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024);
       bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
     }
     if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');

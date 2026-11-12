@@ -64,6 +64,11 @@ async function exclusive(task, signal) {
     finally { signal?.removeEventListener('abort', terminate); }
   } finally { release(); }
 }
+// Start the core while the first encrypted MP4 is still downloading.
+// The serialized no-op ensures the later remux uses the same initialized core.
+export function prepareFfmpeg(signal) {
+  return exclusive(async () => {}, signal);
+}
 function argsFor(mode, contentKey, input, output, hls = false) {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
   if (contentKey) {
