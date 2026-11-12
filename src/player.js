@@ -243,7 +243,9 @@ export function createPlayer({
       // Encrypted MP4s still require the complete source before decryption.
       // Initialize FFmpeg after the first media chunk, in parallel with the
       // remaining download, so the initial startup stages do not run serially.
-      let warmup = null, received = 0, lastUpdate = 0;
+      let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
+      let received = 0, lastUpdate = 0;
+      const downloadStarted = performance.now();
       if (!quiet) setStatus('載入影片…');
       const raw = await fetchBytes(source.url, profile, signal,
         quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
@@ -260,8 +262,16 @@ export function createPlayer({
       const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
       if (warmupError) throw warmupError;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      if (!quiet) setStatus('解密並封裝影片…');
+      if (!quiet) {
+        console.info('[Hongguo playback] E' + episode.index +
+          ' 片源下載：' + Math.round(performance.now() - downloadStarted) +
+          'ms，' + raw.byteLength + ' bytes');
+        setStatus('解密並封裝影片…');
+      }
+      const remuxStarted = performance.now();
       bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
+      if (!quiet) console.info('[Hongguo playback] E' + episode.index +
+        ' 解密封裝：' + Math.round(performance.now() - remuxStarted) + 'ms');
     }
     if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');
     const result = new Blob([bytes], { type: 'video/mp4' });
@@ -317,6 +327,8 @@ export function createPlayer({
     loading = false;
     recoveryStart = video.currentTime;
     lastStartupSeconds = Math.max(0, (performance.now() - loadStartedAt) / 1000);
+    console.info('[Hongguo playback] E' + episode.index + ' 可開始播放：' +
+      Math.round(lastStartupSeconds * 1000) + 'ms' + (prepared ? '（使用預取）' : ''));
     setStatus(resolved.fallbackNotice || (wanted > 0 ? '已續播' : ''));
     onProgress?.();
     if (autoPlay) {
