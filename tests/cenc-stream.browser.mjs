@@ -194,6 +194,28 @@ try {
         target, duration: before.duration, newRangeCount: jumped.length,
         highestNewOffset: Math.max(...jumped.map(request => request.first))
       }));
+      // The player's saved position must re-enter the indexed remux path on
+      // reload, not re-download all earlier encrypted samples.
+      const beforeReload = mediaRequests.length;
+      await page.reload();
+      await page.waitForFunction(() =>
+        document.querySelector('#series-title')?.textContent?.includes('CENC streaming fixture'),
+        null, { timeout: 30000 });
+      await page.locator('#mode-play').click();
+      await page.locator('#episodes button.play-episode').first().click();
+      await page.waitForFunction(() => {
+        const video = document.querySelector('#player-video');
+        return video?.currentTime > 54.5 && video.videoWidth === 480 &&
+          video.readyState >= 2;
+      }, null, { timeout: 90000 });
+      const resumedRanges = mediaRequests.slice(beforeReload);
+      assert(resumedRanges.some(request => request.first > input.length * 0.5),
+        'Reload resume must reindex near the saved timestamp instead of restarting at 0');
+      assert(!resumedRanges.some(request => request.unbounded));
+      assert(!errors.length, 'Unexpected browser errors after reload: ' + errors.join('; '));
+      console.log('PASS ' + browserName + ' saved CENC seek reload', JSON.stringify({
+        originalTarget: target, resumedRangeCount: resumedRanges.length
+      }));
     }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
       JSON.stringify({ ...frame, playbackSeconds: playback.currentTime, inputBytes: input.length,
