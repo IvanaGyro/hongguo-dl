@@ -446,3 +446,11 @@
 - **PENDING（新提交的 CI）**：[CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 首次查詢 `in_progress`；[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) `queued`；[CENC Browser #43292589271](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589271) `pending`；[HEVC WASM proof #43292588933](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292588933) `in_progress`。本階段測試尚無最新 PASS 結論，禁止以較舊成功 CI 取代。
 - **已知限制、NOT TESTED**：真實紅果有效授權 206 HEVC CENC 來源、Windows/Android HEVC MSE 裝置及 ByteVC2 真實正例仍缺；HTTP status 精確分類不代表已能繞過 CDN 403。合成 HEVC init + MSE 能力宣告亦不等於實際解碼成功。
 - **下一個具體動作**：根據最新 CI 若 FAIL 修正唯一具體斷言；再做數分鐘暫停及頻繁播放／下載切換的合成瀏覽器驗收，新增 Worker/HTTP Range/Object URL 高水位檢查。檢查最新 pinned Librempeg WASM proof 的 HEVC output sample entry 實證，不連續輪詢 Actions。
+
+
+## 階段 46 — 2026-11-13 增加 120 秒暫停、Range 背壓及恢復的正式瀏覽器驗收
+
+- **工程程式**：[e58213f](https://github.com/IvanaGyro/hongguo-dl/commit/e58213f6fc2885cc0ebfea78e2b8952a6490a45f) 直接 main 修改 `tests/cenc-stream.browser.mjs`、`.github/workflows/cenc-browser.yml`：既有 300 秒合成 CENC H.264/AAC Chromium 壓測的暫停觀察由 3 秒擴充為有上限的 `CENC_TEST_PAUSE_MS`（3–180 秒可設），CI 使用 120000 毫秒。仍先等前向緩衝 >40 秒與 in-flight 請求穩定 1.5 秒，再量測 120 秒後 HTTP Range 增量是否 ≤2、currentTime 是否不動，並恢復完整播至 300 秒；不得用加速虛擬時鐘代替實際網路靜止時間。這只增加合成驗收，不更動已成功的 CENC/Librempeg 解密核心。
+- **PENDING（新 browser proof）**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 初查 `pending`；未有新 PASS 行，先在 `docs/CENC-TEST-MATRIX.md` 獨立標記 120 秒 PENDING，與先前 [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) 的 3 秒 PASS 分開。相同 HEAD 的 [CI #43292941854](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941854) 初查 `in_progress`。
+- **近期已確證**：前段錯誤分類 main `de84114` 的 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 與 [Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) 已在再次查詢時明確 `completed/success`，含新增 200/403/416/429/503 分類單元和 Vite build。這不等於目前新增 120 秒壓測已 PASS。
+- **限制與下一個具體動作**：長暫停仍僅 Linux Chromium 合成 H.264/AAC，非實際紅果 HEVC/Android。待首次完成的 Browser proof 結論，如失敗僅讀失敗 job/斷言並修，否則進一步測試反覆切集/播放下載模式、Worker 數量與 Object URL 釋放；繼續保持最新 main 及文件，不輪詢 Actions。
