@@ -337,7 +337,11 @@ try {
     assert(!mediaRequests.some(r => r.unbounded),
       'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
-    if (process.env.CENC_TEST_AUDIO === '1')
+    // A MediaElementAudioSourceNode stays bound to its <video> even after
+    // AudioContext.close(). Running this probe *before* an unbuffered MSE
+    // seek can change the media element under test. For seek suites, run
+    // the same PCM proof only after the final seek/mode-cycle recovery.
+    if (process.env.CENC_TEST_AUDIO === '1' && process.env.CENC_TEST_SEEK !== '1')
       await assertCencAacPcm(page, 'startup');
     if (process.env.CENC_TEST_STRESS === '1') {
       const expectedSeconds = Number(process.env.CENC_STRESS_SECONDS || 300);
@@ -493,13 +497,36 @@ try {
       await page.waitForFunction(() =>
         document.querySelector('#player-status')?.textContent.includes('已跳轉到'),
         null, { timeout: 90000 });
-      await page.waitForFunction(() => {
-        const video = document.querySelector('#player-video');
-        return video?.currentTime > 55.75 && video.readyState >= 2 &&
-          Array.from({ length: video.buffered.length }, (_, i) =>
-            video.buffered.start(i) <= 55.75 && video.buffered.end(i) > 55.75)
-            .some(Boolean);
-      }, null, { timeout: 90000 });
+      try {
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          return video?.currentTime > 55.75 && video.readyState >= 2 &&
+            Array.from({ length: video.buffered.length }, (_, i) =>
+              video.buffered.start(i) <= 55.75 && video.buffered.end(i) > 55.75)
+              .some(Boolean);
+        }, null, { timeout: 90000 });
+      } catch (error) {
+        // Never include the signed source URL, CENC key or browser identifiers.
+        const state = await page.evaluate(() => {
+          const video = document.querySelector('#player-video');
+          return {
+            playerStatus: document.querySelector('#player-status')?.textContent,
+            paused: video?.paused, ended: video?.ended,
+            currentTime: video?.currentTime, readyState: video?.readyState,
+            playbackRate: video?.playbackRate,
+            defaultPlaybackRate: video?.defaultPlaybackRate,
+            mediaError: video?.error?.code || null,
+            buffered: video ? Array.from({ length: video.buffered.length },
+              (_, i) => [video.buffered.start(i), video.buffered.end(i)]) : []
+          };
+        });
+        console.error('CENC remote seek playback diagnostics:', JSON.stringify({
+          browserName, ...state, newRangeCount: mediaRequests.length - firstSeekRequest,
+          browserErrors: errors.slice(-5),
+          movWarningPhases: rapidDiagnosticPhases.slice(-8)
+        }));
+        throw error;
+      }
       const seekRates = await page.locator('#player-video').evaluate(v => ({
         playbackRate: v.playbackRate, defaultPlaybackRate: v.defaultPlaybackRate
       }));
