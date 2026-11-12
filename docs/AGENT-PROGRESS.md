@@ -566,3 +566,10 @@
 - **新增直接 main 提交**：[913418bb36c82dd189b61da426ad26f3b9135c15](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)，修改 `scripts/verify-cenc-stream-wasm.mjs` 以及 `.github/workflows/cenc-wasm-stream.yml`。驗證器新增 `CENC_VERIFY_WORKER_WINDOW=1`；對 pinned Librempeg 每次需要的 offset/length 模擬 256 KiB cache miss 窗口、offset cache hit、末尾短窗，保留 Asyncify Promise 換頁。在 70s H264/AAC CENC 的 7/35/55/63s RAP Seek，每點重新跑 direct-memory 與 Worker-window CENC remux，對 window 輸出執行 `ffmpeg -xerror` 音視訊嚴格解碼，並以 Node Buffer deepEqual 對整份 clear fMP4 逐位元組比對。若不同或 warning 導致解碼 FAIL，WASM job 不通過。
 - **新證據狀態 PENDING**：此次尚無 WASM 實跑結論，不能假裝 Worker-window 等同 direct，尤其 near-EOF Seek 與預讀可能觸及來源 EOF 的邊界。既有 direct seek [WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) **已 PASS**；新 Worker 模式需獨立驗證。
 - **下一步**：新 WASM workflow FAIL 則讀 failing step/精準定位（Range cache output 是否一致、AAC packet 是否 corruption），不能用 browser warning 分類代替；PASS 則可降低「HTTP window 分段讀取變更內容」的假設優先度，但仍需區分 Chrome worker cancel 競態。真實 HEVC/ByteVC2/Android 設備仍外部阻礙。
+
+
+## 階段 60 — 2026-11-13 修正文檔過時架構與驗收宣稱，避免錯誤交接
+
+- **直接提交 main**：[72f05e087b147b83dabf5a560a51d3349c194871](https://github.com/IvanaGyro/hongguo-dl/commit/72f05e087b147b83dabf5a560a51d3349c194871)，修改 `README.md`、`docs/cenc-progressive-to-fmp4.md`。README 原說 WAV/ByteVC2 不能播會保留跨畫質 fallback，現在改為尊重已選定且存在的 720p、停用該 tier 不提供的 HEVC，沒有解碼器直接告知；原先在來源 403/429 或無效 206 下整檔 fallback 危險，明確標示禁止。CENC 詳細技術檔原聲稱 C 端用 `frag_custom + av_write_frame(NULL)`，與目前實作 `frag_keyframe+empty_moov+default_base_moof` 不符，已修正。原說 120s 網路節流未驗收，改列獨立 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) **success**（Chromium synthetic H264/AAC）。
+- **驗證邊界**：僅修文檔內容，直接對照已提交 source code 與 completed Actions；沒有宣稱新版 HEVC 真實片源或 Android/ByteVC2 解碼新增正例。
+- **下一步**：Stage59 [913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15) Worker-window/directed AVIO parity 的 pinned WASM workflow 上次查仍 `in_progress`；等具體結論後精確更新 CENC matrix，若 FAIL 讀單次 log 解問題。Stage56 matrix Browser fast PASS、Browser long 舊查 in_progress，長跑不輪詢。

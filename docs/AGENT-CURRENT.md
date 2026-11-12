@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 59）
+# Hongguo DL — 目前狀態（2026-11-13，階段 60）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 60 技術文件與現行程式對齊**：[72f05e0](https://github.com/IvanaGyro/hongguo-dl/commit/72f05e087b147b83dabf5a560a51d3349c194871)：README 修正 ByteVC2 720p 明確選定不跨畫質 fallback、CENC 來源 403/429/錯誤 206 不整檔 fallback；`docs/cenc-progressive-to-fmp4.md` 修正 mux flags 為實際 `frag_keyframe+empty_moov+default_base_moof`，120s pause [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 已 PASS。此階段僅是已核實現況文件修正，無新程式或 CI 正例宣稱。
 
 - **階段 59 WASM 對照 Worker 256 KiB 快取**：[913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)：`scripts/verify-cenc-stream-wasm.mjs` 新增 opt-in `CENC_VERIFY_WORKER_WINDOW=1` 模擬 Worker 256 KiB 範圍快取／命中／最後短窗；WASM proof 對 70s H264/AAC 的 7、35、55、63s 進行 direct-memory vs Worker-window 各自解密 remux，`ffmpeg -xerror` 解碼並**逐 byte 比對兩份 clear fMP4**。**新的 WASM proof PENDING**，不得提前宣稱相等。
 
