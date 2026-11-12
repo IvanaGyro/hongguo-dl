@@ -19,8 +19,8 @@ const checkBvc2Assets = retryableAvailability(async () => {
   const length = Number(wasm.headers.get('content-length') || 0);
   const manifestLength = Number(manifest.headers.get('content-length') || 0);
   return wasm.ok && manifest.ok &&
-    /^(application\\/wasm|application\\/octet-stream)\\b/i.test(wasmMime) &&
-    /^(application\\/json|application\\/octet-stream)\\b/i.test(manifestMime) &&
+    /^(application\/wasm|application\/octet-stream)\b/i.test(wasmMime) &&
+    /^(application\/json|application\/octet-stream)\b/i.test(manifestMime) &&
     length < 32 * 1024 * 1024 && manifestLength < 4096;
 });
 export async function bvc2BridgeAvailable() {
