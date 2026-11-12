@@ -6,9 +6,14 @@ on:
       - '.github/workflows/bvc2-wasm-probe.yml'
       - 'scripts/build-bvc2-wasm-transcode.sh'
       - 'scripts/bvc2-transcoder.c'
+      - 'scripts/bvc2-wasm-bundle.mjs'
   workflow_dispatch:
+concurrency:
+  group: bvc2-wasm-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: write
+  actions: write
 jobs:
   decoder-probe:
     runs-on: ubuntu-latest
@@ -58,6 +63,8 @@ jobs:
       - name: Publish browser WASM bundle on main
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -67,19 +74,27 @@ jobs:
           echo "Publishing from $(pwd), git directory:"
           ls -ld .git || true
           git status --short || true
-          mkdir -p public/bvc2
-          cp /tmp/hongguo-bvc2-transcode/dist/bvc2-core.mjs public/bvc2/bvc2-core.mjs
-          cp /tmp/hongguo-bvc2-transcode/dist/bvc2-core.wasm public/bvc2/bvc2-core.wasm
+          node scripts/bvc2-wasm-bundle.mjs publish /tmp/hongguo-bvc2-transcode/dist
+          node scripts/bvc2-wasm-bundle.mjs verify
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/bvc2/bvc2-core.mjs public/bvc2/bvc2-core.wasm
+          git add public/bvc2/bvc2-core.mjs public/bvc2/bvc2-core.wasm public/bvc2/manifest.json
           if git diff --cached --quiet; then
-            echo "Browser assets already match latest build"
+            echo "Published browser assets already match the verified build"
           else
-            git commit -m "build(bvc2): publish reproducible experimental wasm core"
+            git commit -m "build(bvc2): publish JS/WASM with pinned source manifest"
             git fetch origin main
             git rebase origin/main
+            # Compilation may have started before a later C/source change.
+            # Reject stale compiled binaries rather than rebasing them over
+            # new source files.
+            node scripts/bvc2-wasm-bundle.mjs verify
             git push origin HEAD:main
+            curl --fail --silent --show-error --request POST \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/pages.yml/dispatches" \
+              -d '{"ref":"main"}'
           fi
       - uses: actions/upload-artifact@v4
         if: always()
