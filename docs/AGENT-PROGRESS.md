@@ -250,3 +250,9 @@
 - **BVC2 版本回歸 [82d8689](https://github.com/IvanaGyro/hongguo-dl/commit/82d8689edec716146532e014ae350c7dcd258b7a)**：本地 make/verify manifest、不匹配 WASM、修改 C 指紋、runtime JS/WASM 交換、錯版 x264 都有測試；[main CI #43280916523](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280916523) **success**（是工具測試，不代表已發布 release）。
 - **BVC2 optional availability [4e4826f](https://github.com/IvanaGyro/hongguo-dl/commit/4e4826fb29d178e9bfcbee5619ee70bade0da8f1)**：部署的 manifest 若不存在或錯 MIME，不會假裝 ByteVC2 WASM 已可使用；避免 HTTP 200 的 Pages SPA 回應被誤判。仍缺真實 ByteVC2 bitstream 正例、CPU/RAM、首影格與 A/V。
 - **下一步繼續**：待 BVC2 workflow 產物一起寫回 main，驗證 manifest 與部署，再增加 CI/Pages 發布守門；對 P1 真實 HEVC 仍須使用可回 206 的授權片源及 Windows/Android decoder，不能用能力宣告取代成功播放。
+
+## 階段 23 — 2026-11-13 BVC2 發布守門與長片 RSS 量測（新增並待驗收，繼續下一階段）
+
+- **[faefccb](https://github.com/IvanaGyro/hongguo-dl/commit/faefccb47316b7f1a243c8c630d8524f5a0f39c1)、[c26133a](https://github.com/IvanaGyro/hongguo-dl/commit/c26133a1be1766d0d7932b89acad9b01069c09f0)**：`main` 的 CI 與 Pages 加入 `node scripts/bvc2-wasm-bundle.mjs verify`，要求 experimental BVC2 JS/WASM/manifest 及原始碼 SHA256 完整一致，禁止不完整版本部署。須等新 [BVC2 WASM run #43280846374](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280846374) 發布 manifest 後才可通過；之前沒有 manifest 的中間版本 fail 不等於 decoder 壞掉。
+- **[3498fd6](https://github.com/IvanaGyro/hongguo-dl/commit/3498fd6f0a4d30539a65b7797fb673621de0c18b)、[5a4397b](https://github.com/IvanaGyro/hongguo-dl/commit/5a4397b21e991296e9a328799c7f8ad30175a8f5)**：在 `tests/cenc-stream.browser.mjs` 的 300 秒 Chromium 合成長片測試中，每 2 秒以 Linux `ps` 取 **Node Playwright test harness + browser 子行程** 的 RSS 合計，記錄起始、peak、末尾、樣本數。這是具真實程序觀測的趨勢，但會重複計入 shared pages、涵蓋 Node harness、不包含 GPU driver 獨立配置，**不可當作精確瀏覽器或 Android 高水位**。現有 MSE 最大秒數/Range/完整播畢 PASS 仍維持；新 RSS 測試待 CI 完成才可記數值。
+- **最新驗收守則**：只查已完成的工作一次、失敗再讀該 job 而非重複 poll。真實 HEVC / ByteVC2 positive content 仍需合法可用的片源，現有 403 不是解碼失敗。所有工作直接 main、不開 PR，更新本文件後繼續。
