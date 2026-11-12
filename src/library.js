@@ -43,8 +43,12 @@ export function rememberPlayback(storage, seriesId, vid, position, duration, com
   const key = playbackKey(seriesId, vid);
   const old = history[key] || {};
   const finished = completed || (duration > 0 && position / duration > 0.95);
+  // A newly loaded or paused player sometimes reports time 0 during a
+  // source swap. Do not erase an earlier valid position on that event.
+  const seconds = !finished && position < 0.5 && old.seconds > 1
+    ? old.seconds : position;
   history[key] = {
-    seconds: finished ? 0 : position,
+    seconds: finished ? (Number.isFinite(duration) && duration > 0 ? duration : position) : seconds,
     duration: Number.isFinite(duration) && duration > 0 ? duration : old.duration || 0,
     completed: finished || !!old.completed,
     viewedAt: Date.now()
