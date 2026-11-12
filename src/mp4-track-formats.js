@@ -70,3 +70,27 @@ export function inspectMp4TrackFormats(moov) {
   }
   return { hasAac, videoCodec, videoTracks, audioTracks };
 }
+
+// Movie header gives a finite seekable timeline even though an empty_moov
+// streaming output cannot know its final duration until endOfStream.
+export function movieDurationSeconds(moov) {
+  if (!(moov instanceof Uint8Array) || moov.length < 32 ||
+      u32(moov, 0) !== moov.length || fourcc(moov, 4) !== 'moov') return null;
+  const mvhd = boxes(moov, 8, moov.length).find(box => box.type === 'mvhd');
+  if (!mvhd) return null;
+  const version = moov[mvhd.payload];
+  let timescale = 0, duration = 0;
+  if (version === 0 && mvhd.payload + 20 <= mvhd.end) {
+    timescale = u32(moov, mvhd.payload + 12);
+    duration = u32(moov, mvhd.payload + 16);
+    if (duration === 0xffffffff) return null;
+  } else if (version === 1 && mvhd.payload + 32 <= mvhd.end) {
+    timescale = u32(moov, mvhd.payload + 20);
+    const hi = u32(moov, mvhd.payload + 24);
+    duration = hi * 0x100000000 + u32(moov, mvhd.payload + 28);
+    if (hi === 0xffffffff && u32(moov, mvhd.payload + 28) === 0xffffffff)
+      return null;
+  } else return null;
+  const seconds = duration / timescale;
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= 24 * 3600 ? seconds : null;
+}
