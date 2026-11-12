@@ -32,6 +32,8 @@ jobs:
         run: |
           test -s public/cenc/cenc-core.wasm
           test -s public/cenc/cenc-core.mjs
+      - name: Verify published WASM ABI manifest and asset hashes
+        run: node scripts/cenc-wasm-bundle.mjs verify
       - name: Generate large synthetic encrypted H264/AAC progressive sample
         run: |
           sudo apt-get update -qq
