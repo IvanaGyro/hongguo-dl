@@ -189,3 +189,9 @@
 - **程式 [4256839](https://github.com/IvanaGyro/hongguo-dl/commit/4256839146a535c889544543443de584e2f1d739)**：在 `tests/cenc-stream.browser.mjs` 增加 70 秒片的往返遠端 Seek：先 55 秒及 reload，之後跳 7 秒 (10%)、35 秒 (50%)、63 秒 (90%)；每次檢查目標起初不在 buffered、可再呈現影格、目標附近 MSE buffer、無整檔無 Range 請求、HTTP Range 位移符合索引預期。最後再 reload，要求 90% 處恢復、後段 Range 而不是從頭下載。
 - **CI [0980388](https://github.com/IvanaGyro/hongguo-dl/commit/098038822836e02e0ee7a89dc0abd9235272853c)**：`.github/workflows/cenc-browser.yml` 已對 Chromium/Firefox 70 秒 fixture 啟用 `CENC_TEST_MULTI_SEEK=1`。**當前沒有此新增測試的成功結論**；原 55 秒 PASS 不等於這些新案例 PASS。
 - **後續**：繼續 P3 實際 300 秒合成長片播畢、舊 MSE range eviction、取消與記憶體邊界驗收；有具體失敗才單次讀取 job logs 並修正。不要停在寫文件，不開 PR。
+
+## 階段 16 — 2026-11-13 P3 實際 300 秒合成 CENC 長片播放測試（程式與 CI 已提交，正在驗收）
+
+- **[1015fc6](https://github.com/IvanaGyro/hongguo-dl/commit/1015fc6500b533586f6088694f8a92ca2089c4b9)**：`tests/cenc-stream.browser.mjs` 新增 `CENC_TEST_STRESS=1`，使用影片元素 8x 速實際播放到 300 秒 EOF，逐次記錄 `buffered` 區間總秒數、ahead 時長、採樣數、影片 error/ended，要求播放結束、沒有整檔無 Range 下載、`maxBufferedSpan < 120s`、`maxBufferedAhead < 90s`。這驗證 MSE window 回收，不等於已測 OS/GPU RSS。
+- **[9cbca45](https://github.com/IvanaGyro/hongguo-dl/commit/9cbca45910dc2fcc79b96e779ac59c70e1d6c456)**：Browser workflow 自產 300 秒 480x270、12fps、H.264/AAC CENC progressive 合成 fixture；執行 Chromium 300 秒影片實播與上面有界 MSE 測試。保留既有 Chromium/Firefox 15s EOF 前首影格、70s 55秒/10%/50%/90% RAP seek 和 reload。首次長片測試以 Chromium 進行，Firefox 300 秒及硬體 RAM 仍未驗證。
+- **狀態**：以上新 10/50/90% 與 300 秒測試尚未讀取 completed browser run；不得預先標記 PASS。優先繼續強化取消與錯誤恢復，後續若 workflow failed 只讀失敗 step/log 修復，避免輪詢造成工作停滯。
