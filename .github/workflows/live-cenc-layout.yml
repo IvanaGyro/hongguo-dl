@@ -1,11 +1,14 @@
 name: Inspect real HEVC CENC metadata (bounded)
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/cenc-*', 'feature/cenc-*']
     paths:
       - 'scripts/live-cenc-layout.mjs'
       - '.github/workflows/live-cenc-layout.yml'
   workflow_dispatch:
+concurrency:
+  group: cenc-live-layout-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
