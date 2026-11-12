@@ -19,6 +19,8 @@ jobs:
         run: bun run test
       - name: Verify committed CENC JS/WASM bundle and build inputs
         run: node scripts/cenc-wasm-bundle.mjs verify
+      - name: Verify experimental BVC2 JS/WASM pair and pinned source inputs
+        run: node scripts/bvc2-wasm-bundle.mjs verify
       - name: Build GitHub Pages assets
         env:
           VITE_BASE_PATH: /hongguo-dl/
