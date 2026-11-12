@@ -399,3 +399,14 @@
 - **PENDING（全套）**：新增 [CI #43289873073](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873073) 和 [Pages #43289873079](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873079) 查詢時 `in_progress`；[Browser #43289873014](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873014) 同為 `in_progress`，不可冒稱 PASS。完整 Bun 測試、Vite build、正式 browser proof 須以這些 runs 最終結論為準，不輪詢。
 - **NOT TESTED**：實際紅果 HEVC / Android / Windows 解碼、ByteVC2 正例仍無素材或實機；完整 MSE MIME 僅 capability declaration。
 - **下一個工程動作**：稽核 init fMP4 內 HEVC sample entry / hvcC 是否與 MSE SourceBuffer MIME 相符及 Seek 重建；針對具體解析或失敗清理缺口補單測，不改既有 C/Asyncify WASM binary；若有 CI FAIL 先讀具體 job 再修。
+
+
+## 階段 41 — 2026-11-13 驗證 HEVC clear fMP4 初始化片段／SourceBuffer codec 一致性
+
+- **目的與具體程式修復**：先前 Worker 的 `init` 片段沒有驗證實際 sample entry 與 hvcC 是否符合 `MediaSource.isTypeSupported` 建立的精確 HEVC MIME，可能讓 `hev1`／`hvc1` 或 profile 差異以模糊 SourceBuffer/decode failure 結束。直接 main 原子提交 [1b9cb3d](https://github.com/IvanaGyro/hongguo-dl/commit/1b9cb3d484b63f2f980f7dfb9a1a6afe289d3f6d)，原 parent `7827ce5`，無 PR。
+- **修改檔案**：`src/mp4-track-formats.js` 新增僅解析 clear sample entry 的 `hevcCodecStringFromClearMoov()`，區分 `hev1` 與 `hvc1`；`src/cenc-init-codec.js`（新）嚴格解析有界 `ftyp + moov` 並比較完整 codec；`src/cenc-remux.js` 在 Worker `init` 建立 SourceBuffer 前核對，失敗分類 `hevc-init-mismatch` 且沿用 fail 的 Worker/Range cancel，Seek 重建也走相同 validator；不再以裸 `hvc1` 代替缺失或不合法的 hvcC。新增 `tests/cenc-init-codec.test.mjs` 四組正負例。
+- **PASS（測試）**：本地 Node.js 22 `node --check tests/cenc-init-codec.test.mjs` 通過；[CI #43290337102](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337102) HEAD `1b9cb3d` **completed/success**，其流程含 Bun 全套單測、雙 WASM asset 校驗、Vite build、Worker dry-run/冷啟動 smoke。故新增四個單測已在 CI 全測中 PASS。本地未建立完整 Bun repo checkout，不將 `node --check` 冒稱單測實跑。
+- **PASS（Pages）**：[Pages #43290337124](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337124) HEAD `1b9cb3d` **completed/success**。這代表部署工作成功，不是具 HEVC MSE 解碼裝置的真實影片驗收。
+- **PENDING**：[WASM proof #43290337070](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337070) 查詢時 `in_progress`；[Browser #43290337304](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337304) `pending`；不輪詢、不聲稱最新 E2E 已 PASS。
+- **NOT TESTED / 限制**：新增 init 的單元 fixture 是合成樣本。真實 Librempeg HEVC init 對應實際 browser MSE 支援、Android/Windows 真實來源與 ByteVC2 正例仍需獨立證據；MSE MIME 支援不代表硬體解碼。
+- **下一個工程動作**：長暫停／反覆切集與超時取消的具體 lifecycle 測試，確保 pending ACK/Range/Worker close 不殘留；有 CI 或 Browser 具體錯誤時優先處理。不觸及 C bridge 或 pinned WASM。
