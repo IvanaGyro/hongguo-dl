@@ -182,3 +182,10 @@
 - 同時 `main aecc9a4` 的 [CI #43266778814](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778814) **success**、[Pages #43266778629](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778629) **success**。
 - **判定**：P2 主要架構（RAP Range seek、MSE 重建、保存位置與重新開啟）之 55 秒案例 **合成 Chromium/Firefox 已通過**；尚未驗證多重 10/50/90%、切集時取消、長時間 RAM 以及真實 HEVC。下一階段先加多 seek + cancel/stress 的自動回歸；另需真實 HEVC 授權片源 HTTP 206 才能做 P1 最終驗收。
 - **重要工作節奏**：使用者明確要求「實作 → 測試 → 改文件 → 繼續下一階段」多輪工作，不要把進度文件視為 session 結束；不開 PR，直接 main，僅在需要解釋具體失敗時讀一次 Actions log。
+
+## 階段 15 — 2026-11-13 Chromium/Firefox 10/50/90% cross-range seek 擴充（程式已提交，接續測試）
+
+- **前一階段 PASS**：既有合成 70 秒 H.264/AAC CENC 的 Chromium/Firefox 55 秒遠端 Seek、reload 續播通過，證據 [#43266588689](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266588689) 之 PASS 行（詳階段 14）。
+- **程式 [4256839](https://github.com/IvanaGyro/hongguo-dl/commit/4256839146a535c889544543443de584e2f1d739)**：在 `tests/cenc-stream.browser.mjs` 增加 70 秒片的往返遠端 Seek：先 55 秒及 reload，之後跳 7 秒 (10%)、35 秒 (50%)、63 秒 (90%)；每次檢查目標起初不在 buffered、可再呈現影格、目標附近 MSE buffer、無整檔無 Range 請求、HTTP Range 位移符合索引預期。最後再 reload，要求 90% 處恢復、後段 Range 而不是從頭下載。
+- **CI [0980388](https://github.com/IvanaGyro/hongguo-dl/commit/098038822836e02e0ee7a89dc0abd9235272853c)**：`.github/workflows/cenc-browser.yml` 已對 Chromium/Firefox 70 秒 fixture 啟用 `CENC_TEST_MULTI_SEEK=1`。**當前沒有此新增測試的成功結論**；原 55 秒 PASS 不等於這些新案例 PASS。
+- **後續**：繼續 P3 實際 300 秒合成長片播畢、舊 MSE range eviction、取消與記憶體邊界驗收；有具體失敗才單次讀取 job logs 並修正。不要停在寫文件，不開 PR。
