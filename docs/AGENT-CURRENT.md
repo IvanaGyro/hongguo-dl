@@ -1,34 +1,25 @@
-# Hongguo DL — 目前狀態（2026-11-13，最新階段 49）
+# Hongguo DL — 目前狀態（2026-11-13，階段 50）
 
-> **接手規則**：所有程式直接提交 `main`，**不得開 PR**。每完成可驗證工程階段，立即更新 [AGENT-PROGRESS](AGENT-PROGRESS.md)（commit SHA、修改檔案、PASS/FAIL/PENDING、證據連結、限制、下一步），並更新本短版後**繼續做下一階段**。GitHub 讀／寫／Actions 任一步都可能卡住，禁止同一操作無限重試或反覆輪詢；寫入前比較最新 main 與 path blob SHA。不能輸出 signed URL、CENC key 或私有影片。
+> **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
-## 最新程式／CI
+## 最新完成與證據
 
-- 最新核心程式提交：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)：HTTP metadata fetch/reader.throw 轉成固定安全 `CENC_RANGE_HTTP`，避免 signed URL/key 洩漏並禁止無界降級；[45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a)：CENC metadata HTTP 206 的 Content-Range、Content-Length、body 截斷/過量不得降級整檔 FFmpeg；新增四組測試。[ac615db](https://github.com/IvanaGyro/hongguo-dl/commit/ac615db6965c6978cecfe35ea3d70d5e497608d1) 另新增三輪播放／下載切換的 Range 與 MSE Object URL 追蹤，尚待 Browser E2E。
-- 最新已確認主 CI 綠燈：[CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208)，HEAD `de84114`，**completed/success**（Bun 單測、CENC/BVC2 WASM manifest、Vite build、Worker cold-start）；[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) **success**。**不是**後續 `ac615db` 最新功能的驗收。
-- 後續新測試： [CI #43293286745](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286745)、[Pages #43293286729](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286729) 首次查詢 `in_progress`；[Browser #43293286765](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286765) `pending`；[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 新增 120 秒暫停也待確認。不要把 PENDING 當 PASS。
+- **階段 50 程式**：[005ad1a](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)：`src/source-options.js` 不再將使用者選定且存在的 720p ByteVC2-only 無法播放來源自動換成 1080p HEVC；`src/player.js` 編碼選單嚴格依當前畫質，增加 Node 與 Firefox 瀏覽器 regression。**新提交 CI/Browser 結果 PENDING**；不要把代碼提交當測試通過。
+- **階段 49 程式**：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)：metadata fetch/reader 斷線的 `CENC_RANGE_HTTP`、固定無私密資料錯誤訊息，禁止錯誤回退整檔；階段 48 [45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a) 比對 HTTP 206 range/length/body。**已確認**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811) **success**、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) **success**、[pinned Librempeg HEVC WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) **success**。這些是合成/建置驗證，不是實際紅果 HEVC 解碼。
+- **Firefox FFmpeg.wasm workflow #43294139816** [失敗](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139816)：`tests/ffmpeg.firefox.mjs` 本身實際列印 `Firefox FFmpeg.wasm staged-and-manual-save remux PASSED`，**後續** `tests/browser-modes.firefox.mjs:367` 因選定 720p 時跳至 1080p 導致 HEVC 可選而 FAIL。階段 50 已針對這個具體行為修正。
+- **CENC Browser #43294139965** [失敗](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)：Chromium first frame、55s Seek、跨 Range 五次、90% reload 有個別 PASS，但新增三輪播放／下載切換最終 `tests/cenc-stream.browser.mjs:529` 發現 WASM `[mov...] subsample size exceeds ... / partial file` 主控台 stderr，不能宣稱三輪 E2E PASS。先釐清取消中的 demux 訊息與有效播放錯誤，不隱藏真實 decode failure。
+- **120 秒暫停驗收**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) **completed/success**（Chromium synthetic H.264/AAC）；不代表 Android/HEVC 實機。
 
-## 已通過的合成驗收（勿重做）
+## 架構及已經驗證的基線
 
-- Librempeg Asyncify AVIO + **有界 HTTP 206 Range** + CENC decrypt + `-c copy` clear fMP4 + MSE；JS/WASM manifest SHA256 綁定，HEVC 1080p/AAC 的 WASM stream-copy + FFmpeg decode、6 秒 RAP seek synthetic PASS：[WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)。
-- 合成 H.264/AAC 在 Chromium/Firefox 的 HTTP EOF 前首影格、55s 遠距 Seek、7→63→35→5→63s 往返、reload 續播及單次模式切換 PASS：[Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)。
-- 合成 300s/1800s Chromium 完整播畢，MSE buffered span ≤72s、104 Range（1800s）：[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)；3 秒暫停沒有新增 Range 並可恢復：[Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033)。**120 秒暫停尚待新測試 PASS**。
-- ByteVC2 decoder/x264 WASM 實驗性編譯、版本 pin、非 BVC2 負例、Worker cancel/lifecycle 和合法本機正例驗證工具單測 PASS；不代表實際 BVC2 影格驗收。
+- 使用 pinned **Librempeg Asyncify AVIO WASM**，CENC decrypt + stream copy MP4→**clear fMP4**，送 MSE；從 clear init 的真實 `hvc1/hev1 + hvcC` 選擇 MIME，不以 JS 取代 demux/mux。可參考 `docs/cenc-progressive-to-fmp4.md`。
+- 1080p HEVC/AAC 合成 WASM→FFmpeg 解碼、6 秒 RAP Seek PASS；Chromium／Firefox 合成 H.264 首影格在來源 EOF 前、遠距 Seek/reload PASS；Chromium 300s/1800s 播畢與有界 buffer PASS。詳情在 [CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。
+- BVC2 WASM 實驗版編譯、asset SHA/負例 PASS，**無**真實 ByteVC2 解碼正例、效能或音畫同步證據。
 
-## 近期 HEVC 與可靠性修正
+## 下一個工程動作及外部阻礙
 
-- [618bbab](https://github.com/IvanaGyro/hongguo-dl/commit/618bbab523513ff01ce60143752616c75cc90bf5) 修正 HEVC 單測括號，CI 恢復。[08258a8](https://github.com/IvanaGyro/hongguo-dl/commit/08258a841183b67311c53672a37ac3315cfe960d) 修正來源過早以裸 `hvc1` canPlayType 拒絕完整 MSE profile；[1b9cb3d](https://github.com/IvanaGyro/hongguo-dl/commit/1b9cb3d484b63f2f980f7dfb9a1a6afe289d3f6d) 解析 clear init 的精確 `hvcC`。
-- **重要後續校正**：[5ac183a](https://github.com/IvanaGyro/hongguo-dl/commit/5ac183a69de73f19d586f0ef79a3222476284a7b) 不能假設 Librempeg 必輸出 `hvc1`，現在從**真正 clear fMP4 init** 導出 `hvc1/hev1` SourceBuffer MIME，仍比對完整 profile/tier/level，並補 pinned WASM output proof；[971dbc8](https://github.com/IvanaGyro/hongguo-dl/commit/971dbc88a128513cffbfccc8d73171b9c44c3bfa)、[63c19b9](https://github.com/IvanaGyro/hongguo-dl/commit/63c19b9c5e6902a69412deda3957acf1aea49bc1) 補 MSE `hev1` 正負例／前置 probe。原生 FFmpeg 自行生成樣本實見 `hev1`，**非 pinned WASM 結果**；需等新 WASM proof。
-- [9279172](https://github.com/IvanaGyro/hongguo-dl/commit/9279172b3ed0f38af62c56d832618aa3bdcf3c13) 修正 Worker fail 時未 revoke URL，加入連續 Seek lifecycle 單測；[de84114](https://github.com/IvanaGyro/hongguo-dl/commit/de84114fe0a35a024e6b7271d1197b86f657fe84) 區分 CENC metadata HTTP 200/403/416/429/503，避免 CDN 被拒時降級整檔 FFmpeg 並誤認 HEVC 解碼失敗；[e58213f](https://github.com/IvanaGyro/hongguo-dl/commit/e58213f6fc2885cc0ebfea78e2b8952a6490a45f) 120 秒 paused-Range Browser E2E PENDING。
+**立即下一步**：釐清 CENC 模式三輪切換時 Librempeg stderr 是否屬取消造成的診斷，增加區分 pageerror／音畫失敗的 browser assertions，並檢視真正的取消競態；接著單次查詢階段 50 的 CI／Firefox regression 結果，有具體 FAIL 才讀該工作 log 修。
 
-## 階段 48–49 新待驗證
+**NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 
-- [CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811)／[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) 初查 `in_progress`、[Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)／[WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) `pending`，最新變更 NOT YET VERIFIED。上一版 
-- [CI #43293840096](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293840096) 初查 `in_progress`、[Browser #43293839080](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839080) `pending`；新增 206 欄位/內容不符四種測試 **PENDING**。此前 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 已 PASS 的 HTTP 200/403/416/429/503 分類不能取代 206 新測試。
-- **立即下一個工程動作**：若有具體 CI/Browser/WASM FAIL 則修；否則新增暫停/切集/模式切換時 stalled HTTP/Worker 的取消及 MSE URL 釋放驗收，不讓 120 秒測試排隊阻塞程式開發。
-
-## 缺乏的外部驗收與立即恢復點
-
-**NOT TESTED**：真實紅果 1080p HEVC CENC 需合法有效 HTTP 206 來源（先前 CDN 403 不是解碼失敗）；Android Firefox / Windows 真實 HEVC MSE 首影格、聲音、Seek/播畢；合法 ByteVC2 bitstream 真正解碼、AAC 時間軸、CPU/RAM。不可用 synthetic 或 MIME 支援宣告取代。
-
-**下一步**：先以最新 main 及單次最新 CI／Browser／pinned HEVC WASM proof 的具體結果決定是否修 bug；若無失敗，繼續測試三輪模式切換與兩分鐘暫停、清理 Worker/Range/Object URL 的弱網路與退出競態。使用 [CENC-TEST-MATRIX](CENC-TEST-MATRIX.md) 分開登錄已通過／待驗。**更新文件後繼續開發，不因文件提交而停止。**
+**文件提交不是停止條件，更新後繼續下一階段。**

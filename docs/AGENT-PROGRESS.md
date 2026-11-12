@@ -480,3 +480,13 @@
 - **PENDING**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811)、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) 首查 `in_progress`；[Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)、[WASM proof #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) `pending`。不得把尚未完成的最新 CI 或新的 120s pause / 三輪模式切換驗收標成 PASS。
 - **前述成功證據不變**：最後已核實的 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208)／[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) 是較早的 `de84114` 版 **completed/success**。HEVC 真實紅果合法 HTTP 206 片源、Android/Windows 實機、ByteVC2 正例仍 **NOT TESTED**。
 - **下一步**：先針對最新 CI 或 WASM proof 的具體失敗做最小修補；沒有具體失敗就進入長暫停、切集與載入中的 HTTP/Worker 取消測試。進度文件寫完不是結束條件；GitHub 各種操作不可無限輪詢。
+
+
+## 階段 50 — 2026-11-13 Firefox 編碼選單失敗定位／修復跨畫質誤回退
+
+- **根因／證據**：最新 `aaea7ea` 的 [Firefox #43294139816](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139816) job `131447806982` **failure**，但 FFmpeg.wasm remux 已列印 PASS；真正錯誤 `tests/browser-modes.firefox.mjs:367`：「HEVC must not be offered at VVC-only 720p」。`playbackRendition()` 在明確選定且已存在的 720p 只有 ByteVC2、無可用 decoder 時竟找 1080p HEVC fallback；`src/player.js` 隨後將品質改為 1080p，啟用 HEVC，違反用戶設定，且造成選單競態。另一 [Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965) **failure** 是獨立的 FFmpeg MOV stderr，不能把 FFmpeg.wasm 修復宣告為失敗。
+- **已直接提交 main**：[005ad1adf7fd326fe4c3079cefcba40299dbd1a9](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)，修改 `src/source-options.js`、`src/player.js`、`tests/url-queue.test.mjs`、`tests/bvc2-options.test.mjs`、`tests/browser-modes.firefox.mjs`。選定且已宣告的解析度無可播放編碼時，直接回報 `PLAYBACK_UNSUPPORTED`，不再偷換到別的解析度；選單禁用只根據實際品質的 codec 清單。保留「根本不存在所選解析度」的原有可公告 fallback。測試增加 720p 保持不變的斷言、Node 正負例。
+- **PASS（上一版）**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811)、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714)、[pinned WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) **completed/success**，涵蓋階段 48–49 的新 Node 單元及 HEVC 合成 proof。
+- **PENDING（階段 50）**：新修改目前只完成 literal patch invariants 與成功推進 main；尚未獲得該 HEAD 的 CI／Firefox E2E 結論，絕不寫成 PASS。
+- **另項已確認**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) **completed/success**，對應 120 秒暫停 Chromium 合成驗收；不是 Android/HEVC 證據。
+- **下一步**：針對三輪模式切換後 `tests/cenc-stream.browser.mjs:529` 的 `[mov] subsample size exceeds the packet size left` 及 `partial file`，辨別是否取消中的 WASM stderr、或真正播放中解碼損壞；必要時增強載入/取消時序與 Browser assertions。隨後確認階段 50 的 Firefox 測試結果。真實紅果 HEVC/Android/Windows/BVC2 尚缺外部素材。
