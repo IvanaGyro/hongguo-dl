@@ -3,7 +3,8 @@
 // millions of samples in JS/WASM. JS inspects at most 1 MiB of MP4 metadata.
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
-import { inspectMp4TrackFormats, movieDurationSeconds } from './mp4-track-formats.js';
+import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
+  movieDurationSeconds } from './mp4-track-formats.js';
 import { clampStreamSeek } from './cenc-seek.js';
 
 const HEADER_SIZE = 64 * 1024;
@@ -143,6 +144,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
         const tracks = inspectMp4TrackFormats(moov);
         metadata.hasAac = tracks.hasAac;
         metadata.videoCodec = tracks.videoCodec;
+        metadata.hevcCodecString = hevcCodecStringFromMoov(moov);
         metadata.audioTracks = tracks.audioTracks;
         metadata.movieDurationSeconds = movieDurationSeconds(moov);
       }
@@ -331,7 +333,11 @@ export async function openClearKeyStream({
     return null;
   };
   const mime = mimeForCodec(codec);
-  if (!mime || !source?.contentKey || !video.canPlayType(mime)) return null;
+  // Bare 'hvc1' is incomplete for some HEVC MSE implementations. Read the
+  // bounded moov first and build the exact codec string from hvcC instead of
+  // rejecting a device based solely on this generic preliminary probe.
+  if (!mime || !source?.contentKey ||
+      (codec !== 'hevc' && !video.canPlayType(mime))) return null;
   aborted(signal);
   const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
   const metadata = {};
@@ -351,7 +357,9 @@ export async function openClearKeyStream({
     try {
       const remux = await openCencProgressiveStream({
         video, url, fileSize: metadata.fileSize,
-        codec, hasAac: metadata.hasAac, key: source.contentKey, signal,
+        codec, hasAac: metadata.hasAac,
+        videoCodecString: metadata.hevcCodecString,
+        key: source.contentKey, signal,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(startSeconds,
           metadata.movieDurationSeconds || source.duration || null) ?? 0
