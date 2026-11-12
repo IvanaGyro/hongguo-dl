@@ -1,25 +1,29 @@
 # Hongguo DL
 
-紅果短劇下載管理器，採用 **Bun + GitHub Pages 靜態網頁 + Cloudflare Worker API**。介面只處理劇集 ID、官方劇集網址或列入白名單的媒體直連網址，不搜尋或播放影片。請只下載您有權保存的內容。
+紅果短劇網頁播放器與下載佇列管理器，採用 **Bun + GitHub Pages 靜態網頁 + Cloudflare Worker API**。支援劇集 ID、官方分享網址與白名單媒體直連網址；提供逐集播放、續播、自動下一集與本機下載佇列（不提供全站搜尋）。請只下載您有權保存的內容。
 
 ## 功能
 
 - 逐集選取、批次佇列（同時 1–3 集）、下載百分比與位元組、HLS 分片數、取消、重試、錯誤代碼與原因。
-- 公開來源優先；可選自動畫質、720p、1080p，以及不限編碼、H.264、HEVC 或 ByteVC2。
+- 播放模式提供逐集播放、續播、進度色條、自動下一集，以及播放器內的來源畫質／編碼、速度、縮放和支援時的子母畫面。
+- 下載模式提供選集佇列、逐集手動儲存、從佇列勾選多集匯出單一 ZIP 或 MP4 無損合併；ZIP 可混合影集，MP4 合併僅接受相容的同一影集。
 - Worker 以 **Rust/WASM** 計算 SM3、Argus Simon、Ladon／Helios、Gorgon，以及 Medusa 的 XM-XOR、自訂 AES V3、F13 雜湊與 IV／校驗碼；Bun 負責建置與測試，JavaScript 保留瀏覽器、網路與部分協定組裝 API。
-- 原始影片串流直接寫入本機；視需要載入 FFmpeg.wasm 無損封裝 MP4 或轉 H.264。HLS VOD 清單解析／改寫由可獨立測試的純函式處理，瀏覽器僅負責分片下載與 FFmpeg 檔案寫入。
-- 依照 `window.showDirectoryPicker()` 是否存在決定串流寫入資料夾或 Blob 下載，**不會以 Firefox/Chrome 名稱判斷**。
-- 本機下載紀錄保存在 localStorage，重開網頁後未完成工作需要重新開始，影片內容不傳回 GitHub Pages 或儲存在 Cloudflare。
+- 未加密且無需轉換的原始影片可直接串流寫入已選取的本機資料夾；加密或需處理的影片使用 FFmpeg.wasm 解密、無損封裝 MP4 或轉 H.264。HLS VOD 清單解析／改寫由可獨立測試的純函式處理。
+- 以 `window.showDirectoryPicker()` 是否可使用決定是否直接寫入資料夾，**不依瀏覽器名稱判斷**。Android Firefox 等不支援此 API 的瀏覽器會把已完成分集暫存至 IndexedDB，**不會逐集自動跳出存檔對話框**；使用者自行決定何時逐集儲存或匯出。
+- ZIP64 優先透過 Service Worker 串流匯出，無法轉移 ReadableStream 時提供有容量上限的 Blob 備援。
+- 最近影集、觀看進度及佇列狀態保存在 localStorage；已完成分集的 Blob 暫存於 IndexedDB。重開網頁後未完成的串流需手動重試，已完成的暫存也可能被瀏覽器回收。影片內容不傳回 GitHub Pages，也不儲存在 Cloudflare。
 
 ## 架構與限制
 
 ```text
-GitHub Pages                  Cloudflare Workers                  官方來源
-/ hongguo-dl/ (Vite)       →  /api/series                     →   官網分集資料
-  Bun 建置的靜態頁面       →  /api/source                     →   App / 公開片源
-  下載管理器 + FFmpeg.wasm →  /api/media (串流與 Range)       →   影片 CDN
-         ↓
-   使用者的本機檔案系統（若 API 不支援，則 Blob 下載）
+GitHub Pages (Bun/Vite)        Cloudflare Worker           官方來源
+   網頁播放器                 /api/series  ----------->  官網分集資料
+   下載佇列   ------------->  /api/source  ----------->  App / 公開片源
+   FFmpeg.wasm                /api/media   ----------->  影片 CDN (Range)
+       |
+       +-- localStorage: 最近影集 / 觀看進度 / 佇列狀態
+       +-- IndexedDB: 已完成的分集 Blob
+       +-- Service Worker 串流 ZIP / MP4 無損合併 / 本機資料夾
 ```
 
 Worker 是**唯一需要執行的服務端運算**。GitHub Pages 沒有反向代理能力，無法直接替代 Worker。因為是不同網域，Worker 僅允許設定的網站 Origin 存取 API，預設包含 `https://ivanagyro.github.io`（不會因為頁面子路徑而改變 Origin）。亦可設定 Worker 環境變數 `FRONTEND_ORIGINS`，例如 `https://www.example.org,https://another.example.org`。CORS 不是驗證機制，公開部署前仍建議設置 Cloudflare Rate Limiting / WAF。
@@ -68,9 +72,9 @@ Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_
 
 ## 已知限制
 
-- 未對真實紅果片源執行端對端驗證；來源 API 可能因區域、反爬措施或來源變更失敗。
-- Blob fallback 上限每集 300 MiB；FFmpeg.wasm 輸入／HLS 分片 staging 上限約 320 MiB。只有未加密且無需轉碼的原始串流能直接串流寫入資料夾。
-- 標準 FFmpeg.wasm **不保證 ByteVC2/VVC 解碼**，因此允許選取 ByteVC2 不代表可以轉成 H.264。
+- 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單（官方標示前 5 集可看）、HEVC／ByteVC2 來源及部分 `206 Partial Content` HTTP Range 回應。**尚未完成真實影片解密播放、畫面 seek、Android Firefox 實機與大型 ZIP 端對端驗證**。來源 API、CDN 仍可能因地區或來源變更失敗。
+- 單集 Blob staging 上限 300 MiB；FFmpeg.wasm 來源讀取／HLS 分片 staging 上限約 320 MiB；ZIP 的 Blob 備援限 240 MiB；MP4 無損合併總輸入限 160 MiB。只有未加密且無需轉碼的原始串流能直接串流寫入資料夾，**不能保證 60 集可無損合併成一個 MP4**。
+- 標準 FFmpeg.wasm **不保證 ByteVC2/VVC 解碼**，因此允許選取 ByteVC2 不代表可以轉成 H.264 或在瀏覽器直接播放；HEVC 播放也取決於系統能力。來源未提供可靠的音軌／字幕軌 metadata 時，不顯示虛構的選軌選項。
 - 不支援 DRM 授權、直播 HLS、斷點續傳或使用者登入。重新載入頁面會中斷下載；不會保存已簽章媒體 URL 或影片密鑰。
 - HLS 清單資源辨識、標籤 URI 改寫與分片上限檢查在 `src/hls-playlist.js`，不執行網路 I/O；`src/ffmpeg.js` 再依解析結果下載、去重與暫存分片，進度按照清單中的**邏輯分片數**計算。
 - 不接受任意網域的反向代理請求。Worker 驗證 HTTPS 網址與每次重新導向，使用者 Cookie 與授權標頭不會被透傳。
