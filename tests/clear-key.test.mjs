@@ -107,6 +107,30 @@ test('oversized MP4 moov is rejected without unbounded metadata downloads', asyn
   assert.equal(calls, 1, 'A giant index must not trigger extra Range or whole-file fetch');
 });
 
+test('oversized encrypted CENC index stops playback preparation before full-file fallback', async () => {
+  const header = new Uint8Array(65536);
+  header.set(ftyp, 0);
+  new DataView(header.buffer).setUint32(ftyp.length, 9 * 1024 * 1024);
+  header.set([0x6d, 0x6f, 0x6f, 0x76], ftyp.length + 4);
+  let calls = 0;
+  await assert.rejects(openClearKeyStream({
+    video: { canPlayType: () => 'probably' },
+    source: {
+      url: 'https://cdn.example/encrypted.mp4', codec: 'h264',
+      contentKey: '00112233445566778899aabbccddeeff', source: 'app'
+    },
+    codec: 'h264', workerOrigin: 'https://worker.example',
+    fetchImpl: async () => {
+      calls++;
+      return new Response(header, { status: 206, headers: {
+        'Content-Range': 'bytes 0-65535/10000000'
+      } });
+    },
+    requestAccess: async () => { throw new Error('Should not try EME'); }
+  }), error => error.code === 'CENC_METADATA_LIMIT');
+  assert.equal(calls, 1);
+});
+
 test('reject HTTP 200 instead of buffering a full video', async () => {
   let cancelled = false;
   await assert.rejects(probeCencKid('https://example.com', null, async () =>
