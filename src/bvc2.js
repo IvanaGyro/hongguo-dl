@@ -2,6 +2,7 @@
 // Optional BVC2-to-H.264 bridge. The heavy Librempeg/x264 work runs in a
 // dedicated worker and is never allowed to block Video.js's UI thread.
 import { errorWith } from './logic.js';
+import { runBvc2WorkerJob } from './bvc2-job.js';
 
 const CORE = new URL(import.meta.env.BASE_URL + 'bvc2/bvc2-core.wasm', location.href);
 const MANIFEST = new URL(import.meta.env.BASE_URL + 'bvc2/manifest.json', location.href);
@@ -37,31 +38,9 @@ export function transcodeBvc2(bytes, { contentKey = null, signal } = {}) {
     return Promise.reject(errorWith('MEMORY_LIMIT', 'ByteVC2 影片超過轉碼上限'));
   if (signal?.aborted)
     return Promise.reject(errorWith('CANCELED', '已取消 ByteVC2 轉碼'));
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./bvc2-worker.js', import.meta.url), { type: 'module' });
-    let done = false;
-    const finish = (error, output) => {
-      if (done) return;
-      done = true;
-      signal?.removeEventListener('abort', abort);
-      worker.terminate();
-      if (error) reject(error);
-      else resolve(output);
-    };
-    const abort = () => finish(errorWith('CANCELED', '已取消 ByteVC2 轉碼'));
-    signal?.addEventListener('abort', abort, { once: true });
-    worker.onerror = event => {
-      event.preventDefault();
-      finish(errorWith('BVC2_ERROR', 'ByteVC2 WASM Worker 無法載入或執行'));
-    };
-    worker.onmessage = ({ data }) => {
-      if (!data?.ok) finish(errorWith('BVC2_ERROR', data?.error || 'ByteVC2 轉碼失敗'));
-      else finish(null, new Uint8Array(data.bytes));
-    };
-    // Downloaded bytes are owned by this job; transfer rather than clone them.
-    // If the caller passed a view, transfer a precise copy, not unrelated data.
-    const input = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-      ? bytes : bytes.slice();
-    worker.postMessage({ bytes: input.buffer, key: contentKey || '' }, [input.buffer]);
+  return runBvc2WorkerJob(bytes, {
+    contentKey, signal,
+    createWorker: () => new Worker(new URL('./bvc2-worker.js', import.meta.url),
+      { type: 'module' })
   });
 }
