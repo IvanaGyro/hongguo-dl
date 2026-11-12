@@ -3,22 +3,24 @@
 // Works with a dedicated pinned Librempeg WASM; never buffers an entire episode.
 import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
+import { retryableAvailability } from './retryable-availability.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
-let availability = null;
+const checkCencCore = retryableAvailability(async () => {
+  const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm',
+    location.href);
+  const res = await fetch(coreUrl, { method: 'HEAD', cache: 'force-cache' });
+  return res.ok &&
+    /^(application\/wasm|application\/octet-stream)\b/i.test(
+      res.headers.get('content-type') || '') &&
+    Number(res.headers.get('content-length') || 0) < MAX_CORE;
+});
 
 export async function cencRemuxAvailable() {
-  if (typeof Worker !== 'function' || typeof MediaSource !== 'function') return false;
-  const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm', location.href);
-  if (!availability) {
-    availability = fetch(coreUrl, { method: 'HEAD', cache: 'force-cache' })
-      .then(res => res.ok &&
-        /^(application\/wasm|application\/octet-stream)\b/i.test(
-          res.headers.get('content-type') || '') &&
-        Number(res.headers.get('content-length') || 0) < MAX_CORE)
-      .catch(() => false);
-  }
-  return availability;
+  if (typeof Worker !== 'function' || typeof MediaSource !== 'function')
+    return false;
+  // Temporary deployment races or HEAD failures must be retryable.
+  return checkCencCore();
 }
 const waitSourceOpen = (mediaSource, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error('CENC stream canceled'));
