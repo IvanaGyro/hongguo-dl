@@ -135,9 +135,24 @@ try {
     assert(frame.requests >= 2 && !mediaRequests.some(req => req.unbounded),
       'Metadata and fragment HTTP ranges must both be used');
     assert.equal(frame.mediaKeys, false, 'Clear output should not need EME');
+    await page.waitForFunction(() =>
+      document.querySelector('#player-video')?.currentTime > 1.5,
+      null, { timeout: 20000 });
+    const playback = await page.evaluate(() => {
+      const video = document.querySelector('#player-video');
+      return {
+        currentTime: video.currentTime,
+        bufferedRanges: video.buffered.length,
+        videoError: video.error?.code || null
+      };
+    });
+    assert(playback.bufferedRanges > 0 && !playback.videoError,
+      'MSE did not sustain playback: ' + JSON.stringify(playback));
+    assert(!mediaRequests.some(r => r.unbounded),
+      'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
-      JSON.stringify({ ...frame, inputBytes: input.length,
+      JSON.stringify({ ...frame, playbackSeconds: playback.currentTime, inputBytes: input.length,
         downloadedPercentAtFirstFrame: +((frame.lastByte + 1) / input.length * 100).toFixed(1),
         KID: 'synthetic fixture' }));
   }
