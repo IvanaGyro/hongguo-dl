@@ -2,10 +2,19 @@
 
 > **2026-11-12 使用者最新指示（優先於本文件原先的分支／PR 步驟）：此專案之後由 agent 直接在 `main` 提交，不再建立 PR。** 確認 `main` HEAD 與 CI 再逐階段提交 `docs/AGENT-PROGRESS.md`。已開啟的 PR #5 已關閉（未透過 PR 合併），其 23 個提交已直接 fast-forward 到 main；勿重新開啟或建立替代 PR。
 
-更新日期：2026-11-12（Asia/Taipei）
+更新日期：2026-11-13（Asia/Taipei）
 固定交接入口：docs/AGENT-PROGRESS.md。本文件是**下一階段的工作清單與驗收標準**，不是完成報告。
 原始評估基準 main：fdb2039e68819334946fbc1fb44c3cafea6d61d6。後續 agent 應重新確認 HEAD。
 專案：https://github.com/IvanaGyro/hongguo-dl
+
+
+## 最新經實證的狀態（2026-11-13；以下優先於歷史計畫）
+
+- **main 基線**：5c3732fd4c4699204269fb81bfa5b5dc8bbfe7dd 時 CI #43283368259 與 Pages #43283367990 成功；此後仍有直接 main 的新提交，最新 commit / 驗收以 [AGENT-PROGRESS.md](AGENT-PROGRESS.md) 為準。
+- **Synthetic PASS**：H.264/AAC CENC Chromium/Firefox 首影格於 EOF 前、遠距 Seek 55 秒、10/50/90% 往返、90% reload；Chromium 300s 完整播放（MSE span peak 78.021s，process-tree RSS 粗量測 first/peak/last 約 769.2/769.2/764.1 MiB）；1080p HEVC/AAC WASM stream copy + FFmpeg decode + 6s RAP seek。
+- **30 分鐘待驗**：1800s 首輪因 moov >1MiB 探測失敗，8MiB 有界修補與單元測試已提交。後續 browser acceptance 未有已確認 PASS 時只能標記 pending/in progress，不能推論成功。
+- **尚無正例**：真實紅果 HEVC 1080p EOF 前可見影格／聲音／完整播放、Android Firefox 解碼與真實 ByteVC2 正例均尚未驗證。ByteVC2 ABI/非 ByteVC2 負例與 bundle pin PASS，**不等同真實可解**。
+- **可靠交接**：每個工程階段直接提交 main，隨即新增 AGENT-PROGRESS checkpoint；GitHub 讀取／寫入／Actions 都可能阻塞，避免同一操作無限重試，不等長跑工作完成才記錄已有成果。
 
 ## 0. 使用者期望的最終成果（不可縮減成只有 CI 成功）
 
@@ -28,7 +37,7 @@
 
 ### P0 — 建立可重現基準與測試結果（先做）
 
-1. 在新 feature 分支工作，先執行 bun run test、bun run build，查看現有 Main browser acceptance #13 與 Main WASM proof #9 的 job conclusion。已有 success 不要重跑無意義的研究；只跑有變動的單元／整合測試。
+1. **直接在 main 開發並提交，不建立 PR。** 先確認 main HEAD 與最近已完成 CI；針對變動執行 bun run test、bun run build，不重複輪詢 GitHub 或重跑無關的歷史試驗。
 2. 做測試矩陣：合成 H.264/AAC (Chromium, Firefox)、合成 HEVC/AAC WASM (Node + FFmpeg decode)、真實 HEVC (Windows 有解碼能力的瀏覽器)、Android Firefox、ByteVC2（僅取得合法真實 sample 後）。每欄明確記 PASS / FAIL / NOT TESTED，區分 container、解碼器與 HTTP 問題。
 3. 建立明確的起播性能階段紀錄：來源 API、first metadata byte、完整 moov、WASM ready、first moof、MSE append、first presented frame、first audible sample；同時記 Range 次數/總 bytes、buffered 時間、記憶體趨勢。既有 src/player.js 有部分 startup stages，可擴增但別輸出 signed URL 或 key。
 4. 檢查 npm/Bun、Emscripten、Librempeg pin 及 GitHub Pages 實際引用的 WASM 二進位版本；不要僅 HEAD 200 就認定 ABI 一致。
@@ -38,7 +47,7 @@
 ### P1 — 實際 HEVC 1080p 低延遲播放，最高優先
 
 1. 針對使用者已有權存取的測試集，先有限度 probe /api/source、HTTP Range、moov/stsd/hvcC、encrypted CENC scheme、AAC 音軌、key ID；驗證 cdn 206/Content-Range。不要在 CI 預設每次 push 下載真實集數。
-2. 檢查 src/clear-key.js 的 KID 和 hasAac 探測：目前 hasAac 是搜尋 moov 的原始位元組序列「mp4a」，而非完整結構化 track 解析，容易誤判。對真正 stsd/frma、音軌數、hvcC 的 codec/profile/level 建立精確資訊；不要無條件假設 codec string 為 hvc1 或 AAC-LC。
+2. **已改為結構化 track 檢測**：src/clear-key.js 使用 inspectMp4TrackFormats() 解析 moov/stsd/frma 並回報 hasAac、videoCodec、audioTracks；仍應使用具合法來源的 HEVC Main10、edit list、AAC 變體驗證精確 codec/profile/level，不可單靠 mime 宣告推論實際解碼。
 3. 實際 HEVC 解碼可用的瀏覽器進行首影格／音訊測試，區分 MSE.isTypeSupported、canPlayType、WebAssembly 解密正確與影片硬體 decoder 是否存在。FFmpeg 可完整解碼的 fMP4 也不代表每台 Firefox 都支援 HEVC。
 4. 如果第一片段的 DTS/PTS、edit list、ctts、sample entry 或 CENC subsample 導致出錯，先比對 FFmpeg/ffprobe 結果、fMP4 boxes，再修正 scripts/cenc-stream-remux.c。不可任意重編碼原始 HEVC 以掩蓋容器問題。
 
@@ -46,7 +55,7 @@
 
 ### P2 — 真正的 seek 與恢復播放，最高優先
 
-目前 src/cenc-remux-worker.js 啟動時順序讀整部來源，src/cenc-remux.js 只有 buffered-ahead 節流；src/player.js 的 restoreTime 只能直接設定 currentTime 並重試等待，**尚無按時間發送的 Worker remux seek / 中斷舊片段並跳至 RAP 的路徑**。
+**已實作並驗證部分能力，以下改為持續回歸要求**：C/WASM 的 cenc_stream_remux_at() 可從 indexed RAP 附近起讀，播放器在未緩衝區 Seek 重建 Worker/MSE。Chromium/Firefox 合成 H.264/AAC 在 55 秒、10%/50%/90% 往返及 reload 恢復均有 PASS（browser #43279166406）。仍缺真實 HEVC/Android 裝置的同等驗收與長片壓力測試。
 
 1. 第一版優先實作「超出 buffered range 時：取消舊 Worker → 在接近目的時間之前最近的可解碼 RAP/IDR 開始 remux → 新 MediaSource」；可在 C 端以 avformat_seek_file/av_seek_frame 搭配新 mux stream，必要時另以 MP4 sample tables 尋找 RAP。
 2. 正確處理 timestamp / edit list / audio pre-roll，確保 video.currentTime 與原片時間軸一致。切集、調畫質、上一集／下一集、重新整理恢復時間，不應從 0 秒重新下載到指定時間。
@@ -59,10 +68,10 @@
 
 經查主要具體風險：
 
-- src/cenc-remux.js 有 ahead 40 秒／恢復低於 25 秒的 backpressure，但沒有移除已不再需要的舊 SourceBuffer 範圍；長時間播放可能 QuotaExceededError。
+- src/cenc-remux.js **已使用 MSE eviction 與 ahead backpressure**，合成 Chromium 300 秒完整播放且 MSE buffered span 最高約 78 秒；仍須驗收 1800 秒、暫停很久與 quota 錯誤後的可恢復性，不能只依秒數推定 GPU 記憶體有界。
 - 同檔 fail() 目前主要標記 MSE endOfStream('decode')；**沒有立即保證 Worker/Range abort 與 pending ACK 清理**。修正時注意避免 endOfStream、updateend 與 close 之間競態。
 - waitSourceOpen / waitAppend 的 Promise 未直接接受 AbortSignal；Worker 結束、切集或 sourceopen 尚未發生時，可能殘留未完成的等待。
-- src/cenc-remux-worker.js 的 readRange 使用 response.arrayBuffer()，雖然 Range 期望最多約 256 KiB，但應限制實際收到的 byte 數，並完整檢查 Content-Range/Content-Length；對惡意或錯誤 CDN 不應先無限制配置記憶體。
+- src/cenc-remux-worker.js **已改用 readVerifiedRange() 有界讀取**，執行 HTTP 206/Content-Range/Content-Length 的防護與取消；後續仍需加入 stalled HTTP body、回應過大與切集競態回歸，避免任何備援退回無界整檔下載。
 - src/fmp4-assembler.js 單一 box 上限 16 MiB 且拒絕 size=0 / largesize；需用合成大 mdat、跨塊邊界、malformed boxes 確認限制符合實際輸出，不能一律放寬導致 OOM。
 - C 端 file size 260 MiB 限額與 WASM 最大記憶體 512 MiB 不等於已證明有界；Asyncify、MP4 moov 索引、網路 cache、MSE buffer、播放下載並行都要量測。
 
@@ -99,8 +108,8 @@
 
 ### P7 — 建置、發布、CI 與交接機制
 
-1. **已實作，仍須驗證新 main CI**：`.github/workflows/cenc-wasm-stream.yml` 的 main 發布，在合成 HEVC/AAC WASM 解碼成功後，才將 JS/WASM/manifest 一起以 GitHub Actions bot 提交 `main`，並以 `workflow_dispatch` 再部署 Pages。`scripts/cenc-wasm-bundle.mjs` 驗證 binary SHA256 及 pin source，部署前也必須通過版本清單驗證。若 push 先觸發的 CI/Pages 在 bot 更新前失敗，須以後續明確的 main workflow run 結論為準，不得掩蓋。
-2. CI 層級：快速 Bun 單元及 Vite build 每 PR；WASM 合成 HEVC/AAC 在有 C/build 變更時；Chromium/Firefox 合成 H.264 真正首影格與 EOF 檢查；長片 seek/記憶體壓測可使用週期性或夜間 CI。真實片源測試必須限量且不得輸出簽名 URL/key，不能變成每個 push 的大量 CDN 請求。
+1. **已實作並已有成功發布證據**：`.github/workflows/cenc-wasm-stream.yml` 的 main 發布，在合成 HEVC/AAC WASM 解碼成功後，才將 JS/WASM/manifest 一起以 GitHub Actions bot 提交 `main`，並以 `workflow_dispatch` 再部署 Pages。`scripts/cenc-wasm-bundle.mjs` 驗證 binary SHA256 及 pin source，部署前也必須通過版本清單驗證。若 push 先觸發的 CI/Pages 在 bot 更新前失敗，須以後續明確的 main workflow run 結論為準，不得掩蓋。
+2. CI 層級：快速 Bun 單元及 Vite build 每次 main push；WASM 合成 HEVC/AAC 在有 C/build 變更時；Chromium/Firefox 合成 H.264 真正首影格與 EOF 檢查；長片 seek/記憶體壓測可使用週期性或夜間 CI。真實片源測試必須限量且不得輸出簽名 URL/key，不能變成每個 push 的大量 CDN 請求。
 3. 設定每個階段的停損門檻與可重現失敗用例，避免 agent 卡在輪詢 Actions。對剛觸發的 CI 最多檢查一次即記錄 queued/in_progress + URL；若已失敗再看必要的 job steps/log。不得把 queued 當成功。
 4. **每完成一階段，當下直接在 main 更新 docs/AGENT-PROGRESS.md 並 commit**：commit、scope、測試及 run URL、PASS/FAIL/NOT TESTED、已知問題、下一步。若工作卡住或使用者中斷，本文件須足以讓另一 session 接著執行。
 5. 同步修正 README、docs/cenc-progressive-to-fmp4.md 的舊敘述，新增測試矩陣文檔。**不建立 PR**，在 main 上確認最新 HEAD、順序提交並以 Actions 進行驗證；若其他 agent 已先提交，先重新讀取和協調變更，不覆蓋其他進度。
@@ -117,4 +126,4 @@
 
 ## 4. 新 session 的第一個可執行任務
 
-**此段原為歷史交接計畫，現改以 main 持續開發：** P0、P7 的版本 manifest／發布 gate、測試矩陣及 P3 初步穩定性修復已提交 main，後續先核對最新 main 的 CI／Pages 結論，再推進 P1 真實 HEVC、P2 任意 seek、P3 長影片壓測。**直接提交 main，不開 PR**。不得直接宣稱真實 HEVC 已完成，也不要重新實作 CENC 解密器。
+**目前工作入口（2026-11-13）**：最近核實的基線 5c3732f（CI #43283368259、Pages #43283367990 成功）；之後已直接 main 提交 BVC2 Worker lifecycle 修補與 7 個 Node 回歸案例，見進度階段 26–27。**優先查一次**新測試結果、1800s browser 長片（#43283216947 / #43283368141），失敗時看失敗 job；繼續真實 HEVC（需合法 206 來源／硬體）、30 分鐘緩衝與 abort、ByteVC2 正例（需合法 bitstream）。Seek 合成測試既已 PASS，不應重寫或宣稱未實作。直接提交 main、不開 PR，並每一階段更新 AGENT-PROGRESS；文件是 checkpoint，不是停止條件。
