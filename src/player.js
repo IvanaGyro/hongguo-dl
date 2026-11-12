@@ -167,10 +167,10 @@ export function createPlayer({
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
     const quality = options.quality ?? qualitySelect.value;
-    const codec = options.codec ?? codecSelect.value;
+    let codec = options.codec ?? codecSelect.value;
     const quiet = !!options.quiet;
     const seriesId = options.seriesId ?? series?.seriesId;
-    const key = episodeCacheKey(seriesId, episode.vid, quality, codec);
+    let key = episodeCacheKey(seriesId, episode.vid, quality, codec);
     const entry = attempt === 0 ? cache.getEntry(key) : null;
     if (entry?.blob) return { blob: entry.blob,
       source: entry.source || { codec, quality, source: 'cache' } };
@@ -190,6 +190,13 @@ export function createPlayer({
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
       updateCodecOptions(variants);
+      // Persisted codec preferences can belong to another episode's tier.
+      // Use the now-enabled selection, rather than rejecting a stale codec.
+      if (codec !== codecSelect.value) {
+        codec = codecSelect.value;
+        key = episodeCacheKey(seriesId, episode.vid, quality, codec);
+        persistPrefs();
+      }
     }
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
