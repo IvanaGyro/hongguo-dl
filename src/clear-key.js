@@ -228,10 +228,13 @@ export async function openClearKeyStream({
       () => reject(errorWith('CENC_UNAVAILABLE', '瀏覽器 Clear Key 初始化逾時')), 5000));
     const acceptsCenc = access.getConfiguration?.().initDataTypes?.includes('cenc');
     const initType = acceptsCenc ? 'cenc' : 'keyids';
+    console.info('[Hongguo EME] init-data:', initType);
     const initData = acceptsCenc ? commonCencPssh(kid) : new TextEncoder().encode(
       JSON.stringify({ kids: [base64Url(kid)] }));
     await session.generateRequest(initType, initData);
     await Promise.race([listener, timer]);
+    console.info('[Hongguo EME] key-status:',
+      session.keyStatuses ? Array.from(session.keyStatuses.values()).join(',') || 'empty' : 'unavailable');
     aborted(signal);
     return { url, close: async () => { await session.close().catch(() => {}); } };
   } catch (error) {
