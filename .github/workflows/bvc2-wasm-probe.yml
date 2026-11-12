@@ -16,9 +16,14 @@ jobs:
       image: emscripten/emsdk:3.1.74
     steps:
       - uses: actions/checkout@v4
+      - name: Install native pkg-config for Librempeg x264 dependency detection
+        run: |
+          apt-get update -qq
+          apt-get install -y pkg-config >/dev/null
       - name: Validate Emscripten toolchain
         run: |
           emcc --version | head -n 1
+          pkg-config --version
           node --version
       - name: Compile pinned Librempeg BVC2 decoder to WebAssembly
         run: bash scripts/build-bvc2-wasm-probe.sh /tmp/hongguo-bvc2-wasm
