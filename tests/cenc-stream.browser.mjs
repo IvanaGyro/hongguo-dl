@@ -220,6 +220,48 @@ try {
         sample();
         window.__cencStressExpected = duration;
       }, expectedSeconds);
+      if (process.env.CENC_TEST_PAUSE === '1') {
+        // Regression: a paused viewer must not cause an entire encrypted movie
+        // to be fetched. Let the existing ~40s-ahead backpressure settle,
+        // observe HTTP Range traffic, then resume and complete playback.
+        const pausedAt = await page.evaluate(() => {
+          const video = document.querySelector('#player-video');
+          video.pause();
+          return video.currentTime;
+        });
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          if (!video?.paused) return false;
+          try {
+            for (let i = 0; i < video.buffered.length; i++)
+              if (video.buffered.end(i) - video.currentTime >= 40) return true;
+          } catch { /* SourceBuffer range may be updating. */ }
+          return false;
+        }, null, { timeout: 45000 });
+        // Account for the already in-flight AVIO Range read before comparing
+        // request counts. There should be no new stream-wide media fetches.
+        await page.waitForTimeout(1500);
+        const rangesAtPause = mediaRequests.length;
+        await page.waitForTimeout(3000);
+        const rangesAfterPause = mediaRequests.length;
+        const timeAfterPause = await page.evaluate(() =>
+          document.querySelector('#player-video').currentTime);
+        assert(rangesAfterPause - rangesAtPause <= 2,
+          'Paused CENC continued issuing unbounded HTTP Range requests: ' +
+          JSON.stringify({ rangesAtPause, rangesAfterPause }));
+        assert(Math.abs(timeAfterPause - pausedAt) < 0.5,
+          'Paused CENC video unexpectedly advanced its timeline');
+        await page.evaluate(async () => {
+          await document.querySelector('#player-video').play();
+        });
+        await page.waitForFunction(t => {
+          const video = document.querySelector('#player-video');
+          return video && !video.paused && video.currentTime > t + 2;
+        }, pausedAt, { timeout: 30000 });
+        console.log('PASS ' + browserName +
+          ' paused CENC HTTP Range backpressure and playback resume',
+          JSON.stringify({ pausedAt, rangesAtPause, rangesAfterPause }));
+      }
       // Linux ps RSS is observational only: includes the Node test harness,
       // child browser processes and shared pages, but not GPU allocations.
       // Use relative trend, never report this as exact browser-only RSS.
