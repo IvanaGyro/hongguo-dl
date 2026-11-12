@@ -40,11 +40,14 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
     calls.push(url.searchParams.toString());
     return route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ variants: [{
-        url: 'https://cdn.fqnovelvod.com/' + url.searchParams.get('vid') + '.mp4',
-        codec: 'h264', quality: url.searchParams.get('quality'),
-        source: 'web', contentKey: null, width: 320, height: 180
-      }] })
+      body: JSON.stringify({ variants: [
+        { url: 'https://cdn.fqnovelvod.com/' + url.searchParams.get('vid') + '-hi.mp4',
+          codec: 'h264', quality: '1080p', source: 'web', contentKey: null, width: 1920, height: 1080 },
+        { url: 'https://cdn.fqnovelvod.com/' + url.searchParams.get('vid') + '.mp4',
+          codec: 'h264', quality: '720p', source: 'web', contentKey: null, width: 1280, height: 720 },
+        { url: 'https://cdn.fqnovelvod.com/' + url.searchParams.get('vid') + '-low.mp4',
+          codec: 'bytevc2', quality: '540p', source: 'app', contentKey: null, width: 960, height: 540 }
+      ] })
     });
   }
   if (url.pathname === '/api/media') {
@@ -93,8 +96,12 @@ try {
   await page.locator('#player-codec').selectOption('h264');
   await page.locator('#player-speed').selectOption('1.25');
   await page.waitForFunction(() => document.querySelector('#player-video')?.playbackRate === 1.25);
-  assert(calls.some(c => c.includes('quality=720p')), 'Player must request chosen quality');
-  assert(calls.some(c => c.includes('codec=h264')), 'Player must request chosen codec');
+  await page.waitForFunction(() =>
+    document.querySelector('#player-source-info')?.textContent?.includes('1280×720'));
+  assert.equal(await page.locator('#player-quality option[value="540p"]').isDisabled(), false,
+    'Player should expose available 540p rendition');
+  assert(calls.some(c => c.includes('quality=auto') && c.includes('codec=auto')),
+    'Player must retrieve available variants before choosing local source');
   await page.locator('#player-settings-toggle').click();
   await page.waitForFunction(() => document.querySelector('#player-video').readyState >= 1);
   await page.locator('#player-video').evaluate(video => {
