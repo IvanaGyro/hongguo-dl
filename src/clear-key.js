@@ -65,6 +65,10 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
     headers: { Range: 'bytes=' + start + '-' + (start + bytes - 1) },
     signal, cache: 'no-store'
   });
+  if (signal?.aborted) {
+    await res.body?.cancel().catch(() => {});
+    aborted(signal);
+  }
   if (res.status !== 206) {
     await res.body?.cancel();
     throw errorWith('CENC_UNAVAILABLE', 'CDN 不支援有限的 HTTP Range 讀取');
@@ -82,21 +86,27 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   }
   const reader = res.body?.getReader();
   if (!reader) throw errorWith('CENC_UNAVAILABLE', 'HTTP Range 回應缺少串流');
+  // A metadata Range may stall while the user switches episodes.
+  // Do not wait for an unrelated network chunk to arrive to notice abort.
+  const onAbort = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
   const chunks = [];
   let count = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
       aborted(signal);
+      if (done) break;
       count += value.byteLength;
       if (count > bytes) throw errorWith('CENC_UNAVAILABLE', 'HTTP Range 超過預算');
       chunks.push(value);
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+  aborted(signal);
   const output = new Uint8Array(count);
   let offset = 0;
   for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
