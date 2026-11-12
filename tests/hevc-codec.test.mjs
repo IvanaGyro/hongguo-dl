@@ -59,5 +59,5 @@ test('invalid truncated, wrong version or missing hvcC is not guessed', () => {
   wrongVersion[0] = 7;
   assert.equal(hevcCodecStringFromHvcc(wrongVersion), null);
   assert.equal(hevcCodecStringFromMoov(box('moov',
-    track(box('encv', join(new Uint8Array(78), sinf('hvc1'))))), null);
+    track(box('encv', join(new Uint8Array(78), sinf('hvc1')))))), null);
 });
