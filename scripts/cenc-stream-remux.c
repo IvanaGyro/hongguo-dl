@@ -93,8 +93,8 @@ static int output_write(void *opaque, const uint8_t *data, int length) {
     return js_output_write(data, length);
 }
 
-static int execute(Stream *reader, const char *key) {
-    int ret, video_tracks = 0;
+static int execute(Stream *reader, const char *key, double start_seconds) {
+    int ret, video_tracks = 0, video_input_index = -1;
     AVFormatContext *input = NULL, *output = NULL;
     AVIOContext *reader_io = NULL, *writer_io = NULL;
     AVPacket *packet = NULL;
@@ -130,6 +130,7 @@ static int execute(Stream *reader, const char *key) {
             (src->codecpar->codec_id == AV_CODEC_ID_HEVC ||
              src->codecpar->codec_id == AV_CODEC_ID_H264) && !video_tracks) {
             video_tracks++;
+            video_input_index = (int)i;
         } else if (type != AVMEDIA_TYPE_AUDIO ||
             src->codecpar->codec_id != AV_CODEC_ID_AAC) continue;
         AVStream *dst = avformat_new_stream(output, NULL);
@@ -144,6 +145,23 @@ static int execute(Stream *reader, const char *key) {
     if (!video_tracks) { ret = failure(AVERROR_STREAM_NOT_FOUND,
         "no supported H.264/HEVC stream"); goto done; }
 
+    // Seek the demuxer's indexed MP4 samples to the preceding random access
+    // point. HTTP AVIO then requests the corresponding byte offsets, rather
+    // than sequentially downloading all frames between 0 and start_seconds.
+    // Preserve the original stream time base for MSE's global timeline.
+    if (start_seconds > 0.5) {
+        const AVStream *video = input->streams[video_input_index];
+        const int64_t seek_us = (int64_t)(start_seconds * AV_TIME_BASE);
+        const int64_t timestamp = av_rescale_q(seek_us, AV_TIME_BASE_Q,
+            video->time_base);
+        ret = av_seek_frame(input, video_input_index, timestamp,
+            AVSEEK_FLAG_BACKWARD);
+        if (ret < 0) {
+            ret = failure(ret, "seek indexed video RAP");
+            goto done;
+        }
+    }
+
     output_buffer = av_malloc(AVIO_BUFFER);
     if (!output_buffer) { ret = failure(AVERROR(ENOMEM), "output AVIO buffer"); goto done; }
     writer_io = avio_alloc_context(output_buffer, AVIO_BUFFER, 1,
@@ -153,6 +171,8 @@ static int execute(Stream *reader, const char *key) {
     writer_io->seekable = 0;
     output->pb = writer_io;
     output->flags |= AVFMT_FLAG_CUSTOM_IO;
+    // Do not normalize a nonzero seek time to zero in the fMP4 timeline.
+    output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_DISABLED;
     av_dict_set(&mov_options, "movflags",
         "+frag_keyframe+empty_moov+default_base_moof", 0);
     if ((ret = avformat_write_header(output, &mov_options)) < 0) {
@@ -198,12 +218,22 @@ done:
     return ret;
 }
 
-EMSCRIPTEN_KEEPALIVE int cenc_stream_remux(int file_size, const char *key) {
+// The original two-argument entry point remains available to older test
+// fixtures, while the explicit time variant supports unbuffered seeks.
+EMSCRIPTEN_KEEPALIVE int cenc_stream_remux_at(int file_size,
+                                              const char *key,
+                                              double start_seconds) {
     last_error[0] = '\0';
     if (file_size <= 0 || file_size > INPUT_LIMIT)
         return failure(AVERROR(EINVAL), "invalid input size");
+    if (!(start_seconds >= 0.0 && start_seconds <= 24.0 * 3600.0))
+        return failure(AVERROR(EINVAL), "invalid seek time");
     if (!key || strlen(key) != 32 || strspn(key, "0123456789abcdefABCDEF") != 32)
         return failure(AVERROR(EINVAL), "invalid 128-bit CENC key");
     Stream reader = { .size = file_size, .position = 0 };
-    return execute(&reader, key);
+    return execute(&reader, key, start_seconds);
+}
+
+EMSCRIPTEN_KEEPALIVE int cenc_stream_remux(int file_size, const char *key) {
+    return cenc_stream_remux_at(file_size, key, 0.0);
 }
