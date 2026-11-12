@@ -69,7 +69,9 @@ export function codecsAtQuality(variants, quality = 'auto') {
 // parsed with bounded Range requests before creating a SourceBuffer.
 const HEVC_MSE_PROBES = [
   'video/mp4; codecs="hvc1.1.6.L93, mp4a.40.2"',
-  'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"'
+  'video/mp4; codecs="hev1.1.6.L93, mp4a.40.2"',
+  'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"',
+  'video/mp4; codecs="hev1.2.4.L120.90, mp4a.40.2"'
 ];
 export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = false,
   isMseTypeSupported = null) {
