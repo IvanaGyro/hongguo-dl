@@ -52,6 +52,17 @@ jobs:
             -encryption_kid 11223344556677889900aabbccddeeff \
             -movflags +faststart -y tests/fixtures/cenc-hevc-aac.mp4
           test -s tests/fixtures/cenc-hevc-aac.mp4
+          ffmpeg -nostdin -hide_banner -v error -threads 1 \
+            -f lavfi -i testsrc=size=320x180:rate=24 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 12 -c:v libx265 -preset ultrafast \
+            -x265-params pools=none:frame-threads=1:wpp=0:log-level=error:keyint=24:min-keyint=24:scenecut=0 \
+            -pix_fmt yuv420p -c:a aac -b:a 128k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y tests/fixtures/cenc-hevc-aac-seek.mp4
+          test -s tests/fixtures/cenc-hevc-aac-seek.mp4
       - name: Compile and run async CENC AVIO WASM bridge
         shell: bash
         run: bash scripts/build-cenc-stream-wasm.sh /tmp/hongguo-cenc-stream
@@ -64,6 +75,29 @@ jobs:
             tests/fixtures/cenc-hevc-aac.mp4 /tmp/clear-fmp4.mp4
           ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/clear-fmp4.mp4
           ffmpeg -v error -i /tmp/clear-fmp4.mp4 -f null -
+      - name: Verify indexed AVFormat seek with nonzero-byte HTTP Range
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-cenc-stream-wasm.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.wasm \
+            tests/fixtures/cenc-hevc-aac-seek.mp4 /tmp/clear-fmp4-seek.mp4 6
+          ffmpeg -v error -i /tmp/clear-fmp4-seek.mp4 -f null -
+          ffprobe -v error -select_streams v:0 -show_entries packet=pts_time \
+            -of csv=p=0 /tmp/clear-fmp4-seek.mp4 | head -n 4
+          node --input-type=module -e '
+            import {execFileSync} from "node:child_process";
+            const out = execFileSync("ffprobe", [
+              "-v", "error", "-select_streams", "v:0", "-show_entries",
+              "packet=pts_time", "-of", "csv=p=0", "/tmp/clear-fmp4-seek.mp4"
+            ], {encoding:"utf8"});
+            const first = Number(out.trim().split(/\\s+/)[0]);
+            if (!(first >= 3 && first <= 7)) {
+              throw new Error("Seek output timeline does not match source: " + first);
+            }
+            console.log("PASS seek first output video PTS", first);
+          '
       - name: Test box assembly and WASM manifest guards
         run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs
       - name: Publish verified JS/WASM pair directly to main
