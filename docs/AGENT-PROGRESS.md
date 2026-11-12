@@ -23,7 +23,7 @@
 ## 後續階段（待填）
 
 - 階段 2：合併 main — **完成**，詳見下方紀錄。
-- 階段 3：合併後 CI／部署確認 — 待寫。
+- 階段 3：合併後原始碼與部署確認 — **完成**；主分支新觸發的瀏覽器 CI 結果另待確認。
 - 階段 4：實際 1080p HEVC + CENC 早期起播、seek、Android Firefox 驗證 — 尚未完成。
 
 ## 待解決風險與驗收條件
@@ -49,3 +49,12 @@
 - 然後 GitHub PR merge 成功，merge commit：[`bb9d808c32838ff853f305acfd43de8122fb1c8b`](https://github.com/IvanaGyro/hongguo-dl/commit/bb9d808c32838ff853f305acfd43de8122fb1c8b)。保留 main 和 feature 兩邊父系提交歷史。
 - 本文件已透過 feature 進入 main，以後每個完成的階段都持續直接更新 main 上的同一份文件。
 - **下一步**：只檢查一次合併後重要 GitHub Actions jobs 與 Pages deploy 狀態；若尚未完成寫「進行中」，不要等待迴圈卡住。驗證主分支必要檔案與測試未遭覆蓋。
+
+## 階段 3 — 合併完整性、部署與 CI 觸發修正（已完成本階段核對）
+
+- 逐一比較 `main` / `feature/cenc-avio-mse-stream` 的 **10 個關鍵檔案 blob SHA**（兩份 C/build、兩份 CENC Worker/adapter、fMP4 assembler、clear-key、player、瀏覽器測試與兩個 workflows），在修正 workflow 觸發條件之前**全部一致**。
+- [GitHub Pages run #216](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230424434)（merge `bb9d808`）及 [#217](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230544892)（首次進度日誌 `26cf4f6`）**已成功部署**。
+- 合併後 [WASM proof #9](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230424222)：本階段查詢時 **in_progress**，不能宣稱 main 已新測成功；feature 版對照 [HEVC/AAC WASM #43220527985](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43220527985) **success**。
+- 重要 CI 修復：先前 `.github/workflows/cenc-browser.yml` 的 push 條件**只有 feature 分支**，因此 main 不會自動重新驗證。已在 main 以 [`fdab8ae`](https://github.com/IvanaGyro/hongguo-dl/commit/fdab8ae7dec15e29b48be7f733e4eb22d5a2aef6) 加入 `main`。修改剛提交，新的 main 瀏覽器測試需另外確認；不可將先前 feature run 冒充 main run。
+- **下一個代理工作**：查看最新的 `Progressive CENC MSE real-frame browser acceptance` 主分支 run 一次。若已完成，記錄結論和 run URL；若尚在執行，就不要連續阻塞等待。後續主要工作是實際 HEVC 首影格、Android Firefox 實測、seek / 長片記憶體。
+- **已知 CI 發布缺口**：`.github/workflows/cenc-wasm-stream.yml` 的自動 WASM 發布步驟僅允許推送 feature 分支；現在已經 merge main，日後若修改 C/WASM 建置需評估將成功驗證的 WASM 產物也發到 main（並避免重複觸發）。目前 main 含已驗證的 feature 二進位資產。
