@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { recentSeries, rememberSeries, forgetSeries, playbackKey, rememberPlayback,
   watchRecords, suggestedEpisode } from '../src/library.js';
-import { recordFailure } from '../src/retry.js';
+import { recordFailure, playbackFailureMessage } from '../src/retry.js';
 import { MediaCache, episodeCacheKey } from '../src/media-cache.js';
 function fakeStorage() {
   const map = new Map();
@@ -63,6 +63,30 @@ test('retry stops after 3 or 5 identical failures, resets on different errors', 
   }
   assert.equal(recordFailure(null, { code: 'CANCELED', message: 'user' }, 5).retry, false);
 });
+test('playback status distinguishes identical-error and total retry limits and exposes the cause', () => {
+  const limit = 5;
+  const decoderError = { code: 'FFMPEG_ERROR', message: '無法載入本機 FFmpeg.wasm' };
+  let repeated;
+  for (let i = 0; i < limit; i++)
+    repeated = recordFailure(repeated, decoderError, limit);
+  assert.equal(repeated.stoppedBy, 'repeated');
+  assert.match(playbackFailureMessage(repeated, decoderError, limit), /連續相同錯誤 5 次/);
+  assert.match(playbackFailureMessage(repeated, decoderError, limit), /無法載入本機 FFmpeg.wasm/);
+  let alternating;
+  for (let i = 0; i < 20; i++)
+    alternating = recordFailure(alternating, { code: i % 2 ? 'HTTP_403' : 'FFMPEG_ERROR',
+      message: i % 2 ? '媒體來源拒絕' : '解碼失敗' }, limit);
+  assert.equal(alternating.streak, 1);
+  assert.equal(alternating.attempts, 20);
+  assert.equal(alternating.stoppedBy, 'total-limit');
+  assert.match(playbackFailureMessage(alternating,
+    { code: 'HTTP_403', message: '媒體來源拒絕' }, limit), /累計失敗 20 次（安全上限）/);
+  const blocked = recordFailure(null, { code: 'HLS_DRM', message: 'DRM 不支援' }, limit);
+  assert.equal(blocked.stoppedBy, 'not-retryable');
+  assert.match(playbackFailureMessage(blocked,
+    { code: 'HLS_DRM', message: 'DRM 不支援' }, limit), /此錯誤不可重試/);
+});
+
 test('memory buffers are bounded and keyed by source quality/codec', () => {
   const cache = new MediaCache(8);
   assert.equal(cache.put('a', new Blob(['123456'])), true);

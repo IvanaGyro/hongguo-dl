@@ -5,8 +5,24 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20)
   const key = String(error.code || 'UNKNOWN') + '\u0000' + String(error.message || '');
   const streak = previous?.key === key ? (previous.streak || 0) + 1 : 1;
   const attempts = (previous?.attempts || 0) + 1;
-  return { key, streak, attempts,
-    retry: streak < repeatedLimit && attempts < attemptLimit &&
-      !['CANCELED', 'HLS_DRM', 'INVALID_KEY'].includes(error.code),
+  const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY'].includes(error.code)
+    ? 'not-retryable' : streak >= repeatedLimit ? 'repeated'
+    : attempts >= attemptLimit ? 'total-limit' : null;
+  return { key, streak, attempts, stoppedBy, retry: !stoppedBy,
     delay: Math.min(8000, 700 * (2 ** Math.min(4, streak - 1))) };
+}
+
+// Always distinguish the repeated-error threshold from the overall safety cap.
+// Include the last actual error so a failed real source is diagnosable rather
+// than a misleading "one identical error" after twenty alternating failures.
+export function playbackFailureMessage(failure, error, repeatedLimit = 5) {
+  const detail = String(error?.message || '未知播放錯誤').slice(0, 180);
+  const code = error?.code ? ' [' + error.code + ']' : '';
+  if (failure.retry) return '播放重試 ' + failure.streak + '/' + repeatedLimit + code + ' · ' + detail;
+  const reason = failure.stoppedBy === 'repeated'
+    ? '連續相同錯誤 ' + failure.streak + ' 次'
+    : failure.stoppedBy === 'total-limit'
+      ? '累計失敗 ' + failure.attempts + ' 次（安全上限）'
+      : '此錯誤不可重試';
+  return '已停止播放 · ' + reason + code + ' · ' + detail;
 }

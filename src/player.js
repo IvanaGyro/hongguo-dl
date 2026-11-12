@@ -5,7 +5,7 @@
 import { errorWith, classifyError, isHlsUrl, mediaProxyUrl } from './logic.js';
 import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
 import { episodeCacheKey } from './media-cache.js';
-import { recordFailure } from './retry.js';
+import { recordFailure, playbackFailureMessage } from './retry.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { availableRenditions, renditionForAttempt, codecId } from './source-options.js';
 
@@ -230,12 +230,11 @@ export function createPlayer({
         if (signal.aborted || currentToken !== token || parsed.code === 'CANCELED') return;
         errors = recordFailure(errors, parsed, 5);
         failure = errors;
+        setStatus(playbackFailureMessage(errors, parsed, 5));
         if (!errors.retry) {
-          setStatus('連續相同錯誤 ' + errors.streak + ' 次 · 已停止播放');
           loading = false;
           return;
         }
-        setStatus('重新連線 · ' + errors.streak + '/5');
         await new Promise(resolve => setTimeout(resolve, errors.delay));
       }
     }
@@ -282,8 +281,8 @@ export function createPlayer({
     const currentToken = token, signal = controller.signal;
     const parsed = { code: 'PLAYBACK_ERROR', message: video.error?.message || '播放中斷' };
     failure = recordFailure(failure, parsed, 5);
-    if (!failure.retry) { setStatus('連續 5 次相同錯誤 · 已停止播放'); return; }
-    setStatus('影片中斷 · 重試 ' + failure.streak + '/5');
+    setStatus(playbackFailureMessage(failure, parsed, 5));
+    if (!failure.retry) return;
     const prior = failure;
     void new Promise(resolve => setTimeout(resolve, prior.delay)).then(() => {
       if (currentToken === token && !signal.aborted) void run(current, currentToken, signal, true, prior);
