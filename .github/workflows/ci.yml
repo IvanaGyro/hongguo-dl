@@ -17,6 +17,8 @@ jobs:
         run: bun ci
       - name: Tests using Bun
         run: bun run test
+      - name: Verify committed CENC JS/WASM bundle and build inputs
+        run: node scripts/cenc-wasm-bundle.mjs verify
       - name: Build GitHub Pages assets
         env:
           VITE_BASE_PATH: /hongguo-dl/
