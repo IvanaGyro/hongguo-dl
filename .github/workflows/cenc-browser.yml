@@ -1,7 +1,7 @@
 name: Progressive CENC MSE real-frame browser acceptance
 on:
   push:
-    branches: [main, feature/cenc-avio-mse-stream]
+    branches: [main]
     paths:
       - '.github/workflows/cenc-browser.yml'
       - 'src/cenc-remux.js'
@@ -12,6 +12,9 @@ on:
       - 'tests/cenc-stream.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
+concurrency:
+  group: cenc-browser-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
