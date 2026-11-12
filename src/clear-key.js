@@ -43,7 +43,7 @@ export function cencKidFromMoov(data) {
         data[typePos + 2] !== 0x6e || data[typePos + 3] !== 0x63) continue;
     const start = typePos - 4, size = read32(data, start);
     if (size < 32 || size > 128 || start + size > data.length ||
-        data[start + 8] > 1 || data[start + 14] !== 8 && data[start + 14] !== 16) continue;
+        data[start + 8] > 1 || ![8, 16].includes(data[start + 15])) continue;
     const kid = data.slice(start + 16, start + 32);
     if (kid.length === 16 && kid.some(Boolean)) return kid;
   }
