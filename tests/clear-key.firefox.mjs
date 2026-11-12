@@ -14,7 +14,7 @@ const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 const mediaRequests = [], pageErrors = [];
 page.on('pageerror', error => pageErrors.push(error.message));
-await page.route(url => url.pathname.startsWith('/api/'), async route => {
+const serveApi = async route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/series') return route.fulfill({
     status: 200, contentType: 'application/json',
@@ -55,7 +55,8 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
       }, body });
   }
   throw new Error('Unexpected Worker endpoint: ' + url.pathname);
-});
+};
+await page.route(url => url.pathname.startsWith('/api/'), serveApi);
 
 try {
   await page.goto('http://127.0.0.1:4173/hongguo-dl/?id=123456789');
@@ -77,6 +78,7 @@ try {
   if (!available) {
     console.log('SKIP browser native Clear Key: Firefox runner does not advertise EME/CENC for H.264');
   } else {
+    const started = performance.now();
     await page.locator('#mode-play').click();
     await page.waitForFunction(() => document.querySelector('#player-source-info')
       ?.textContent.includes('原生串流解密'), null, { timeout: 30000 });
@@ -95,8 +97,30 @@ try {
     assert(mediaRequests.some(r => r.status === 206 && r.first === 0 && r.last <= 65535),
       'Metadata preflight must be a bounded Range request');
     assert(!pageErrors.length, pageErrors.join('; '));
+    const nativeMs = Math.round(performance.now() - started);
     console.log('PASS real H.264 CENC Clear Key browser stream', JSON.stringify({
-      ...result, source: undefined, mediaRequests: mediaRequests.length, KID: 'known synthetic fixture'
+      ...result, source: undefined, mediaRequests: mediaRequests.length,
+      startupMs: nativeMs, KID: 'known synthetic fixture'
     }));
+    // Compare against the production FFmpeg.wasm fallback with the exact same
+    // encrypted bytes. Relative speed is informational: CI runners fluctuate.
+    const fallback = await context.newPage();
+    await fallback.addInitScript(() => {
+      Object.defineProperty(navigator, 'requestMediaKeySystemAccess',
+        { configurable: true, value: undefined });
+    });
+    await fallback.route(url => url.pathname.startsWith('/api/'), serveApi);
+    await fallback.goto('http://127.0.0.1:4173/hongguo-dl/?id=123456789');
+    const fallbackStarted = performance.now();
+    await fallback.locator('#mode-play').click();
+    await fallback.waitForFunction(() => document.querySelector('#player-video')?.currentTime > 0.2,
+      null, { timeout: 90000 });
+    const fallbackUsedEme = await fallback.locator('#player-source-info').textContent();
+    assert(!fallbackUsedEme.includes('原生串流解密'), 'Disabled EME must force FFmpeg.wasm');
+    const fallbackMs = Math.round(performance.now() - fallbackStarted);
+    console.log('CENC startup benchmark (same fixture, CI Firefox, not production latency):',
+      JSON.stringify({ nativeEmeMs: nativeMs, ffmpegWasmMs: fallbackMs,
+        ratio: +(fallbackMs / Math.max(nativeMs, 1)).toFixed(2) }));
+    await fallback.close();
   }
 } finally { await browser.close(); }
