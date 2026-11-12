@@ -50,3 +50,9 @@
 - [CI #43290337102](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337102) **PASS**（Bun 全測試 + Vite build + WASM manifest + worker cold-start）；[Pages #43290337124](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337124) **PASS**。
 - [WASM proof #43290337070](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337070) 首次查詢仍 `in_progress`、[Browser #43290337304](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337304) `pending`。不能視為 real HEVC / Android 解碼證據。
 - **立即恢復點**：增加數分鐘暫停、反覆切集及 abort pending ACK/Range 的定向壓力測試；必要時修 lifecycle。真實授權 HEVC 206/Android/Windows 與 ByteVC2 bitstream 仍 NOT TESTED。
+
+## 最新工程 checkpoint（階段 42，2026-11-13）
+
+- [`9279172`](https://github.com/IvanaGyro/hongguo-dl/commit/9279172b3ed0f38af62c56d832618aa3bdcf3c13) 修正 CENC Worker runtime error 未即時撤銷 Object URL：失敗與正常 close 共用冪等撤銷。新增 HEVC 精確 MIME 跨四次 Seek、前一 Worker terminate、Object URL 釋放與 Worker error 注入回歸。
+- [CI #43290902235](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902235)、[Pages #43290902283](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902283)、[WASM #43290902250](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902250) 初查 **in_progress**，[Browser #43290902255](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902255) **pending**；不冒稱最新 CI PASS。
+- **立即恢復點**：優先處理若有具體 CI 失敗；否則改善 HTTP 403/416 與不支援編碼之錯誤分類和有界降級，持續長暫停及多次切集測試。真實紅果 HEVC 及 ByteVC2 正例仍需合法片源和實機。
