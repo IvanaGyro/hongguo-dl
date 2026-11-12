@@ -320,6 +320,34 @@ try {
   assert.equal(mobile.buttonsInside, true, 'All mobile controls should fit in the player');
   assert(mobile.controlsHeight < mobile.stageHeight * 0.5,
     'Controls should not obscure most of the video on mobile');
+
+  // A prepared next episode must be handed off without another /api/source call.
+  await page.evaluate(() => localStorage.removeItem('hongguo-dl-playback-history-v1'));
+  await page.goto(base + '?id=42', { waitUntil: 'load' });
+  await page.locator('#mode-play').click();
+  await page.waitForFunction(() => document.querySelector('#player-video')?.readyState >= 1);
+  const nextBefore = calls.filter(x => x.includes('vid=102')).length;
+  await page.locator('#player-video').evaluate(video => {
+    Object.defineProperties(video, {
+      duration: { configurable: true, get: () => 200 },
+      currentTime: { configurable: true, get: () => 190 },
+      paused: { configurable: true, get: () => false }
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    delete video.duration;
+    delete video.currentTime;
+    delete video.paused;
+  });
+  for (let i = 0; i < 50 && calls.filter(x => x.includes('vid=102')).length <= nextBefore; i++)
+    await page.waitForTimeout(50);
+  const nextFetched = calls.filter(x => x.includes('vid=102')).length;
+  assert(nextFetched > nextBefore, 'Near-end play should request only the upcoming source');
+  await page.locator('#player-video').evaluate(video => video.dispatchEvent(new Event('ended')));
+  await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 2 集'));
+  await page.waitForFunction(() => document.querySelector('#player-video')?.readyState >= 1);
+  assert.equal(calls.filter(x => x.includes('vid=102')).length, nextFetched,
+    'Handoff to prefetched episode must reuse the in-flight source, without duplicate lookup');
+
   // The actual episode-30 source has encrypted HEVC at 1080p, and encrypted
   // ByteVC2/VVC at 720p. It must fail clearly and BEFORE fetching 720p bytes.
   await page.goto(base + '?id=770', { waitUntil: 'load' });
