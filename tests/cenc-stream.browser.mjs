@@ -249,6 +249,61 @@ try {
       console.log('PASS ' + browserName + ' saved CENC seek reload', JSON.stringify({
         originalTarget: target, resumedRangeCount: resumedRanges.length
       }));
+      if (process.env.CENC_TEST_MULTI_SEEK === '1') {
+        // 10%, 50%, 90%, intentionally bouncing across noncontiguous ranges.
+        // Each previous remote stream is disposed before a new one is opened.
+        for (const desired of [7, 35, 63]) {
+          const start = mediaRequests.length;
+          const beforeSeek = await page.evaluate(() => {
+            const video = document.querySelector('#player-video');
+            return Array.from({ length: video.buffered.length }, (_, i) =>
+              [video.buffered.start(i), video.buffered.end(i)]);
+          });
+          assert(!beforeSeek.some(([a, b]) => a <= desired && desired <= b),
+            'Test requires genuinely unbuffered target ' + desired +
+            ': ' + JSON.stringify(beforeSeek));
+          await page.evaluate(time => {
+            document.querySelector('#player-video').currentTime = time;
+          }, desired);
+          await page.waitForFunction(time => {
+            const video = document.querySelector('#player-video');
+            const status = document.querySelector('#player-status')?.textContent || '';
+            return status.includes('已跳轉到 ' + time + ' 秒') &&
+              video && video.videoWidth === 480 && video.readyState >= 2 &&
+              video.currentTime >= time - 0.3 && video.currentTime < time + 5 &&
+              Array.from({ length: video.buffered.length }, (_, i) =>
+                video.buffered.start(i) <= time + 0.2 &&
+                video.buffered.end(i) >= time + 0.2).some(Boolean);
+          }, desired, { timeout: 40000 });
+          const ranges = mediaRequests.slice(start);
+          assert(ranges.some(r => r.first > input.length * Math.max(0.02, desired / 70 - 0.2)),
+            'Seek must start new indexed Range near ' + desired + 's: ' +
+            JSON.stringify(ranges.map(r => [r.first, r.last])));
+          assert(!ranges.some(r => r.unbounded),
+            'Rapid seeks may not fall back to full-file downloads');
+          console.log('PASS ' + browserName + ' unbuffered indexed RAP seek', JSON.stringify({
+            seconds: desired, sourceRanges: ranges.length
+          }));
+        }
+        // Also verify last-watched position survives a second reload.
+        const beforeFinalReload = mediaRequests.length;
+        await page.reload();
+        await page.waitForFunction(() =>
+          document.querySelector('#series-title')?.textContent?.includes('CENC streaming fixture'),
+          null, { timeout: 30000 });
+        await page.locator('#mode-play').click();
+        await page.locator('#episodes button.play-episode').first().click();
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          return video?.videoWidth === 480 && video.readyState >= 2 &&
+            video.currentTime >= 62.5 && video.currentTime < 67;
+        }, null, { timeout: 40000 });
+        const resumed = mediaRequests.slice(beforeFinalReload);
+        assert(resumed.some(r => r.first > input.length * 0.65) &&
+          !resumed.some(r => r.unbounded),
+          '90% reload must resume with high-offset bounded HTTP Range');
+        console.log('PASS ' + browserName + ' 90% CENC resume after cross-range seeking');
+      }
     }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
       JSON.stringify({ ...frame, playbackSeconds: playback.currentTime, inputBytes: input.length,
