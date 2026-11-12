@@ -349,3 +349,10 @@
 - **驗收狀態：待新 main CI/build**。不能以舊成功 run 替代此次新 helper / JS syntax 的驗證；中間產生的 CI 若因過渡提交失敗，須以修復後最新 SHA 為準。後續如失敗，直接看那一個失敗 job 並修補，不反覆 poll。
 - **未完成關鍵外部條件不變**：真實 1080p HEVC+ CENC、Android Firefox、真實 ByteVC2 bitstream 仍不可標 PASS。新 pause backpressure acceptance 另需含 `CENC_TEST_PAUSE=1` 的 run 中實際 PASS 行。
 - 下一步：驗收此 helper 的三個測試，確認含暫停測試的 browser log；必要時追加最小修正，完成後立即寫進階段 35。
+
+## 階段 35 — 2026-11-13 WASM availability 單元／建置 CI 成功；暫停 Browser 仍待獨立 PASS
+
+- 針對階段 34 的新邏輯，[CI #43286323262](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286323262)（retryableAvailability 三個單元測試）**completed/success**；修正後 `src/bvc2.js` 版 [CI #43286451543](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286451543) **completed/success**；與 `src/cenc-remux.js` 整合後 [CI #43286523179](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523179) **completed/success**。說明單元、一般建置與 manifest 守門 PASS，**不等於新的 CENC 真影格 Browser regression 已成功**。
+- 後續 [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033)（含 CENC_TEST_PAUSE=1 的較早最新版）當次查詢仍 **in_progress**；[Browser #43286523184](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523184)（採用最新 CENC asset retry 程式）當次 **pending**。只確認各一次，不等待或重複輪詢；任何 run 完成後只有讀到實際 `PASS chromium paused CENC HTTP Range backpressure and playback resume` 才能改標 PASS。
+- 其他外部阻礙與 stage 34 相同：真實紅果 HEVC 206 來源、Windows／Android MSE HEVC 解碼與 ByteVC2 正例仍無獨立證據。不要拿 Chromium 合成的 1800s H.264 PASS 替代真實測試。
+- 下一步：修正仍殘留的原始碼／文件陳舊說明，持續稽核 CENC Range/Worker 失敗處理；有具體例外可寫回歸才改程式；定期留下 checkpoint 而不讓 GitHub 查詢卡住工作。
