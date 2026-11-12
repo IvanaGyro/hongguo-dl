@@ -227,3 +227,16 @@ media-fullscreen-button[data-fullscreen] .player-enter-fullscreen { display: non
   .queue-export > .actions { width: 100%; }
   .queue-export > .actions > button { flex: 1; }
 }
+
+/* Copyable, compact media capability report for debugging HEVC availability. */
+.codec-diag-results {
+  margin: 0.65rem 0 0;
+  padding: 0.7rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 19rem;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.codec-diag-results:empty { display: none; }
