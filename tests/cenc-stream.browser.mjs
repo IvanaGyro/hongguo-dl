@@ -192,10 +192,12 @@ try {
       'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
     if (process.env.CENC_TEST_STRESS === '1') {
-      await page.evaluate(() => {
+      const expectedSeconds = Number(process.env.CENC_STRESS_SECONDS || 300);
+      assert([300, 1800].includes(expectedSeconds), 'Unexpected bounded stress duration');
+      await page.evaluate(duration => {
         const video = document.querySelector('#player-video');
         video.muted = true;
-        video.playbackRate = 8;
+        video.playbackRate = duration >= 1800 ? 16 : 8;
         const stats = window.__cencStress = {
           samples: 0, maxBufferedSpan: 0, maxBufferedAhead: 0,
           maxDurationSeconds: 0, lastTime: 0
@@ -216,7 +218,8 @@ try {
         video.addEventListener('timeupdate', sample);
         video.addEventListener('progress', sample);
         sample();
-      });
+        window.__cencStressExpected = duration;
+      }, expectedSeconds);
       // Linux ps RSS is observational only: includes the Node test harness,
       // child browser processes and shared pages, but not GPU allocations.
       // Use relative trend, never report this as exact browser-only RSS.
@@ -233,8 +236,10 @@ try {
       try {
         await page.waitForFunction(() => {
           const video = document.querySelector('#player-video');
-          return video?.ended && video.currentTime >= 297 && video.duration >= 299;
-        }, null, { timeout: 180000 });
+          const expected = window.__cencStressExpected || 300;
+          return video?.ended && video.currentTime >= expected - 3 &&
+            video.duration >= expected - 1;
+        }, null, { timeout: expectedSeconds >= 1800 ? 240000 : 180000 });
       } finally {
         clearInterval(rssTimer);
         measure();
@@ -251,7 +256,8 @@ try {
         JSON.stringify(stats));
       assert(!mediaRequests.some(r => r.unbounded) && !errors.length,
         '300-second playback unexpectedly used whole-file fetch or emitted browser errors');
-      console.log('PASS ' + browserName + ' 300-second CENC playback and bounded MSE window',
+      console.log('PASS ' + browserName + ' ' + expectedSeconds +
+        '-second CENC playback and bounded MSE window',
         JSON.stringify({
           ...stats, rangeRequests: mediaRequests.length,
           processTreeRssMiB: rssSamples.length ? {
