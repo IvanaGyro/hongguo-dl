@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
-// millions of samples in JS/WASM. JS inspects at most 1 MiB of MP4 metadata.
+// millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
@@ -74,8 +74,18 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
     aborted(signal);
   }
   if (res.status !== 206) {
-    await res.body?.cancel();
-    throw errorWith('CENC_UNAVAILABLE', 'CDN 不支援有限的 HTTP Range 讀取');
+    await res.body?.cancel().catch(() => {});
+    // Preserve HTTP failure semantics instead of reporting an HEVC decoder
+    // failure or silently downloading the complete encrypted episode.
+    const statuses = {
+      200: ['CENC_RANGE_UNSUPPORTED', '來源不支援有限的 HTTP Range（HTTP 200）'],
+      403: ['CENC_SOURCE_FORBIDDEN', 'CDN 拒絕存取影片（HTTP 403）'],
+      416: ['CENC_RANGE_INVALID', '來源拒絕請求的影片範圍（HTTP 416）'],
+      429: ['CENC_RATE_LIMITED', '來源限制請求頻率（HTTP 429）']
+    };
+    const [code, message] = statuses[res.status] ||
+      ['CENC_RANGE_HTTP', '來源 HTTP Range 請求失敗（HTTP ' + res.status + '）'];
+    throw errorWith(code, message);
   }
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range') || '');
   if (!match || Number(match[1]) !== start || Number(match[2]) >= start + bytes ||
@@ -344,7 +354,12 @@ export async function openClearKeyStream({
   let kid;
   try { kid = await probeCencKid(url, signal, fetchImpl, metadata); }
   catch (error) {
-    if (signal?.aborted || error?.code === 'CENC_METADATA_LIMIT') throw error;
+    // A rejected/broken HTTP Range is a source/network failure, not a
+    // demux/decode failure. Never turn it into a whole-file FFmpeg fallback.
+    if (signal?.aborted || error?.code === 'CENC_METADATA_LIMIT' ||
+        error?.code?.startsWith('CENC_RANGE_') ||
+        ['CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED'].includes(error?.code))
+      throw error;
     return declined('mp4-range-or-kid-probe', error);
   }
   if (!kid) return declined('no-cenc-kid');
