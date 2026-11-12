@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Single-job worker: canceling playback terminates the entire WASM instance.
+import { readLimitedAsset } from './cenc-bundle.js';
 self.onmessage = async ({ data }) => {
   let core = null;
   try {
@@ -10,10 +11,10 @@ self.onmessage = async ({ data }) => {
       import(/* @vite-ignore */ moduleUrl.href),
       fetch(wasmUrl, { cache: 'force-cache' })
     ]);
-    if (!response.ok) throw new Error('WASM HTTP ' + response.status);
-    if (Number(response.headers.get('content-length') || 0) > 32 * 1024 * 1024)
-      throw new Error('WASM 核心檔案過大');
-    core = await createModule({ wasmBinary: new Uint8Array(await response.arrayBuffer()) });
+    // CDN/Pages can omit or lie about Content-Length. Never allocate an
+    // unbounded WASM body from response.arrayBuffer() in an experiment.
+    const wasmBinary = await readLimitedAsset(response, 32 * 1024 * 1024);
+    core = await createModule({ wasmBinary });
     if (core._bvc2_decoder_available() !== 1)
       throw new Error('WASM 未包含 BVC2 解碼器與 x264 編碼器');
     const input = '/input.mp4', output = '/output.mp4';
