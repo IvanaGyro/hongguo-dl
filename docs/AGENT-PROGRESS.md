@@ -463,3 +463,11 @@
 - **前段已驗證／限制**：階段 45 CENC metadata 200/403/416/429/503 的明確錯誤分類已在 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) **completed/success**，部署 [Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) **success**；此結果不等於最新三輪切換、120 秒暫停或真實 HEVC 正例。對 pinned Librempeg 是否輸出 `hev1`，仍以對應 WASM proof 執行結果為準。
 - **文件**：`docs/CENC-TEST-MATRIX.md` 加入本測試 PENDING 與已成功的 HTTP status 模擬回歸。重整 `docs/AGENT-CURRENT.md` 為短版最新摘要；歷史詳情仍全部保留本日誌。
 - **下一步**：若最新 Browser/CI 有具體 fail，查必要錯誤並修；否則接續 Android/Windows 規格差異、真實授權 HEVC 206 來源的有界診斷、ByteVC2 本機正例的外部素材依賴，並評估多次切集／暫停後 GPU/RSS。不得宣稱已做裝置驗收。
+
+
+## 階段 48 — 2026-11-13 拒絕範圍不符／截斷／過量的 CENC metadata HTTP 206
+
+- **具體根因／程式修改**：即使來源回覆 206，`src/clear-key.js` 舊版的 `rangeFetch()` 在 `Content-Range` 不符、宣告長度錯誤、body 截斷或超過預算時，會回傳泛用 `CENC_UNAVAILABLE`／不完整資料；`openClearKeyStream()` 可能將其視為可降級，轉而整集下載。直接 main [45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a) 修改 `src/clear-key.js` 使所有失真 206 明確回報 `CENC_RANGE_INVALID`，比較實收 bytes 與 Content-Range 宣告長度、Content-Length（若存在）的一致性；維持 8MiB moov、4 次 metadata probes 的原始上界，錯誤不再回退無限制 whole-file。
+- **測試增加**：`tests/cenc-source-errors.test.mjs` 補 4 種合成正向錯誤注入：起點錯誤、宣告 65536 卻只回傳 100 bytes、回應多於宣告、Content-Length 與 Content-Range 不符；均要求 `CENC_RANGE_INVALID` 並確認每個錯誤只發一個有界 metadata Range。僅使用自行生成 HTTP body，無第三方來源/key。
+- **PENDING**：新 [CI #43293840096](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293840096)、[Pages #43293839559](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839559)、[WASM #43293839030](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839030) 首查 `in_progress`，[Browser #43293839080](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839080) `pending`；不可宣稱最新測試已 PASS。前版 200/403/416/429/503 單測已在 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) PASS，但不涵蓋這個新 206 斷言。
+- **限制與下一步**：仍待跑最新 CI，真實 CDN/HEVC/BVC2/Android NOT TESTED。下一個具體工程動作是 HTTP `fetch()` throw/已連線 body `reader.read()` throw 時的錯誤分類與無敏感資訊返回，阻止暫時性斷網降級整檔下載；若新 CI 先失敗，按具體斷言修。
