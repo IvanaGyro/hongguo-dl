@@ -301,3 +301,10 @@
 - **文件已更新**：[NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md) commit [e02dbd4](https://github.com/IvanaGyro/hongguo-dl/commit/e02dbd44b1b549dbfbbf0daf5fba2ede9eaf372a) 清除過時的「沒有 seek/eviction/主分支發布」描述；[cenc-progressive-to-fmp4.md](cenc-progressive-to-fmp4.md) commit [f5fb50c](https://github.com/IvanaGyro/hongguo-dl/commit/f5fb50c6c97e2d70c1dd63d365ae968de95c2789) 更新架構與 8MiB moov；[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md) commit [f66c66b](https://github.com/IvanaGyro/hongguo-dl/commit/f66c66b7c7945b55df1628ce2e0dcdfcaaae75a8) 正式將 1800s PASS 列入矩陣。
 - **未解限制，不能偷換**：真實紅果 1080p HEVC + CENC 的瀏覽器首影格/音畫/播畢、Android Firefox 真實裝置、ByteVC2 合法正例均 NOT TESTED；本次 1800s 仍是 synthetic 6fps H.264，不是 HEVC。
 - **下一步不停止**：繼續 code-level 稽核 CENC/Worker 流式網路與取消/失敗狀態，優先找可補回歸的具體問題。勿連續查同一 Actions；如有新發現，先 code+test，立即新增 checkpoint。
+
+## 階段 29 — 2026-11-13 新增「暫停不得繼續下載全集」瀏覽器驗收（已提交，待 CI）
+
+- [b4d9440](https://github.com/IvanaGyro/hongguo-dl/commit/b4d9440a1aa21afce198e0c1582b9db0c1822c91)：在 `tests/cenc-stream.browser.mjs` 的 300s Chromium 加密串流 stress 模式新增 `CENC_TEST_PAUSE=1`：等待 MSE 前向緩衝達 40s，暫停並讓既有 AVIO Range 穩定；觀察 3 秒後要求新 Range 增量不超過 2 次、播放時間幾乎不動；隨後恢復播放、至少前進 2 秒，並照舊完整播至 300s。測試使用既有合成 CENC 片源，不接觸真實簽章 URL／金鑰。
+- [7b46f19](https://github.com/IvanaGyro/hongguo-dl/commit/7b46f19a3812dbfd742670e4fe438e52a1afac8c)：`.github/workflows/cenc-browser.yml` 在 300s 案例啟用 `CENC_TEST_PAUSE=1`，保留 1800s 完整播放案例不變。
+- **驗收狀態：NOT YET TESTED**。這兩個提交已觸發新的 browser acceptance，但新增 PASS 行尚未由執行紀錄證明；不得以既有 1800s 成功替代「暫停節流」新案例。後續只檢查這項測試一次；失敗即依唯一具體錯誤修復。
+- 下一步：另查 CENC worker/源站中斷時的資源釋放與不受限備援路徑；若 browser 新測試失敗須優先修。繼續每階段 checkpoint，直接 main、不開 PR。
