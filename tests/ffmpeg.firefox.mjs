@@ -35,17 +35,22 @@ try {
   await page.locator('#lookup-button').click();
   await page.locator('#series').waitFor({ state: 'visible' });
   await page.locator('#output-mode').selectOption('copy');
-  const downloadPromise = page.waitForEvent('download', { timeout: 120000 });
+  let automaticDownloads = 0;
+  page.on('download', () => { automaticDownloads++; });
   await page.locator('#add-queue').click();
+  await page.waitForFunction(() => document.querySelector('.status.s-completed'), { timeout: 120000 });
+  assert.equal(automaticDownloads, 0, 'Queued work must not open a save prompt automatically');
+  const downloadPromise = page.waitForEvent('download', { timeout: 120000 });
+  await page.locator('button[data-action="save"]').click();
   const download = await downloadPromise;
   const path = await download.path();
   assert(path && statSync(path).size > 100, 'FFmpeg output download must be nonempty');
-  await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('完成'), { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.status.s-completed'), { timeout: 10000 });
   // Firefox may omit requests made by dedicated workers from page.on('response').
   // A successful nonempty remux and completed status verify core JS execution.
   assert([...assetStatus.entries()].some(([url, status]) => url.endsWith('ffmpeg-core.wasm.gz') && status === 200),
     'Compressed WASM must be fetched');
-  console.log('Firefox FFmpeg.wasm end-to-end remux PASSED:', statSync(path).size,
+  console.log('Firefox FFmpeg.wasm staged-and-manual-save remux PASSED:', statSync(path).size,
     'bytes; assets:', Object.fromEntries(assetStatus));
 } catch (error) {
   console.error('Firefox FFmpeg.wasm smoke test failed:', error.message);
