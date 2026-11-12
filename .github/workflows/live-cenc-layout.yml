@@ -1,0 +1,18 @@
+name: Inspect real HEVC CENC metadata (bounded)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/live-cenc-layout.mjs'
+      - '.github/workflows/live-cenc-layout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect only one accessible HEVC source
+        run: node scripts/live-cenc-layout.mjs
