@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 54）
+# Hongguo DL — 目前狀態（2026-11-13，階段 55）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 55 pinned Librempeg H264/AAC 70s 多 Seek 嚴格解碼驗收**：[feadf0b](https://github.com/IvanaGyro/hongguo-dl/commit/feadf0b015acde866887d225c2f4bab2ba79bac3)／[fc18bc7](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb)：`.github/workflows/cenc-wasm-stream.yml` 新生成與 Browser 同條件 70s H.264/AAC CENC 合成片，WASM 在 7、35、55、63s indexed seek 後，`ffmpeg -xerror` 嚴格解碼音訊與視訊，ffprobe 分別確認 AVC/AAC 與近目標 PTS。**WASM workflow 新測試 PENDING**，針對先前 MOV subsample/partial-file 診斷提供獨立實驗證據，不可聲稱已經治癒 AAC 警訊。
 
 - **階段 54 MSE stalled ACK / sourceopen 防卡死**：[0fab93e](https://github.com/IvanaGyro/hongguo-dl/commit/0fab93e5f0a084b5fc110c47b15768315b705015)：`src/cenc-remux.js` 若 MediaSource 已 `ended` 則不再無限等 `sourceopen`；`tests/cenc-startup.test.mjs` 模擬 SourceBuffer `appendBuffer` 永不 `updateend`、MediaSource 仍 `closed`、或已 `ended`，驗證中止 Worker、不得 ACK、Object URL 恰撤銷一次。**新單元 CI PENDING**。
 
@@ -26,7 +28,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：依階段 53–54 新 CI 的具體 FAIL 修復（若有），再確認階段 52 的 CENC Browser E2E 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：單次確認階段 55 pinned WASM 嚴格 AAC 多 Seek 是否 FAIL 並按具體資訊處理；再確認階段 52 的 CENC Browser E2E 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 

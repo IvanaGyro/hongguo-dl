@@ -525,3 +525,12 @@
 - **新增隔離的 EventTarget/Worker 模擬測試**：(1) fake SourceBuffer append 後永不發 `updateend`，`AbortController.abort()` 後 Worker terminated、無 ACK，Object URL 只 revoke 一次；(2) fake MediaSource `closed`，pending `sourceopen` 時呼叫 stream.close()，確保 Worker/URL 釋放；(3) MediaSource `ended` 收 init unit 時即 fail、terminate/URL revoke，close 不二次 revoke。沒有真實 CDN、CENC key 或解碼能力宣稱。
 - **PENDING**：這次新增測試尚待 CI；上一階段 [CI #43296748129](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748129)、[Pages #43296748224](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748224) **completed/success**，是階段 53 的 AVIO transport 安全修正通過的證據。[Browser #43296748110](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748110) 前查 pending，不能填成功。[pinned WASM #43296748128](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748128) 尚 in_progress。
 - **下一步**：新 CI 若 FAIL，處理確切 assertion，不輪詢；瀏覽器三輪切換實際 E2E 通過後才更新矩陣；持續驗證 MOV AAC 錯誤訊息是否會影響音訊。不做整檔 CENC 回退、不將 synthetic 宣稱真實 Android/HEVC。
+
+
+## 階段 55 — 2026-11-13 pinned Librempeg WASM 70 秒 H.264／AAC 多個非連續 Seek 嚴格解碼證據
+
+- **動機／未解風險**：先前 Chromium 70s synthetic 7→63→35→5→63s Seek + 三次播放／下載切換時，Librempeg MOV 在 console 印出 `subsample size exceeds the packet size left`／`partial file`；來源檔一般 FFmpeg 讀取正常，不能因此就把 AAC packet warning 當成毫無影響。
+- **程式碼直接提交 main**：[feadf0b015acde866887d225c2f4bab2ba79bac3](https://github.com/IvanaGyro/hongguo-dl/commit/feadf0b015acde866887d225c2f4bab2ba79bac3)，修正驗證腳本空白 regex [fc18bc712b2462c6792aab5e5a6602098e07e6eb](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb)。變更 `.github/workflows/cenc-wasm-stream.yml`：與 CENC Browser 的 70 秒 H.264/AAC 加密 fixture 同參數自產，不用第三方影片或私密金鑰；從 pinned Librempeg WASM 在 7、35、55、63 秒執行 indexed seek，保留每個 clear fMP4 輸出，`ffmpeg -xerror` 同時解碼 video/audio，`ffprobe` 檢查 codec 為 H264+AAC、兩種 stream 都有封包、首筆 PTS 落在 seek 目標前 3 秒至後 1 秒；所有時點皆 PASS 才可寫嚴格解碼通過。
+- **PENDING**：新 WASM workflow 尚未收到真正 completed/success；本變更增加驗證負載而不修改 WASM binary 或 SourceBuffer 代碼。即使通過，仍不能代替真實 Hongguo HEVC/Android 或同一 Worker 被取消中的 WebAudio quality proof。
+- **已完成其他證據**：前版 stage54 [CI #43297100841](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100841)、[Pages #43297100710](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100710) **completed/success**，含 pending MSE ACK 模擬測試；本版新 workflow 的狀態仍須獨立查證。
+- **下一步**：WASM 新正例如出現 `-xerror` FAIL，優先定位 audio packet / CTS/DTS 或 Librempeg MOV CENC seek 的問題，而非只在 Browser 隱藏 stderr；無具體 failure 時不得無限輪詢。瀏覽器三輪模式切換最新 E2E 仍待驗證。

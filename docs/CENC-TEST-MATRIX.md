@@ -32,7 +32,9 @@
 
 | CENC AVIO HTTP fetch／reader throw 不洩漏簽章 URL，abort 保持取消 | Node/Bun 合成異常與 AbortSignal | **PASS（單元）** | [CI #43296748129](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296748129) completed/success；`3939d30` mock fetch/read/abort 回歸；不證明真實 CDN 可接取 |
 
-| CENC SourceBuffer pending updateend／sourceopen 取消、ended 無限等候防護 | Node EventTarget + 模擬 Worker | **PENDING（階段 54）** | [main 0fab93e](https://github.com/IvanaGyro/hongguo-dl/commit/0fab93e5f0a084b5fc110c47b15768315b705015) 的 `tests/cenc-startup.test.mjs`，驗證 terminate／URL 單次 revoke／不得延遲 ACK；新 CI 未驗證 |
+| CENC SourceBuffer pending updateend／sourceopen 取消、ended 無限等候防護 | Node EventTarget + 模擬 Worker | **PASS（單元）** | [CI #43297100841](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100841) completed/success；`0fab93e` 測 pending ACK/close/ended，非真實弱網路實機 |
+
+| pinned Librempeg 70s H264/AAC CENC：7／35／55／63s RAP Seek、AAC 與 AVC 嚴格解碼 | Ubuntu 24.04；自行生成 encrypted progressive MP4 | **PENDING（階段 55）** | [main fc18bc7](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb) 新增 WASM proof，`ffmpeg -xerror` + ffprobe PTS；不能以既有 6s HEVC Seek 代替 |
 
 ## 固定驗證指令
 
