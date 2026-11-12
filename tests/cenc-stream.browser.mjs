@@ -196,6 +196,15 @@ try {
       }));
       // The player's saved position must re-enter the indexed remux path on
       // reload, not re-download all earlier encrypted samples.
+      const persisted = await page.evaluate(() => {
+        const entries = Object.values(JSON.parse(
+          localStorage.getItem('hongguo-dl-playback-history-v1') || '{}'));
+        return entries.map(entry => ({
+          seconds: entry.seconds, completed: entry.completed
+        }));
+      });
+      assert(persisted.some(entry => !entry.completed && entry.seconds > 54.5),
+        'A successful seek must persist a usable resume position before reload');
       const beforeReload = mediaRequests.length;
       await page.reload();
       await page.waitForFunction(() =>
@@ -208,7 +217,7 @@ try {
           const video = document.querySelector('#player-video');
           return video?.currentTime > 54.5 && video.videoWidth === 480 &&
             video.readyState >= 2;
-        }, null, { timeout: 90000 });
+        }, null, { timeout: 40000 });
       } catch (error) {
         const state = await page.evaluate(() => {
           const video = document.querySelector('#player-video');
