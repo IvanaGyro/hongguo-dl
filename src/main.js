@@ -20,6 +20,7 @@ import '@videojs/html/ui/status-announcer';
 import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
+import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
@@ -29,7 +30,7 @@ import { episodeFileName, originalExtension, filenameExtension, episodeDisplayTi
 import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
-import { renditionForAttempt } from './source-options.js';
+import { renditionForAttempt, codecId } from './source-options.js';
 
 const $ = id => {
   const element = document.getElementById(id);
@@ -612,6 +613,16 @@ async function runJob(job, signal) {
     const requiresFfmpeg = hls || !!source.contentKey || job.mode !== 'original';
     if (!requiresFfmpeg) {
       await streamToDestination(job, source, signal);
+    } else if (!hls && codecId(source.codec) === 'bytevc2' && job.mode === 'h264') {
+      if (!await bvc2BridgeAvailable())
+        throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
+      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
+        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
+      update(job, { status: 'processing', progress: null });
+      const out = await transcodeBvc2(raw, { contentKey: source.contentKey, signal });
+      if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
+      await saveProcessed(out, outputFileName(job, source, true), job,
+        { ...source, codec: 'h264' });
     } else if (hls) {
       update(job, { status: 'processing' });
       const out = await convertHls(source.url, {
