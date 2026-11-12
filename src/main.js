@@ -299,15 +299,22 @@ function queueSelected() {
   for (const ep of series.episodes.filter(e => selected.has(e.vid))) {
     const same = jobs.find(j => j.seriesId === series.seriesId && j.vid === ep.vid &&
       j.mode === mode && j.codec === codec && j.quality === quality &&
-      !['failed', 'canceled', 'completed'].includes(j.status));
-    if (same) continue;
+      !['failed', 'canceled'].includes(j.status));
+    if (same) {
+      exportSelected.add(same.id);
+      continue;
+    }
     const name = series.kind === 'direct' ? '媒體直連' :
       series.title + ' · 第 ' + String(ep.index).padStart(3, '0') + ' 集';
-    jobs.unshift({ id: crypto.randomUUID(), seriesId: series.seriesId || null, vid: ep.vid,
+    const job = { id: crypto.randomUUID(), seriesId: series.seriesId || null,
+      seriesTitle: series.title || '影集', vid: ep.vid,
       directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
       bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null,
-      lastErrorKey: '', errorStreak: 0, failureAttempts: 0 });
+      lastErrorKey: '', errorStreak: 0, failureAttempts: 0, stored: false, onDisk: false };
+    jobs.unshift(job);
+    exportSelected.add(job.id);
   }
+  persistExportSelection();
   saveJobs(); schedulePaint(); pump();
 }
 function queueRetry(job) {
@@ -320,7 +327,8 @@ function queueRetry(job) {
   const timer = retryTimers.get(job.id);
   if (timer) { clearTimeout(timer); retryTimers.delete(job.id); }
   update(job, { status: 'queued', bytes: 0, totalBytes: 0, progress: null, segment: null,
-    error: '', errorCode: '', lastErrorKey: '', errorStreak: 0, failureAttempts: 0 });
+    error: '', errorCode: '', lastErrorKey: '', errorStreak: 0, failureAttempts: 0,
+    fileName: null, stored: false, onDisk: false });
   pump();
 }
 function cancel(job) {
@@ -470,14 +478,23 @@ async function streamToDestination(job, source, signal) {
     } finally { reader.releaseLock(); }
     if (!bytes) throw errorWith('EMPTY_MEDIA', '影片回傳零位元組');
     if (length && length !== bytes) throw errorWith('INCOMPLETE', 'Content-Length：預期 ' + length + '，實收 ' + bytes);
-    if (writer) await writer.close();
-    else {
+    if (writer) {
+      await writer.close();
+      update(job, { fileName: name, stored: false, onDisk: true,
+        sourceCodec: source.codec, sourceWidth: source.width, sourceHeight: source.height });
+    } else {
       const blob = new Blob(chunks, { type: 'application/octet-stream' });
-      // Only MP4 data is safe to pass to the HTML5 MP4 playback buffer.
-      // .ts/.webm/.mkv files are still downloadable but are not mislabeled.
-      if (/\.mp4$/i.test(name))
+      try {
+        await storeDownload(job.id, name, blob, {
+          codec: source.codec, width: source.width, height: source.height, seriesId: job.seriesId
+        });
+      } catch (error) {
+        throw errorWith('STORAGE_QUOTA', '瀏覽器暫存空間不足：' + error.message);
+      }
+      if (/\.mp4$/i.test(name) && job.mode !== 'h264')
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec), blob);
-      triggerSave(blob, name);
+      update(job, { fileName: name, stored: true, onDisk: false,
+        sourceCodec: source.codec, sourceWidth: source.width, sourceHeight: source.height });
     }
     complete = true;
   } finally {
@@ -487,10 +504,11 @@ async function streamToDestination(job, source, signal) {
 async function runJob(job, signal) {
   update(job, { status: 'resolving', attempts: job.attempts + 1, bytes: 0, totalBytes: 0, error: '', errorCode: '' });
   try {
-    const cached = mediaCache.get(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec));
+    const cached = job.mode === 'h264' ? null :
+      mediaCache.get(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec));
     if (cached) {
       update(job, { status: 'downloading', bytes: cached.size, totalBytes: cached.size });
-      await saveProcessed(new Uint8Array(await cached.arrayBuffer()), safeName(job.title) + '_cached.mp4');
+      await saveProcessed(cached, episodeFileName(job, '.mp4'), job);
       update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
       return;
     }
@@ -520,7 +538,7 @@ async function runJob(job, signal) {
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
           new Blob([out], { type: 'video/mp4' }));
       }
-      await saveProcessed(out, outputFileName(job, source, true));
+      await saveProcessed(out, outputFileName(job, source, true), job, source);
     } else {
       const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
         (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
@@ -534,7 +552,7 @@ async function runJob(job, signal) {
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
           new Blob([out], { type: 'video/mp4' }));
       }
-      await saveProcessed(out, outputFileName(job, source, true));
+      await saveProcessed(out, outputFileName(job, source, true), job, source);
     }
     update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
   } catch (error) {
