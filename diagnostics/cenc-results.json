@@ -1,0 +1,346 @@
+[
+  {
+    "engine": "chromium",
+    "version": "145.0.7632.6"
+  },
+  {
+    "engine": "chromium",
+    "file": "clear.mp4",
+    "mode": "direct",
+    "time": 2.99094,
+    "width": 480,
+    "frames": 76,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "clear.mp4",
+    "mode": "mse",
+    "time": 0,
+    "width": 0,
+    "frames": 0,
+    "events": [
+      {
+        "sbError": true
+      },
+      {
+        "e": "error",
+        "error": "PipelineStatus::CHUNK_DEMUXER_ERROR_APPEND_FAILED: Failure parsing MP4: Detected unfragmented MP4. Media Source Extensions require ISO BMFF moov to contain mvex to indicate that Movie Fragments are to be expected.",
+        "code": 4
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "clear-fragmented.mp4",
+    "mode": "direct",
+    "time": 2.988909,
+    "width": 480,
+    "frames": 76,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "clear-fragmented.mp4",
+    "mode": "mse",
+    "time": 2.998178,
+    "width": 480,
+    "frames": 76,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "ffmpeg-cenc.mp4",
+    "mode": "direct",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "error",
+        "error": "PipelineStatus::PIPELINE_ERROR_DECODE: Failed to send video packet for decoding: {timestamp=41667 duration=41667 size=729 is_key_frame=0 encrypted=0}",
+        "code": 3
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "ffmpeg-cenc.mp4",
+    "mode": "mse",
+    "time": 0,
+    "width": 0,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "sbError": true
+      },
+      {
+        "e": "error",
+        "error": "PipelineStatus::CHUNK_DEMUXER_ERROR_APPEND_FAILED: Failure parsing MP4: Detected unfragmented MP4. Media Source Extensions require ISO BMFF moov to contain mvex to indicate that Movie Fragments are to be expected.",
+        "code": 4
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "shaka-cenc.mp4",
+    "mode": "direct",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "error",
+        "error": "PipelineStatus::PIPELINE_ERROR_DECODE: Failed to send video packet for decoding: {timestamp=41667 duration=41667 size=729 is_key_frame=0 encrypted=0}",
+        "code": 3
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "file": "shaka-cenc.mp4",
+    "mode": "mse",
+    "time": 2.997084,
+    "width": 480,
+    "frames": 76,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "encrypted"
+      },
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "version": "146.0.1"
+  },
+  {
+    "engine": "firefox",
+    "file": "clear.mp4",
+    "mode": "direct",
+    "time": 2.898459,
+    "width": 480,
+    "frames": 70,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "clear.mp4",
+    "mode": "mse",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "clear-fragmented.mp4",
+    "mode": "direct",
+    "time": 2.971056,
+    "width": 480,
+    "frames": 72,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "clear-fragmented.mp4",
+    "mode": "mse",
+    "time": 2.975415,
+    "width": 480,
+    "frames": 72,
+    "events": [
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "ffmpeg-cenc.mp4",
+    "mode": "direct",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata",
+        "error": "Encrypted content not supported outside of MSE",
+        "code": 3
+      },
+      {
+        "e": "error",
+        "error": "Encrypted content not supported outside of MSE",
+        "code": 3
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "ffmpeg-cenc.mp4",
+    "mode": "mse",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata"
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "shaka-cenc.mp4",
+    "mode": "direct",
+    "time": 0,
+    "width": 480,
+    "frames": 0,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata",
+        "error": "Encrypted content not supported outside of MSE",
+        "code": 3
+      },
+      {
+        "e": "error",
+        "error": "Encrypted content not supported outside of MSE",
+        "code": 3
+      }
+    ]
+  },
+  {
+    "engine": "firefox",
+    "file": "shaka-cenc.mp4",
+    "mode": "mse",
+    "time": 2.981471,
+    "width": 480,
+    "frames": 72,
+    "events": [
+      {
+        "keyStatus": [
+          "usable"
+        ]
+      },
+      {
+        "e": "loadedmetadata"
+      },
+      {
+        "e": "encrypted"
+      },
+      {
+        "e": "loadeddata"
+      },
+      {
+        "e": "playing"
+      }
+    ]
+  }
+]
