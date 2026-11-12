@@ -1,6 +1,6 @@
 # CENC 串流驗收矩陣
 
-最後修訂：2026-11-13。所有結果必須區分「已執行的合成片」、「可接取的真實片源」與「裝置解碼能力」。**請勿將 CI 成功推論為真實 HEVC、Android Firefox 或 ByteVC2 解碼已驗證。**
+最後修訂：2026-11-13（已納入 1800 秒 PASS）。所有結果必須區分「已執行的合成片」、「可接取的真實片源」與「裝置解碼能力」。**請勿將 CI 成功推論為真實 HEVC、Android Firefox 或 ByteVC2 解碼已驗證。**
 
 | 情境 | 受測環境／素材 | 結論 | 可重現證據／限制 |
 | --- | --- | --- | --- |
@@ -11,7 +11,8 @@
 | Unbuffered seek 到 55 秒：重建 Worker/MSE 與新 Range、畫面恢復 | Chromium / Firefox；合成 70 秒 H.264/AAC | **PASS / PASS** | [Browser #43266588689](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266588689)，各瀏覽器均有具體 PASS 行 |
 | 55 秒後 reload，保留進度、重開就近 RAP 串流 | Chromium / Firefox；合成 70 秒 H.264/AAC | **PASS / PASS** | [Browser #43266588689](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266588689)，`resumedRangeCount=7` / `6` |
 | 10% / 50% / 90% 往返 unbuffered Seek，以及 90% reload | Chromium / Firefox；合成 70 秒 H.264/AAC | **PASS / PASS** | [Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)：7→63→35→5→63 秒均跳出前一個 buffer，最後 reload 90% PASS |
-| 完整播放 300 秒、MSE buffered 秒數是否有界 | Chromium；合成 300 秒 H.264/AAC | **PASS（Chromium）** | [Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)：播至 300.021s、MSE 最大 buffered 78.021s、ahead 41.395s、32 Range；尚未量測 OS/GPU RSS |
+| 完整播放 300 秒、MSE buffered 秒數是否有界 | Chromium；合成 300 秒 H.264/AAC | **PASS（Chromium）** | [Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)：播至 300.021s、MSE 最大 buffered 72.00s、ahead 41.13s、32 Range；process-tree RSS 751.7→peak/last 773.8 MiB（非 GPU RAM） |
+| 完整播放 1800 秒、EOF 前首影格、有界 MSE 緩衝與 RSS 趨勢 | Linux Chromium；合成 480×270 6fps H.264/AAC CENC，16× 播放 | **PASS（Chromium）** | [Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)：1800.021s ended=true / error=null；max buffered span 72s、ahead 43.56s、104 Range；首影格取得來源約 6.6%；test harness+browser process-tree RSS first/peak/last 802.5/838.8/838.2 MiB，不能推論 GPU 或 Android RAM |
 | 範圍回應 403/416/429、超長/過短、退出取消、錯誤恢復 | Node 單元測試 | **PASS（前述 Range 測試版）** | [CI #43266444859](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266444859)；更多 metadata abort 測試仍待驗收 |
 | JS/WASM manifest pin SHA-256 與 Pages 部署 | 主分支 | **PASS（目前已發布版本）** | [WASM #43245818741](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43245818741)、[Pages #43266778629](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778629) |
 | 合成 1920×1080 HEVC/AAC encrypted → clear fMP4 + FFmpeg 解碼 | Ubuntu WASM proof；synthetic 4s | **PASS** | [WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)，HEVC、AAC、1920×1080 保留，首 fragment 前未讀到來源 EOF；非真實影片/瀏覽器 HEVC 驗證 |
@@ -28,7 +29,7 @@
 - 發布來源及二進位一致性：`node scripts/cenc-wasm-bundle.mjs verify`。
 - CENC 分段/Range/取消/eviction：`node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/http-range.test.mjs tests/mse-eviction.test.mjs tests/cenc-seek.test.mjs`。
 - HEVC/AAC 合成 WASM 解密轉封裝與 Seek：`scripts/build-cenc-stream-wasm.sh`、`scripts/verify-cenc-stream-wasm.mjs`，依 `.github/workflows/cenc-wasm-stream.yml` 產生 synthetic 影片、ffprobe 檢查 PTS。
-- Chromium/Firefox 合成 MSE 實際呈現影格、Seek、reload，以及 Chromium 300 秒長片：依 `.github/workflows/cenc-browser.yml` 執行 Playwright。
+- Chromium/Firefox 合成 MSE 實際呈現影格、Seek、reload，以及 Chromium 300／1800 秒長片：依 `.github/workflows/cenc-browser.yml` 執行 Playwright。
 - 真實影片存取：`node scripts/live-cenc-layout.mjs` 或手動啟動 `.github/workflows/live-cenc-layout.yml`，限制在兩個候選 CDN、六個 Range、約 3 MiB 名目量；403/429 停止，不儲存 signed URL、cookie、CENC key。
 
 ## 直接 main 提交與發布
