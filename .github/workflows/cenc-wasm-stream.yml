@@ -7,6 +7,11 @@ on:
       - 'scripts/cenc-stream-remux.c'
       - 'scripts/build-cenc-stream-wasm.sh'
       - 'scripts/verify-cenc-stream-wasm.mjs'
+      - 'src/cenc-remux.js'
+      - 'src/cenc-remux-worker.js'
+      - 'src/fmp4-assembler.js'
+      - 'src/clear-key.js'
+      - 'tests/fmp4-assembler.test.mjs'
   workflow_dispatch:
 permissions:
   contents: write
