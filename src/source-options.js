@@ -57,3 +57,48 @@ export function renditionForAttempt(variants, preferences = {}, attempt = 0) {
 export function chooseRendition(variants, preferences = {}) {
   return renditionForAttempt(variants, preferences);
 }
+
+// A quality tier does not imply a codec. For example Nova episode 30 has
+// encrypted HEVC at 1080p, but encrypted ByteVC2/VVC at 720p and below.
+export function codecsAtQuality(variants, quality = 'auto') {
+  return availableRenditions((variants || []).filter(v =>
+    quality === 'auto' || qualityId(v) === quality)).codecs;
+}
+
+export function browserCanPlayVariant(variant, canPlayType) {
+  const codec = codecId(variant?.codec);
+  if (codec === 'bytevc2' && variant?.contentKey) return false;
+  if (!codec) return !variant?.contentKey;
+  const codecs = {
+    h264: 'video/mp4; codecs="avc1.42E01E"',
+    hevc: 'video/mp4; codecs="hvc1"',
+    bytevc2: 'video/mp4; codecs="vvc1"'
+  };
+  return Boolean(canPlayType?.(codecs[codec]));
+}
+
+// Return exactly the selected tier if playable; allow a clearly announced
+// substitute only when the user has chosen automatic codec selection.
+// Explicit codec selection never silently changes to another codec.
+export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0) {
+  const requestedQuality = preferences.quality || 'auto';
+  const requestedCodec = preferences.codec || 'auto';
+  const playable = source => browserCanPlayVariant(source, canPlayType);
+  const exact = candidateRenditions(variants, { quality: requestedQuality, codec: requestedCodec })
+    .filter(playable);
+  if (exact.length) return { source: exact[Math.max(0, attempt) % exact.length], fallback: false };
+  if (requestedQuality === 'auto' || requestedCodec !== 'auto')
+    return { source: null, fallback: false };
+  const requestedHeight = parseInt(requestedQuality, 10);
+  const alternatives = candidateRenditions(variants, { quality: 'auto', codec: 'auto' })
+    .filter(playable)
+    .sort((a, b) => {
+      const aHeight = parseInt(qualityId(a), 10) || 9999;
+      const bHeight = parseInt(qualityId(b), 10) || 9999;
+      const delta = Math.abs(aHeight - requestedHeight) - Math.abs(bHeight - requestedHeight);
+      return delta || bHeight - aHeight;
+    });
+  return alternatives.length
+    ? { source: alternatives[Math.max(0, attempt) % alternatives.length], fallback: true }
+    : { source: null, fallback: false };
+}

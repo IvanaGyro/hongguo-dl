@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { idsFromUrl, urlForSeriesIds } from '../src/deep-link.js';
 import { episodeFileName, collectionFileName, originalExtension, filenameExtension, episodeDisplayTitle } from '../src/naming.js';
-import { availableRenditions, chooseRendition, qualityId, renditionForAttempt } from '../src/source-options.js';
+import { availableRenditions, chooseRendition, qualityId, renditionForAttempt, codecsAtQuality, browserCanPlayVariant, playbackRendition } from '../src/source-options.js';
 import { orderQueueSelection, exportQueue } from '../src/queue-export.js';
 import { rememberPlayback, playbackKey, watchRecords } from '../src/library.js';
 
@@ -131,4 +131,38 @@ test('history cannot lose saved position on transient media-time-zero during rel
   assert.equal(watchRecords(store)[playbackKey('42', '101')].seconds, 87);
   rememberPlayback(store, '42', '101', 100, 100, true);
   assert.equal(watchRecords(store)[playbackKey('42', '101')].completed, true);
+});
+
+test('episode 30 720p is VVC, not HEVC; codec options follow exact quality', () => {
+  const variants = [
+    { codec: 'hevc', quality: '1080p', contentKey: 'encrypted' },
+    { codec: 'bytevc2', quality: '720p', contentKey: 'encrypted', width: 1280, height: 720 },
+    { codec: 'bytevc2', quality: '540p', contentKey: 'encrypted', width: 1024, height: 576 }
+  ];
+  assert.deepEqual(codecsAtQuality(variants, '720p'), ['bytevc2']);
+  assert.deepEqual(codecsAtQuality(variants, '1080p'), ['hevc']);
+  const allSupported = () => 'probably';
+  assert.equal(browserCanPlayVariant(variants[1], allSupported), false,
+    'Encrypted VVC cannot be decrypted/remuxed by the shipped FFmpeg.wasm');
+  const fallback = playbackRendition(variants, { quality: '720p', codec: 'auto' }, allSupported);
+  assert.equal(fallback.source, variants[0]);
+  assert.equal(fallback.fallback, true);
+  const noFallback = playbackRendition(variants,
+    { quality: '720p', codec: 'auto' }, () => '');
+  assert.equal(noFallback.source, null, 'No fake playable 720p should be reported');
+  assert.equal(playbackRendition(variants,
+    { quality: '720p', codec: 'bytevc2' }, allSupported).source, null,
+    'An explicit codec selection must not silently substitute HEVC');
+});
+
+test('playable rendition cycles same-quality CDNs without switching codecs', () => {
+  const mk = (suffix, codec, quality) =>
+    ({ url: 'https://cdn.example/' + suffix, codec, quality });
+  const variants = [mk('a', 'hevc', '1080p'), mk('b', 'hevc', '1080p'),
+    mk('c', 'bytevc2', '720p'), mk('d', 'h264', '720p')];
+  const canPlay = mime => mime.includes('avc1') ? 'probably' : '';
+  const pref = { quality: '720p', codec: 'auto' };
+  assert.equal(playbackRendition(variants, pref, canPlay, 0).source, variants[3]);
+  assert.equal(playbackRendition(variants, pref, canPlay, 2).source, variants[3]);
+  assert.deepEqual(codecsAtQuality(variants, '720p'), ['bytevc2', 'h264']);
 });
