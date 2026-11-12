@@ -121,8 +121,8 @@ jobs:
             sleep 1
           done
           if [ "$CENC_SUITE" = "fast" ]; then
-          CENC_BROWSER=chromium node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=chromium CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           else

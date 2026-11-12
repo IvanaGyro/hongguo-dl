@@ -227,6 +227,52 @@ try {
     assert(!mediaRequests.some(r => r.unbounded),
       'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
+    if (process.env.CENC_TEST_AUDIO === '1') {
+      // A decoded video frame does not prove an AAC track is audible.
+      // The synthetic fixture includes an original 440 Hz sine track.
+      // Capture real browser PCM via Web Audio (never a file, URL or key).
+      const audio = await page.locator('#player-video').evaluate(async video => {
+        if (!window.AudioContext) throw new Error('AudioContext unavailable');
+        const context = new AudioContext();
+        const source = context.createMediaElementSource(video);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        analyser.connect(context.destination);
+        try {
+          await Promise.race([
+            context.resume(),
+            new Promise((_, reject) => setTimeout(() =>
+              reject(new Error('AudioContext resume timed out')), 3000))
+          ]);
+          const pcm = new Float32Array(analyser.fftSize);
+          let peakRms = 0, nonSilentWindows = 0;
+          for (let i = 0; i < 25; i++) {
+            await new Promise(resolve => setTimeout(resolve, 80));
+            analyser.getFloatTimeDomainData(pcm);
+            let power = 0;
+            for (const sample of pcm) power += sample * sample;
+            const rms = Math.sqrt(power / pcm.length);
+            peakRms = Math.max(peakRms, rms);
+            if (rms > 0.005) nonSilentWindows++;
+          }
+          return {
+            contextState: context.state, peakRms,
+            nonSilentWindows, playbackSeconds: video.currentTime,
+            mediaError: video.error?.code || null
+          };
+        } finally {
+          await context.close();
+        }
+      });
+      assert.equal(audio.contextState, 'running',
+        'Browser AAC decode probe must use a running AudioContext');
+      assert.equal(audio.mediaError, null, 'Audio probe encountered a media decoder error');
+      assert(audio.peakRms > 0.01 && audio.nonSilentWindows >= 4,
+        'Browser MSE AAC yielded no decoded PCM: ' + JSON.stringify(audio));
+      console.log('PASS ' + browserName + ' CENC MSE AAC audible PCM proof',
+        JSON.stringify(audio));
+    }
     if (process.env.CENC_TEST_STRESS === '1') {
       const expectedSeconds = Number(process.env.CENC_STRESS_SECONDS || 300);
       assert([300, 1800].includes(expectedSeconds), 'Unexpected bounded stress duration');
