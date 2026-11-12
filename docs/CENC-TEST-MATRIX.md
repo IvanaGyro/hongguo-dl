@@ -45,6 +45,8 @@
 | CENC 真實 Browser MSE AAC 解碼 PCM（440Hz synthetic sine） | Chromium／Firefox headless Web Audio 25×80ms RMS；peak >0.01 且至少 4 窗 >0.005 | **PASS（Chromium startup）／PENDING（Firefox audio server 修正）** | [Browser #43299574104](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43299574104) Chromium peak RMS 0.0885/25 窗 PASS、Firefox AudioContext.resume() 因無 user gesture timeout；[main f1ce714](https://github.com/IvanaGyro/hongguo-dl/commit/f1ce714bdc9f726289e5345b7a86ab21d1358135) 改 trusted click，[Browser #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) fast FAIL：Chromium PCM PASS、Firefox trusted click 後 AudioContext 仍不 running；[main 0de621e](https://github.com/IvanaGyro/hongguo-dl/commit/0de621efa13ea2b6ac0e61cbe80986f39424b086) 新加 PulseAudio virtual sink，最新 Browser #43301335775 PENDING |
 | 多次 CENC RAP Seek／90% reload／三輪切換後，真實 AAC PCM 仍非靜音 | Chromium / Firefox；70s H264/AAC 合成，Web Audio RMS | **PENDING（階段 65）** | [main 23bef1e](https://github.com/IvanaGyro/hongguo-dl/commit/23bef1edd0c003fac3b2d0b5c834f4269ab445f5)，已新增 startup + post-seek PCM 同一測試函式；Firefox headless context 尚須修正、不能宣稱通過 |
 
+| CENC MOV subsample／corrupt-packet／partial-file 的 transition vs steady/PCM 歸因 | Chromium／Firefox；70s CENC H264/AAC 合成快速 Seek/3 cycles | **PENDING（階段 67）** | [main 93fdf6e](https://github.com/IvanaGyro/hongguo-dl/commit/93fdf6eae93450216b36db852b844a79b2cb151c)；僅 transition 分流，steady/PCM 階段任何 MOV error 應使 Browser E2E FAIL；需檢查 phase 計數 |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
