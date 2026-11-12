@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 62）
+# Hongguo DL — 目前狀態（2026-11-13，階段 63）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 63 Chromium／Firefox Web Audio AAC PCM 實測門檻**：[927dd13](https://github.com/IvanaGyro/hongguo-dl/commit/927dd132078dfcfdb976cb53095f8fdb2098d8c9)：`tests/cenc-stream.browser.mjs` 新增 opt-in `CENC_TEST_AUDIO=1`，在 15s 自產 440Hz AAC CENC via MSE 起播 >1.5s 後建立 `AudioContext → MediaElementAudioSource → AnalyserNode`，取 25×80ms time-domain PCM RMS；要求 `context.state=running`、無 media error、peakRMS>0.01、至少 4 窗 >0.005。Browser fast Chromium/Firefox 第一項都開啟此測試；**新 Browser fast 結論 PENDING**。不假設有影像就一定有 AAC。新測試針對**初次起播**，仍不是 rapid Seek 中 AAC glitch 的結論。
 
 - **階段 62 pinned Worker-window cache parity 逐位元組 PASS**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) `completed/success`，job 131463360446 明確列 `PASS pinned Worker-window AVIO fMP4 exact output: 7, 35, 55, 63` 各一行，並在每次 `ffmpeg -xerror` 嚴格 H264/AAC 解碼後才比對輸出；此證據排除 **256 KiB cache 自身改變 clear fMP4 bytes** 的假說（上述四個獨立合成 Seek），但不排除 Chromium **快速取消/Worker 競態時**的 9 個 MOV demux 警訊。當版 [CI #43298585704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585704) 與 [Pages #43298585569](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585569) 亦 success。
 
@@ -42,7 +44,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：Browser fast+long 與 Worker-window pinned WASM 全部 PASS；剩 Chromium 9 個快速 Seek MOV/AAC 日誌警訊需區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：取得階段 63 新 Web Audio PCM browser fast 的真正結果；若 AudioContext/PCM FAIL，讀具體 log 確認 browser policy／錯誤來源，不放寬成只檢查播放時間。已驗證 fast+long 與 Worker-window WASM 全 PASS，剩 Chromium 9 個快速 Seek MOV/AAC 日誌警訊需再區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 

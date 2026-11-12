@@ -589,3 +589,11 @@
 - **同版 CI**：[CI #43298585704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585704)／[Pages #43298585569](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585569) `completed/success`，證明新增 WASM 驗證程式亦通過主測試與建置。
 - **可收斂／未解**：四次獨立 seek 沒有因 256 KiB AVIO window 而改變解密後 sample/MP4 bytes；Chromium 快速 Seek 時 9 個 libavformat MOV stderr 仍可能屬中途取消，或另有時間敏感問題，**此 parity 不證明音訊完全無 glitch**。已知完整 CENC Browser fast/long [#43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) 兩組 success。
 - **剩餘需要外部／更深測試的工程**：若要宣稱真實 HEVC/Android/Windows 完全可播，仍需合法 HTTP 206 來源、HEVC MSE 解碼設備；ByteVC2 需真實合法 bitstream；合成 Chromium AAC 快速取消訊息若要徹底排除可聽影響，需音訊樣本層級或真正播放裝置證據。
+
+
+## 階段 63 — 2026-11-13 CENC 瀏覽器實際解碼 AAC PCM 音量（Web Audio）新增可驗證正例
+
+- **缺口**：既有 H264/AAC CENC 合成 Browser E2E 用 first video frame、`video.videoWidth`、`currentTime`、MSE append 與 MediaError 判斷播放成功；即使 AAC 完全靜音，也可能通過。Chromium 快速 Seek 期間曾有 9 個 MOV demux stderr（Firefox 0），因此新增直接觀測經瀏覽器解碼之 PCM，而非只靠 FFprobe 的伺服端解碼結果。
+- **已直接提交 main**：[927dd132078dfcfdb976cb53095f8fdb2098d8c9](https://github.com/IvanaGyro/hongguo-dl/commit/927dd132078dfcfdb976cb53095f8fdb2098d8c9)，改 `tests/cenc-stream.browser.mjs` 與 `.github/workflows/cenc-browser.yml`。Chromium、Firefox 的 Browser fast 第一個 15s 自產 CENC/H264/AAC（AAC 440Hz sine）完成 first-frame >1.5s 後，以 `AudioContext.createMediaElementSource(video)`、`AnalyserNode.getFloatTimeDomainData` 從瀏覽器實際 PCM 觀察 25 個 80ms 視窗，要求 context.state 為 running、video error 為 null、peakRms >0.01、至少 4 個 windows RMS >0.005。為避免永久等待，context.resume 最多 3s；finally 關閉 context。只輸出聚合 RMS／視窗數，不傳 signed URL、金鑰或錄音原始資料。
+- **驗收狀態 PENDING**：新 WebAudio 正例尚未得到對應 CI Browser fast run 的 completed/success，且 Browser 自動播放/AudioContext 政策可能造成 headless probe 失敗，不能提前宣稱 AAC 已有聲。原前版 [Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) fast+long PASS，但沒有 PCM 音訊正例；[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) direct/window byte-equality + AAC FFmpeg -xerror PASS，亦非 browser audio proof。
+- **下一步**：新 fast fail 只讀確切失敗 job/步驟並修正，不跳過 PCM 正例或用 muted video 冒充音訊；起播 AAC 正例通過後，進一步考慮在遠距 Seek 後測音訊信號，但要避免 Web Audio 節點在 `video.load()` 時對測試引入額外行為。
