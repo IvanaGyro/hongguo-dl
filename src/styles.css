@@ -90,3 +90,67 @@ footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
 .player-controls select { border: 1px solid #44536e; background: #111b2d; color: #eaf0ff; padding: .6rem; border-radius: 8px; }
 .player-controls button:disabled { opacity: .38; }
 [hidden] { display: none !important; }
+
+
+/* v2: let the progress, storage state and media affordances carry the UI. */
+.hero { padding: 2rem 0 1.2rem; }
+.hero h1 { font-size: clamp(1.7rem, 3.7vw, 2.7rem); }
+.hero p { color: #a9b8d0; }
+.linked-series:not([hidden]) { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
+.linked-series button { border-color: #5479aa; }
+.episode-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); max-height: 460px; gap: .62rem; }
+.episode { position: relative; min-height: 62px; padding-bottom: 1rem; overflow: hidden; transition: border-color .12s, background .12s; }
+.episode.play-episode { flex-direction: column; justify-content: center; align-items: flex-start; gap: .25rem; padding: .75rem .7rem 1.05rem; }
+.episode.play-episode:focus-visible { outline: 2px solid #bdd6ff; }
+.episode.play-episode.watched { background: #1c3a36; }
+.episode.play-episode.current { background: #244879; box-shadow: 0 0 0 1px #a1c9ff inset; }
+.episode .watch-track { position: absolute; height: 5px; background: #344861; bottom: 0; left: 0; width: 100%; overflow: hidden; }
+.episode .watch-track > span { display: block; height: 100%; background: linear-gradient(90deg, #68c2d6, #91b8ff); border-radius: 0 3px 3px 0; }
+.episode.watched .watch-track > span { background: #70d6a6; }
+.episode small { font-size: .73rem; }
+.episode .watched-check { position: absolute; top: 6px; right: 9px; color: #82e8ad; font-size: .9rem; }
+.recent-library h3 { font-size: .78rem; font-weight: 750; text-transform: uppercase; color: #a6bad6; }
+.recent-list button { border-radius: 999px; padding: .4rem .7rem; font-size: .83rem; }
+.batch-tools { display: none; }
+.browser-note { font-size: .84rem; color: #a9bdd7; margin-top: .8rem; display: flex; align-items: center; gap: .65rem; }
+.storage-indicator { color: #7bc8a9; }
+.queue-export { border-top: 1px solid #34435b; margin-top: 1rem; padding-top: 1rem; display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: space-between; }
+.queue-export > div:first-child { display: flex; flex-direction: column; gap: .2rem; }
+.queue-export strong { font-size: .95rem; }
+.export-hint { color: #93a7c4; font-size: .75rem; }
+.export-status { flex-basis: 100%; color: #a2caff; font-size: .85rem; min-height: 1.1em; }
+.job { padding: .85rem 1rem; transition: border-color .1s; }
+.job.selected { border-color: #89aff4; }
+.job-layout { display: flex; gap: .85rem; align-items: flex-start; }
+.job-select { width: 20px; height: 20px; flex: none; accent-color: #9abfff; margin-top: .2rem; cursor: pointer; }
+.job-body { flex: 1; min-width: 0; }
+.job-topline { display: flex; gap: 1rem; align-items: start; justify-content: space-between; flex-wrap: wrap; }
+.job-filename { color: #90a8ca; font-size: .76rem; overflow-wrap: anywhere; margin-top: .2rem; }
+.job-controls { flex-wrap: wrap; justify-content: flex-end; }
+.job-controls button { font-size: .83rem; }
+.job-controls button.save-one { border-color: #6b9de1; color: #d8eaff; }
+.job .progress-track { margin-top: .7rem; }
+.player-stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; isolation: isolate; }
+#player-video { border-radius: 0; }
+.player-overlay-top { position: absolute; left: .6rem; top: .6rem; right: .6rem; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; pointer-events: none; }
+.player-overlay-top button { pointer-events: auto; border-color: #ffffff40; background: #0a1729df; color: #fff; padding: .4rem .65rem; border-radius: 9px; font-weight: 700; }
+.player-nav { display: flex; gap: .3rem; }
+.player-settings-button { min-width: 42px; min-height: 40px; font-size: 1.35rem !important; line-height: 1; }
+.player-settings-menu { position: absolute; z-index: 4; right: .7rem; top: 3.45rem; width: min(290px, calc(100% - 1.4rem)); max-height: min(75vh, 480px); overflow: auto; padding: 1rem; background: #121e33f5; border: 1px solid #6587ba; box-shadow: 0 8px 32px #000b; border-radius: 12px; display: flex; flex-direction: column; gap: .7rem; }
+.player-settings-title { font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+.player-settings-title button { background: transparent; border: 0; color: #fff; padding: .2rem .5rem; font-size: 1rem; }
+.player-settings-menu label { display: flex; flex-direction: column; gap: .35rem; font-size: .83rem; color: #b5c8e8; }
+.player-settings-menu select { width: 100%; border: 1px solid #516e95; background: #1b2a44; color: white; padding: .53rem; border-radius: 8px; }
+.player-settings-menu label.player-toggle { flex-direction: row; align-items: center; gap: .65rem; color: #e4efff; }
+.player-settings-menu .player-toggle input { accent-color: #8fb7ff; height: 18px; width: 18px; }
+.player-source-info { border-top: 1px solid #354960; padding-top: .6rem; color: #86accb; font-size: .76rem; line-height: 1.45; }
+#player-panel .help { margin-top: .45rem; }
+@media (max-width: 550px) {
+  .hero { padding-top: 1.2rem; }
+  .episode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .player-nav button { min-width: 42px; min-height: 40px; }
+  .job-topline { flex-direction: column; gap: .5rem; }
+  .job-controls { justify-content: flex-start; }
+  .queue-export > .actions { width: 100%; }
+  .queue-export > .actions > button { flex: 1; }
+}
