@@ -19,7 +19,8 @@ const page = await context.newPage();
 const mediaRequests = [], pageErrors = [];
 const emeDiagnostics = [];
 page.on('console', message => {
-  if (message.text().startsWith('[Hongguo EME]'))
+  if (message.text().startsWith('[Hongguo EME]') ||
+      message.text().startsWith('[Hongguo MSE]'))
     emeDiagnostics.push(message.text());
 });
 page.on('pageerror', error => pageErrors.push(error.message));
