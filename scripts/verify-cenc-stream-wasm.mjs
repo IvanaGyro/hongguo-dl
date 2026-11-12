@@ -34,7 +34,10 @@ assert.equal(core._cenc_remux_available(), 1, 'MOV demuxer or MP4 muxer missing'
 const result = await core.ccall('cenc_stream_remux', 'number',
   ['number', 'string'], [encrypted.byteLength, key], { async: true });
 const error = core.UTF8ToString(core._cenc_remux_error());
-assert.equal(result, 0, 'CENC streaming failed: ' + error);
+assert.equal(result, 0, 'CENC streaming failed: ' + error + ' ' + JSON.stringify({
+  bridgeError: core.bridgeError, readCalls: calls, readMaxOffset: highestRequested,
+  outputLength, firstMoofAt, total: encrypted.byteLength
+}));
 const output = Buffer.concat(chunks.map(c => Buffer.from(c)));
 assert(firstMoofAt != null, 'no output fragment observed');
 assert(firstMoofAt < encrypted.byteLength,
