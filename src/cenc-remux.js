@@ -117,6 +117,12 @@ export async function openCencProgressiveStream({
 
   const ms = new MediaSource();
   const objectUrl = URL.createObjectURL(ms);
+  let objectUrlRevoked = false;
+  const revokeObjectUrl = () => {
+    if (objectUrlRevoked) return;
+    objectUrlRevoked = true;
+    URL.revokeObjectURL(objectUrl);
+  };
   let worker;
   try {
     worker = new Worker(new URL('./cenc-remux-worker.js', import.meta.url), {
@@ -124,7 +130,7 @@ export async function openCencProgressiveStream({
     });
   } catch {
     // No stream object was returned, so no caller can close this URL for us.
-    URL.revokeObjectURL(objectUrl);
+    revokeObjectUrl();
     throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
   }
   const internal = new AbortController();
@@ -152,6 +158,9 @@ export async function openCencProgressiveStream({
     if (ms.readyState === 'open') endWithError();
     else if (ms.readyState === 'closed')
       ms.addEventListener('sourceopen', endWithError, { once: true });
+    // The caller may never reach a normal teardown after a Worker crash.
+    // Revocation is idempotent with close() and never logs the media URL.
+    revokeObjectUrl();
   };
   const close = async () => {
     if (closed) return;
@@ -160,7 +169,7 @@ export async function openCencProgressiveStream({
     signal?.removeEventListener('abort', onAbort);
     try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
     worker.terminate();
-    URL.revokeObjectURL(objectUrl);
+    revokeObjectUrl();
   };
   const onAbort = () => { void close(); };
   signal?.addEventListener('abort', onAbort, { once: true });
