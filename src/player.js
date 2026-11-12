@@ -12,6 +12,7 @@ import { availableRenditions, codecsAtQuality, playbackRendition, codecId, quali
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
+import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -41,6 +42,7 @@ export function createPlayer({
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
+  let restartingRemoteSeek = false;
   let canTranscodeBvc2 = false;
   // All measurements refer to the same selected-episode click, not the start
   // of an individual fetch or decoder stage. Never log signed URLs or keys.
@@ -111,6 +113,11 @@ export function createPlayer({
     rememberPlayback(storage, series?.seriesId, current.vid,
       video.currentTime, video.duration, completed);
     onProgress?.();
+  }
+  function savedResumeSeconds(episode, seriesId = getSeries()?.seriesId) {
+    const record = watchRecords(storage)[playbackKey(seriesId, episode.vid)];
+    return !record?.completed && Number.isFinite(record?.seconds) &&
+      record.seconds > 0.5 ? record.seconds : 0;
   }
   function disposeNativeKeys() {
     const stream = nativeStream;
@@ -297,7 +304,8 @@ export function createPlayer({
       await keyCleanup;
       const native = await openClearKeyStream({
         video, source, codec: codecId(source.codec),
-        workerOrigin: getWorkerOrigin(), signal
+        workerOrigin: getWorkerOrigin(), signal,
+        startSeconds: savedResumeSeconds(episode, seriesId)
       });
       if (native) return {
         url: native.url, native, source, fallbackNotice, variants: null
@@ -366,7 +374,8 @@ export function createPlayer({
       await keyCleanup;
       const native = await openClearKeyStream({
         video, source: resolved.source, codec: codecId(resolved.source.codec),
-        workerOrigin: getWorkerOrigin(), signal
+        workerOrigin: getWorkerOrigin(), signal,
+        startSeconds: savedResumeSeconds(episode)
       });
       resolved = native ? { ...resolved, native, url: native.url, nativePending: false }
         : await sourceForEpisode(episode, signal, attempt,
@@ -423,8 +432,7 @@ export function createPlayer({
     await waitMetadata(signal);
     markStartupStage('loadedmetadata');
     if (signal.aborted || currentToken !== token) return;
-    const old = watchRecords(storage)[playbackKey(getSeries()?.seriesId, episode.vid)];
-    const wanted = !old?.completed && old?.seconds > 0.5 ? old.seconds : 0;
+    const wanted = savedResumeSeconds(episode);
     await restoreTime(wanted, signal);
     if (signal.aborted || currentToken !== token) return;
     restoredTime = wanted;
@@ -548,6 +556,60 @@ export function createPlayer({
   });
   video.addEventListener('pause', () => {
     if (readyForHistory && !video.ended) savePosition();
+  });
+  // A native fMP4 SourceBuffer cannot fetch a missing target timestamp by
+  // assigning currentTime alone. Rebuild the remux at the preceding indexed
+  // RAP, then restore the same global timeline after MSE becomes ready.
+  video.addEventListener('seeking', () => {
+    if (!current || loading || restartingRemoteSeek || !readyForHistory ||
+        !nativeStream?.seekTo || !controller || controller.signal.aborted) return;
+    const target = clampStreamSeek(video.currentTime,
+      nativeStream.durationSeconds || video.duration);
+    if (target === null || timeIsBuffered(video.buffered, target)) return;
+    const seekToken = token, signal = controller.signal, oldStream = nativeStream;
+    const wasPlaying = !video.paused;
+    restartingRemoteSeek = true;
+    readyForHistory = false; // Never overwrite saved position with temporary t=0.
+    loading = true;
+    setStatus('跳轉到 ' + Math.round(target) + ' 秒…');
+    void (async () => {
+      try {
+        const nextStream = await oldStream.seekTo(target);
+        if (signal.aborted || seekToken !== token) {
+          await nextStream.close();
+          return;
+        }
+        nativeStream = nextStream;
+        video.src = nextStream.url;
+        video.load();
+        await waitMetadata(signal);
+        if (signal.aborted || seekToken !== token) return;
+        await restoreTime(target, signal);
+        if (signal.aborted || seekToken !== token) return;
+        restoredTime = target;
+        readyForHistory = true;
+        loading = false;
+        savePosition();
+        setStatus('已跳轉到 ' + Math.round(target) + ' 秒');
+        if (wasPlaying) {
+          try { await video.play(); }
+          catch (error) {
+            if (error.name === 'NotAllowedError')
+              setStatus('點選影片即可繼續播放');
+            else throw error;
+          }
+        }
+      } catch (error) {
+        if (!signal.aborted && seekToken === token) {
+          loading = false;
+          // Avoid logging a signed media URL, CENC key or source payload.
+          setStatus('跳轉失敗：請重新選取本集（' +
+            (error?.name === 'NotAllowedError' ? '自動播放受限' : '串流未就緒') + '）');
+        }
+      } finally {
+        restartingRemoteSeek = false;
+      }
+    })();
   });
   video.addEventListener('seeked', () => {
     if (readyForHistory) savePosition();
