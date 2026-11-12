@@ -42,6 +42,7 @@ export function createPlayer({
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
+  let retryIncrementalCenc = false;
   let restartingRemoteSeek = false;
   let canTranscodeBvc2 = false;
   // All measurements refer to the same selected-episode click, not the start
@@ -196,6 +197,54 @@ export function createPlayer({
     });
     if (!signal.aborted) trySeek();
   }
+  // MSE reports loadedmetadata before its first media fragment arrives.
+  // Keep the resume handshake in 'loading' state until the requested instant
+  // is actually decoded/buffered. Otherwise a delayed seeking event can
+  // accidentally start a second Worker and discard the first one.
+  async function waitForCencResume(seconds, signal, stream) {
+    if (stream?.kind !== 'cenc-remux' || seconds <= 0.5) return;
+    const target = clampStreamSeek(seconds, stream.durationSeconds || video.duration);
+    if (target === null) return;
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const events = ['progress', 'loadeddata', 'canplay', 'seeked',
+        'timeupdate', 'durationchange', 'playing'];
+      const cleanup = () => {
+        clearTimeout(timeout);
+        for (const event of events) video.removeEventListener(event, check);
+        video.removeEventListener('error', failed);
+        signal.removeEventListener('abort', canceled);
+      };
+      const finish = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+      const canceled = () => finish(errorWith('CANCELED', '已切換影片'));
+      const failed = () => finish(errorWith('PLAYBACK_ERROR', 'CENC 續播解碼失敗'));
+      const check = () => {
+        if (signal.aborted) return canceled();
+        if (video.error) return failed();
+        if (!timeIsBuffered(video.buffered, target, 0.15)) return;
+        // Some browsers keep currentTime at zero during MSE startup even
+        // after we first assigned the target in restoreTime().
+        if (Math.abs(video.currentTime - target) > 0.6) {
+          try { video.currentTime = target; } catch { /* retry on canplay */ }
+        }
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+            Math.abs(video.currentTime - target) <= 0.6) finish();
+      };
+      const timeout = setTimeout(() =>
+        finish(errorWith('PLAYBACK_TIMEOUT', 'CENC 續播片段未在時限內準備完成')),
+      SESSION_TIMEOUT);
+      for (const event of events) video.addEventListener(event, check);
+      video.addEventListener('error', failed, { once: true });
+      signal.addEventListener('abort', canceled, { once: true });
+      check();
+    });
+  }
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
     const quality = options.quality ?? qualitySelect.value;
@@ -300,16 +349,20 @@ export function createPlayer({
     // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
     // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
     // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
-    if (!quiet && attempt === 0 && source.contentKey && !isHlsUrl(source.url)) {
+    if (!quiet && (attempt === 0 || retryIncrementalCenc) &&
+        source.contentKey && !isHlsUrl(source.url)) {
       await keyCleanup;
       const native = await openClearKeyStream({
         video, source, codec: codecId(source.codec),
         workerOrigin: getWorkerOrigin(), signal,
         startSeconds: savedResumeSeconds(episode, seriesId)
       });
-      if (native) return {
-        url: native.url, native, source, fallbackNotice, variants: null
-      };
+      if (native) {
+        if (native.kind === 'cenc-remux') retryIncrementalCenc = true;
+        return { url: native.url, native, source, fallbackNotice, variants: null };
+      }
+      if (retryIncrementalCenc)
+        throw errorWith('CENC_UNAVAILABLE', '增量串流重試失敗，已禁止整檔備援下載');
     }
     let bytes;
     if (isHlsUrl(source.url)) {
@@ -434,6 +487,7 @@ export function createPlayer({
     if (signal.aborted || currentToken !== token) return;
     const wanted = savedResumeSeconds(episode);
     await restoreTime(wanted, signal);
+    await waitForCencResume(wanted, signal, resolved.native);
     if (signal.aborted || currentToken !== token) return;
     restoredTime = wanted;
     readyForHistory = true;
@@ -524,6 +578,7 @@ export function createPlayer({
     current = episode;
     failure = null;
     sourceAttempt = 0;
+    retryIncrementalCenc = false;
     if (lastVariantsVid !== episode.vid) {
       lastVariants = null;
       lastVariantsVid = null;
