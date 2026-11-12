@@ -389,3 +389,13 @@
 - **PENDING（部署）**：[Pages #43289089908](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289089908) 查詢時仍為 `in_progress`，不宣稱 deployed/success；後續文件提交可能取消舊 Pages workflow，應以後續最新 HEAD 的部署狀態為準，不輪詢。
 - **NOT TESTED**：本階段沒有新增 Chromium/Firefox 合成 browser E2E、真實紅果 HEVC/Android、ByteVC2 真實 bitstream 的驗收；原有 synthetic PASS 不得外推。
 - **下一個具體工程動作**：檢查最近 `6657a88` 至 `1c8d426` 的 HEVC codec/MSE 判斷與 `src/player.js` 進入 MSE 前的 codec guard 是否不一致；補精確單元測試和必要修正，提交 main 後繼續更新 checkpoint。
+
+
+## 階段 40 — 2026-11-13 HEVC 精確 MSE 支援被來源篩選提前否決，修正並新增 3 個回歸測試
+
+- **目標／根因**：近期 `openClearKeyStream()`／`openCencProgressiveStream()` 已由有界 moov hvcC 得到 HEVC 完整 MIME，並以 `MediaSource.isTypeSupported()` 判斷。但 `src/source-options.js` 的 `browserCanPlayVariant()` 先用 `video.canPlayType('video/mp4; codecs="hvc1"')` 排除整個來源，故某些只支援完整 MSE HEVC profile 的瀏覽器甚至不會進入有界 metadata 探測。
+- **已直接提交 main**：[08258a8](https://github.com/IvanaGyro/hongguo-dl/commit/08258a841183b67311c53672a37ac3315cfe960d)（原 parent `c5382eb`，使用 Git tree + non-force expected-parent CAS）。修改 `src/source-options.js`、`src/player.js`、新增 `tests/hevc-rendition.test.mjs`。以已知 HEVC Main/Main10 完整 MSE MIME 作**暫定**正例，保留後續有界 hvcC + 實際 SourceBuffer MIME 的最終驗證；不拿 MSE 成功宣稱硬體解碼。明確要求有加密來源才可依賴 MSE remux，未加密 MP4 不因只有 MSE 宣告而誤選。已成立的 CENC MSE stream 不再被泛用 hvc1 `canPlayType` 假警告標記。
+- **PASS（本地 targeted）**：以 Node.js 22 對純函式等價鏡像運行 `node --test tests/hevc-rendition.test.mjs`：3/3 PASS（精確 Main10 MSE 接受、無 MSE 支援拒絕、MSE-only 不推論未加密 progressive MP4）。此為獨立本地測試複本，非完整 GitHub checkout。
+- **PENDING（全套）**：新增 [CI #43289873073](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873073) 和 [Pages #43289873079](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873079) 查詢時 `in_progress`；[Browser #43289873014](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873014) 同為 `in_progress`，不可冒稱 PASS。完整 Bun 測試、Vite build、正式 browser proof 須以這些 runs 最終結論為準，不輪詢。
+- **NOT TESTED**：實際紅果 HEVC / Android / Windows 解碼、ByteVC2 正例仍無素材或實機；完整 MSE MIME 僅 capability declaration。
+- **下一個工程動作**：稽核 init fMP4 內 HEVC sample entry / hvcC 是否與 MSE SourceBuffer MIME 相符及 Seek 重建；針對具體解析或失敗清理缺口補單測，不改既有 C/Asyncify WASM binary；若有 CI FAIL 先讀具體 job 再修。
