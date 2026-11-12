@@ -23,6 +23,9 @@ on:
       - 'scripts/verify-cenc-stream-wasm.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
+concurrency:
+  group: cenc-wasm-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: write
   actions: write
