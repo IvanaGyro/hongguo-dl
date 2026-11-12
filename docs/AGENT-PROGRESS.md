@@ -315,3 +315,10 @@
 - **改動界線**：未變更已經 Chromium/Firefox synthetic PASS 的 AVIO Range、WASM remux、MSE fragment/seek 本體；防止只有同步啟動錯誤時由於 stream handle 還沒回傳而沒有可呼叫的 close。尚未加入故障注入單元測試；正常路徑待新 CI/browser regression 確認，**不冒稱已驗證例外路徑**。
 - 新 `CENC_TEST_PAUSE=1` 的 300 秒播放暫停/恢復 CI 仍需明確 PASS；先前 1800s PASS 是舊版、未涵蓋此情境。
 - 下一步：驗證 CENC 改動後 baseline + pause case，失敗即修；可再補 Worker 建構／postMessage 故障注入測試，或進一步驗證實機 HEVC（有合法 206 來源及適當裝置時）。直接 main、不開 PR；每一段更新本文件。
+
+## 階段 31 — 2026-11-13 補 CENC Worker 啟動例外的故障注入單元測試（待 CI）
+
+- [b226bc1](https://github.com/IvanaGyro/hongguo-dl/commit/b226bc196d10a850ab813d20c9f164726a25325a)：`src/cenc-remux.js` 的 WASM URL 使用 `import.meta.env?.BASE_URL || '/'`，使 Vite 以外的 Node 單元測試能注入 browser globals；Vite 編譯仍使用既定 BASE_URL。
+- [a4ac231](https://github.com/IvanaGyro/hongguo-dl/commit/a4ac2315bed9954305eee39c601c330aafa10294)：新增 `tests/cenc-startup.test.mjs`，不接觸影片內容，利用 fake MediaSource、Worker、URL.createObjectURL、HEAD response 測試：建 Worker 拋錯時立即 revoke URL、postMessage 同步拋錯時 revoke URL 並 terminate Worker，且傳出的錯誤不得包含底層私人細節。測試完成恢復全部 global mocks。
+- **驗收狀態：PENDING CI**，此 checkpoint 不等於實際 tests PASS；正常路徑的 browser regression（含新 paused backpressure）亦需新 run 明確成功。之前已確證的 1800s synthetic playback PASS 仍可使用，但不能取代新測試。
+- 後續：若 CI/Browser 失敗，檢查一次失敗 job/對應斷言修正；否則接續較長暫停、切集與真實 HEVC 驗收。使用者要求每段工作即記錄，故先寫入此 checkpoint 再繼續。
