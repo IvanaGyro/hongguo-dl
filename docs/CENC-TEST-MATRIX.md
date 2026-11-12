@@ -14,7 +14,7 @@
 | 完整播放 300 秒、MSE buffered 秒數是否有界 | Chromium；合成 300 秒 H.264/AAC | **PASS（Chromium）** | [Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)：播至 300.021s、MSE 最大 buffered 78.021s、ahead 41.395s、32 Range；尚未量測 OS/GPU RSS |
 | 範圍回應 403/416/429、超長/過短、退出取消、錯誤恢復 | Node 單元測試 | **PASS（前述 Range 測試版）** | [CI #43266444859](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266444859)；更多 metadata abort 測試仍待驗收 |
 | JS/WASM manifest pin SHA-256 與 Pages 部署 | 主分支 | **PASS（目前已發布版本）** | [WASM #43245818741](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43245818741)、[Pages #43266778629](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778629) |
-| 合成 1920×1080 HEVC/AAC encrypted → clear fMP4 + FFmpeg 解碼 | Ubuntu WASM proof；synthetic 4s | **待修正 CI** | [首次 #43278673487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43278673487) 僅因測試 key 誤填 17 bytes 而失敗；[修復 4099507](https://github.com/IvanaGyro/hongguo-dl/commit/40995072764b86f7a13d7304d462b60daa95b43f) 正等待新版 proof |
+| 合成 1920×1080 HEVC/AAC encrypted → clear fMP4 + FFmpeg 解碼 | Ubuntu WASM proof；synthetic 4s | **PASS** | [WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)，HEVC、AAC、1920×1080 保留，首 fragment 前未讀到來源 EOF；非真實影片/瀏覽器 HEVC 驗證 |
 | 真實 1080p HEVC CENC：EOF 前影格、音訊、播畢、seek | Windows HEVC/MSE 環境；具合法存取權的真實集數 | **NOT TESTED** | 先前兩組候選 CDN HTTP Range 回 403，[bounded probe #43237370059](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43237370059)。403 不是 HEVC 解碼失敗 |
 | 真實 HEVC CENC | Android Firefox / Pixel | **NOT TESTED** | 需要裝置端 MSE / HEVC 解碼能力和可回 206 來源 |
 | ByteVC2 真實影格解碼、音畫同步、轉碼效能 | 有效 ByteVC2 bitstream + 專用 decoder | **NOT TESTED** | 普通 VVC decoder 不能代替 ByteVC2 驗證 |
