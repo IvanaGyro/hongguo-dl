@@ -38,6 +38,9 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
+          # checkout's safe.directory lives in a temporary HOME; subsequent
+          # container steps use /github/home and cannot see that setting.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "Publishing from $(pwd), git directory:"
           ls -ld .git || true
           git status --short || true
