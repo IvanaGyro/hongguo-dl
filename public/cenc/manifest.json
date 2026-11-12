@@ -4,10 +4,10 @@
   "librempegCommit": "cb1f8f3eef84999e61b27e2d44664858179bc240",
   "files": {
     "cenc-core.mjs": "f848f82ef9feafdf53247d19e926cf98d8c5a3755d6ad172e19404e75b8137a7",
-    "cenc-core.wasm": "3d3ed74e65531ea3cc4ef0ec1aa5743c0f9bff002071888abe48c99bacfcdd42"
+    "cenc-core.wasm": "d68fc90ce93080b11852edb7c554596ece5d9547cbd6ee411f50f050aff601f4"
   },
   "inputs": {
-    "scripts/cenc-stream-remux.c": "e2ee28da9d9ac35c08c87588dfc2c1faad7eecae2bfac1335f5ef34855a17362",
-    "scripts/build-cenc-stream-wasm.sh": "9be3b5329a300b3b9d94c463df63236549ff7f46e85de632f8450846214df5a5"
+    "scripts/cenc-stream-remux.c": "633c916006c63039f92d2950ef2bb3e61dd049f7d47f2669f9fa282528b85ef5",
+    "scripts/build-cenc-stream-wasm.sh": "c430afd7af90db54ba5f768ad0e28ce18fef90c4ee63d0d55cddd98f24c8c5c0"
   }
 }
