@@ -113,6 +113,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$CENC_SUITE" = "fast" ]; then
+            # Firefox headless needs a real audio server even for Web Audio's
+            # in-browser PCM analyser. A null sink is deterministic on CI
+            # without relying on physical sound hardware.
+            sudo apt-get install -y pulseaudio pulseaudio-utils >/dev/null
+            pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+            pactl info >/dev/null
+            pactl load-module module-null-sink sink_name=cenc_ci_audio >/dev/null
+            pactl set-default-sink cenc_ci_audio
+            echo 'CENC browser PCM virtual audio sink ready'
+          fi
           VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
