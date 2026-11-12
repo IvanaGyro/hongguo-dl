@@ -138,6 +138,26 @@ export function clearKeyLicense(kid, key) {
   return JSON.stringify({ keys: [{ kty: 'oct', kid: base64Url(kid),
     k: base64Url(key) }], type: 'temporary' });
 }
+
+/**
+ * A single-KID version-1 Common PSSH box (ISO BMFF / EME 'cenc').
+ * A preloaded 'keyids' license alone is not necessarily associated with
+ * CENC MP4 playback by browser CDMs. The Common SystemID is standardized.
+ */
+export function commonCencPssh(kid) {
+  if (!(kid instanceof Uint8Array) || kid.length !== 16)
+    throw errorWith('INVALID_KEY', 'CENC KID 必須為 16 bytes');
+  const pssh = new Uint8Array(52);
+  const view = new DataView(pssh.buffer);
+  view.setUint32(0, pssh.length);
+  pssh.set([0x70, 0x73, 0x73, 0x68, 1, 0, 0, 0], 4); // 'pssh', version 1
+  pssh.set([0x10, 0x77, 0xef, 0xec, 0xc0, 0xb2, 0x4d, 0x02,
+    0xac, 0xe3, 0x3c, 0x1e, 0x52, 0xe2, 0xfb, 0x4b], 12);
+  view.setUint32(28, 1); // one key ID
+  pssh.set(kid, 32);
+  view.setUint32(48, 0); // no system-specific data
+  return pssh;
+}
 function hexKey(value) {
   if (!/^[a-f0-9]{32}$/i.test(value || ''))
     throw errorWith('INVALID_KEY', '影片金鑰必須為 128-bit 十六進位');
@@ -169,7 +189,7 @@ export async function openClearKeyStream({
   let access;
   try {
     access = await requestAccess(KEY_SYSTEM, [{
-      initDataTypes: ['keyids'],
+      initDataTypes: ['cenc', 'keyids'],
       videoCapabilities: [{ contentType: mime, encryptionScheme: 'cenc' }],
       persistentState: 'not-allowed', distinctiveIdentifier: 'not-allowed',
       sessionTypes: ['temporary']
@@ -206,8 +226,11 @@ export async function openClearKeyStream({
     });
     const timer = new Promise((_, reject) => setTimeout(
       () => reject(errorWith('CENC_UNAVAILABLE', '瀏覽器 Clear Key 初始化逾時')), 5000));
-    await session.generateRequest('keyids', new TextEncoder().encode(
-      JSON.stringify({ kids: [base64Url(kid)] })));
+    const acceptsCenc = access.getConfiguration?.().initDataTypes?.includes('cenc');
+    const initType = acceptsCenc ? 'cenc' : 'keyids';
+    const initData = acceptsCenc ? commonCencPssh(kid) : new TextEncoder().encode(
+      JSON.stringify({ kids: [base64Url(kid)] }));
+    await session.generateRequest(initType, initData);
     await Promise.race([listener, timer]);
     aborted(signal);
     return { url, close: async () => { await session.close().catch(() => {}); } };
