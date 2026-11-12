@@ -7,7 +7,10 @@ import { inspectMp4TrackFormats, movieDurationSeconds } from './mp4-track-format
 import { clampStreamSeek } from './cenc-seek.js';
 
 const HEADER_SIZE = 64 * 1024;
-const MAX_MOOV = 1024 * 1024;
+// Long progressive MP4 files can carry >1 MiB of indexed samples in moov
+// (especially per-frame AAC sample tables). Cap this at 8 MiB rather than
+// silently downgrading back to a full-episode fetch.
+const MAX_MOOV = 8 * 1024 * 1024;
 const MAX_RANGES = 4;
 const KEY_SYSTEM = 'org.w3.clearkey';
 
