@@ -232,3 +232,11 @@
 - 此成功已修復前一 run 的**測試夾具加密 key 寫成 17 bytes** 錯誤（[4099507](https://github.com/IvanaGyro/hongguo-dl/commit/40995072764b86f7a13d7304d462b60daa95b43f)），不是 HEVC 修補。
 - **嚴格的完成邊界**：**P1 合成 1080p HEVC 無損轉封裝已通過**，但真實紅果 HEVC HTTP 206、Windows 瀏覽器硬體 decoder、Android Firefox、真實音畫/EOF 前起播/完整播畢 **NOT TESTED**；不能把合成 FFmpeg 可解碼誤稱瀏覽器 HEVC 已驗證。
 - 下一步繼續：記錄於 CENC test matrix；BVC2 native+x264 false positive/zero-frame 測試仍待單次確認；加強真實設備驗收與產物一致性。
+
+## 階段 21 — 2026-11-13 BVC2 WASM ABI、真 H.264 負例及私密裝置 codec 診斷（持續實作中）
+
+- **BVC2 合成負例已驗收**：[BVC2 Librempeg feasibility #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447)，job `131396503668`，**completed/success**。Node/Emscripten 載入 decoder registered in WASM、x264 encoder link、invalid MP4 拒絕、真實 H.264 MP4 負例 `PASS BVC2 decoder rejects normal H.264 video`。已由 Actions 將更新後約 4.9 MiB `bvc2-core.wasm` 及配對 JS 直接推回 main，commit `8c5c6cb`（需再核對最新 HEAD 以確保不覆寫其他提交）。
+- **不可誤導**：上述 BVC2 **都是 decoder ABI / 負例，不是 ByteVC2 真實正例影格、A/V 同步或速度驗證**；P4 仍受沒有可授權測試 bitstream 限制。既有 Worker 尚是整檔下載 + MEMFS 轉碼，不是低延遲串流轉碼。
+- **新增可由 Windows／Android 使用者自行執行的無個資能力診斷**：`d0cd9a4` 新增 `src/codec-diagnostics.js`，查詢 `video.canPlayType`、`MediaSource.isTypeSupported`、1080p `MediaCapabilities.decodingInfo`，對 H.264、HEVC、HEVC Main10、標準 VVC 分別回報；不收 UA、影片 URL、DRM key、裝置 ID，且在報告文字明確標明 declarations 不等於 decode。
+- **UI 與測試**：`b994680` 在 index.html 加入「此裝置影片編碼支援檢測」展開區／複製診斷結果；`69d6d76` 補樣式；`cb6bc1e` 在 src/main.js 接本地 UI；`7df7b65` 加 Node mocking tests；`8e64c50` 在 Chromium/Firefox 播放整合測試中驗證報告可生成且不含測試 CENC key。**新 UI browser CI 尚未取得 completed/success，不提前標 PASS**。
+- 下一階段繼續實際檢查 UI build / browser 回歸並修正；具真實 HEVC MSE 裝置時可由使用者複製報告做平台解碼能力辨別。此面板不能自動證明真實 1080p HEVC 已可播。
