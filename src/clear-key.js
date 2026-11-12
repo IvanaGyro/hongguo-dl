@@ -65,10 +65,17 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   if (!Number.isSafeInteger(start) || start < 0 || bytes > MAX_MOOV ||
       bytes < 8 || !Number.isSafeInteger(start + bytes))
     throw errorWith('CENC_UNAVAILABLE', 'MP4 metadata 超出限定範圍');
-  const res = await fetchImpl(url, {
-    headers: { Range: 'bytes=' + start + '-' + (start + bytes - 1) },
-    signal, cache: 'no-store'
-  });
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      headers: { Range: 'bytes=' + start + '-' + (start + bytes - 1) },
+      signal, cache: 'no-store'
+    });
+  } catch {
+    aborted(signal);
+    // Fetch errors may embed private/signed URLs: only publish a fixed stage.
+    throw errorWith('CENC_RANGE_HTTP', 'HTTP Range 連線失敗');
+  }
   if (signal?.aborted) {
     await res.body?.cancel().catch(() => {});
     aborted(signal);
@@ -110,7 +117,13 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   let count = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let packet;
+      try { packet = await reader.read(); }
+      catch {
+        aborted(signal);
+        throw errorWith('CENC_RANGE_HTTP', 'HTTP Range 串流中斷');
+      }
+      const { done, value } = packet;
       aborted(signal);
       if (done) break;
       count += value.byteLength;

@@ -84,3 +84,36 @@ test('truncated or malformed 206 metadata never falls back to whole encrypted MP
     assert.equal(requests, 1, scenario.name + ': no whole-episode fallback');
   }
 });
+
+test('CENC metadata fetch and read errors stay bounded, retryable and redacted', async () => {
+  for (const phase of ['fetch', 'read']) {
+    let calls = 0, canceled = 0;
+    const fetchImpl = async (_url, { headers }) => {
+      calls++;
+      assert.equal(headers.Range, 'bytes=0-65535');
+      if (phase === 'fetch') throw new Error('private signed URL and key=secrets');
+      const reader = {
+        read: async () => { throw new Error('private signed URL and key=secrets'); },
+        cancel: async () => { canceled++; },
+        releaseLock() {}
+      };
+      return {
+        status: 206,
+        headers: new Headers({ 'Content-Range': 'bytes 0-65535/100000' }),
+        body: { getReader: () => reader }
+      };
+    };
+    await assert.rejects(openClearKeyStream({
+      video: { canPlayType: () => '' },
+      source, codec: 'hevc', workerOrigin: 'https://worker.example',
+      fetchImpl, requestAccess: async () => { throw new Error('Not EME'); }
+    }), error => {
+      assert.equal(error.code, 'CENC_RANGE_HTTP');
+      assert(!/private|secret|https?:\/\//i.test(error.message));
+      assert.equal(recordFailure(null, error, 5).retry, true);
+      return true;
+    });
+    assert.equal(calls, 1, 'No full-file fallback after ' + phase + ' failed');
+    assert.equal(canceled, phase === 'read' ? 1 : 0);
+  }
+});
