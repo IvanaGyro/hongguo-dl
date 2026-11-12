@@ -62,23 +62,50 @@
         </div>
         <section id="player-panel" hidden aria-label="影集播放器">
           <div class="player-header"><h2 id="player-episode">尚未播放</h2><span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span></div>
-          <div id="player-stage" class="player-stage">
-            <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
-            <div class="player-bottom-controls" aria-label="播放器控制項">
-              <input id="player-seek" class="player-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放進度" />
-              <div class="player-control-bar">
-                <div class="player-control-group">
-                  <button id="player-prev" type="button" aria-label="上一集" title="上一集">⏮</button>
-                  <button id="player-play-pause" type="button" aria-label="播放" title="播放">▶</button>
-                  <button id="player-next" type="button" aria-label="下一集" title="下一集">⏭</button>
-                  <span id="player-clock" class="player-clock" aria-label="目前播放時間">0:00 / 0:00</span>
-                </div>
-                <div class="player-control-group">
-                  <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定">⚙</button>
-                  <button id="player-fullscreen" type="button" aria-label="全螢幕" title="全螢幕">⛶</button>
-                </div>
-              </div>
-            </div>
+          <video-player id="videojs-player" class="videojs-player">
+            <media-container id="player-stage" class="player-stage">
+              <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
+              <media-gesture type="tap" action="togglePaused" region="center"></media-gesture>
+              <media-gesture type="doubletap" action="seekStep" value="-10" region="left"></media-gesture>
+              <media-gesture type="doubletap" action="seekStep" value="10" region="right"></media-gesture>
+              <media-controls visibility="always" aria-label="播放器控制項">
+                <media-controls-content class="player-bottom-controls">
+                  <media-time-slider id="player-seek" class="player-seek" aria-label="播放進度">
+                    <media-slider-track class="player-seek-track">
+                      <media-slider-buffer class="player-seek-buffer"></media-slider-buffer>
+                      <media-slider-fill class="player-seek-fill"></media-slider-fill>
+                    </media-slider-track>
+                    <media-slider-thumb class="player-seek-thumb"></media-slider-thumb>
+                  </media-time-slider>
+                  <div class="player-control-bar">
+                    <div class="player-control-group">
+                      <button id="player-prev" type="button" aria-label="上一集" title="上一集">⏮</button>
+                      <media-play-button id="player-play-pause" class="player-ui-button" aria-label="播放／暫停">
+                        <span class="player-play-icon">▶</span><span class="player-pause-icon">⏸</span>
+                      </media-play-button>
+                      <button id="player-next" type="button" aria-label="下一集" title="下一集">⏭</button>
+                      <media-time-group id="player-clock" class="player-clock">
+                        <media-time type="current"></media-time><media-time-separator> / </media-time-separator><media-time type="duration"></media-time>
+                      </media-time-group>
+                    </div>
+                    <div class="player-control-group">
+                      <media-mute-button id="player-mute" class="player-ui-button" aria-label="靜音切換">
+                        <span class="player-unmuted-icon">◖))</span><span class="player-muted-icon">◖×</span>
+                      </media-mute-button>
+                      <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定">⚙</button>
+                      <media-fullscreen-button id="player-fullscreen" class="player-ui-button" aria-label="全螢幕">
+                        <span class="player-enter-fullscreen">⛶</span><span class="player-exit-fullscreen">⛶</span>
+                      </media-fullscreen-button>
+                    </div>
+                  </div>
+                </media-controls-content>
+              </media-controls>
+              <media-hotkey keys="Space" action="togglePaused"></media-hotkey>
+              <media-hotkey keys="f" action="toggleFullscreen"></media-hotkey>
+              <media-hotkey keys="m" action="toggleMuted"></media-hotkey>
+              <media-hotkey keys="ArrowLeft" action="seekStep" value="-5"></media-hotkey>
+              <media-hotkey keys="ArrowRight" action="seekStep" value="5"></media-hotkey>
+              <media-status-announcer></media-status-announcer>
             <div id="player-settings" class="player-settings-menu" hidden>
               <div class="player-settings-title">播放設定 <button type="button" id="player-settings-close" title="關閉">✕</button></div>
               <label>畫質
@@ -97,7 +124,8 @@
               <button id="player-pip" type="button" class="quiet" hidden>子母畫面</button>
               <div id="player-source-info" class="player-source-info" aria-live="polite"></div>
             </div>
-          </div>
+            </media-container>
+          </video-player>
         </section>
       </section>
       <section id="queue-panel" class="panel">
