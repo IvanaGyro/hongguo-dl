@@ -100,7 +100,7 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   return { data: output, fileSize: Number(match[3]) };
 }
 
-export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch) {
+export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null) {
   let offset = 0;
   const tried = new Set();
   for (let probe = 0; probe < MAX_RANGES; probe++) {
@@ -116,6 +116,11 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch) {
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
         : (await rangeFetch(mediaUrl, box.offset, box.size, signal, fetchImpl)).data;
+      if (metadata) {
+        metadata.fragmented = mp4Boxes(moov.subarray(8))
+          .some(child => child.type === 'mvex');
+        metadata.fileSize = fileSize;
+      }
       return cencKidFromMoov(moov);
     }
     const last = boxes.at(-1);
@@ -169,6 +174,92 @@ export function mimeForCodec(codec) {
   return null;
 }
 
+// Only fragmented MP4 is valid as a progressive ISO BMFF MSE stream.
+// A regular faststart MP4 can have a valid KID but cannot be appended into a
+// SourceBuffer as if it contained moof/mdat segments.
+function openCencMse({ mime, url, signal, fetchImpl }) {
+  if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(mime))
+    return null;
+  const mediaSource = new MediaSource();
+  const controller = new AbortController();
+  let reader = null, closed = false, sourceBuffer = null;
+  const objectUrl = URL.createObjectURL(mediaSource);
+  const abort = () => {
+    if (closed) return;
+    closed = true;
+    controller.abort();
+    void reader?.cancel().catch(() => {});
+    URL.revokeObjectURL(objectUrl);
+  };
+  const append = bytes => new Promise((resolve, reject) => {
+    if (closed || signal?.aborted) return reject(errorWith('CANCELED', '已切換影片'));
+    if (mediaSource.readyState !== 'open') return reject(errorWith('CENC_UNAVAILABLE', 'MSE 已關閉'));
+    const cleanup = () => {
+      sourceBuffer.removeEventListener('updateend', done);
+      sourceBuffer.removeEventListener('error', failed);
+      sourceBuffer.removeEventListener('abort', failed);
+      controller.signal.removeEventListener('abort', stopped);
+    };
+    const done = () => { cleanup(); resolve(); };
+    const failed = () => { cleanup(); reject(errorWith('CENC_UNAVAILABLE', 'MSE 封裝緩衝區錯誤')); };
+    const stopped = () => { cleanup(); reject(errorWith('CANCELED', '已切換影片')); };
+    sourceBuffer.addEventListener('updateend', done, { once: true });
+    sourceBuffer.addEventListener('error', failed, { once: true });
+    sourceBuffer.addEventListener('abort', failed, { once: true });
+    controller.signal.addEventListener('abort', stopped, { once: true });
+    try { sourceBuffer.appendBuffer(bytes); } catch (error) { cleanup(); reject(error); }
+  });
+  const pump = async () => {
+    sourceBuffer = mediaSource.addSourceBuffer(mime);
+    // A single open-ended Range request is consumed incrementally. This is
+    // streaming input, NOT fetch(...).arrayBuffer() on an entire episode.
+    const res = await fetchImpl(url, {
+      headers: { Range: 'bytes=0-' }, signal: controller.signal, cache: 'no-store'
+    });
+    if (![200, 206].includes(res.status) || !res.body)
+      throw errorWith('CENC_UNAVAILABLE', 'MSE HTTP 串流無法讀取');
+    const advertised = Number(res.headers.get('content-length') || 0);
+    if (advertised > 260 * 1024 * 1024)
+      throw errorWith('MEMORY_LIMIT', 'MSE 片源超過安全上限');
+    reader = res.body.getReader();
+    let total = 0;
+    try {
+      while (!closed) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        total += value.byteLength;
+        if (total > 260 * 1024 * 1024)
+          throw errorWith('MEMORY_LIMIT', 'MSE 片源超過安全上限');
+        await append(value);
+      }
+      if (!closed && mediaSource.readyState === 'open')
+        mediaSource.endOfStream();
+    } finally {
+      reader.releaseLock();
+      reader = null;
+    }
+  };
+  mediaSource.addEventListener('sourceopen', () => {
+    void pump().catch(error => {
+      if (closed || signal?.aborted) return;
+      // Do not log signed URLs or decryption keys.
+      console.info('[Hongguo MSE] stream failed:', error?.name || 'Error');
+      try {
+        if (mediaSource.readyState === 'open') mediaSource.endOfStream('decode');
+      } catch { /* video error handler still owns playback retries */ }
+    });
+  }, { once: true });
+  signal?.addEventListener('abort', abort, { once: true });
+  return {
+    url: objectUrl, kind: 'mse',
+    close: async () => {
+      abort();
+      signal?.removeEventListener('abort', abort);
+    }
+  };
+}
+
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal,
   fetchImpl = fetch,
@@ -197,8 +288,9 @@ export async function openClearKeyStream({
   } catch (error) { return declined('key-system-access', error); }
   aborted(signal);
   const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
+  const metadata = {};
   let kid;
-  try { kid = await probeCencKid(url, signal, fetchImpl); }
+  try { kid = await probeCencKid(url, signal, fetchImpl, metadata); }
   catch (error) {
     if (signal?.aborted) throw error;
     return declined('mp4-range-or-kid-probe', error);
@@ -236,7 +328,16 @@ export async function openClearKeyStream({
     console.info('[Hongguo EME] key-status:',
       session.keyStatuses ? Array.from(session.keyStatuses.values()).join(',') || 'empty' : 'unavailable');
     aborted(signal);
-    return { url, close: async () => { await session.close().catch(() => {}); } };
+    const mse = metadata.fragmented
+      ? openCencMse({ mime, url, signal, fetchImpl }) : null;
+    console.info('[Hongguo EME] playback route:', mse ? 'mse-fmp4' : 'progressive-mp4');
+    return {
+      url: mse?.url || url, kind: mse?.kind || 'progressive',
+      close: async () => {
+        await mse?.close();
+        await session.close().catch(() => {});
+      }
+    };
   } catch (error) {
     await session?.close().catch(() => {});
     if (mediaKeysSet) await video.setMediaKeys(null).catch(() => {});
