@@ -212,3 +212,15 @@
 - **[fffd55c](https://github.com/IvanaGyro/hongguo-dl/commit/fffd55ce50142727c0ddf9b1a7f7cc9397bd9322)**：`scripts/bvc2-transcoder.c` 累計成功取得並送入 encoder 的畫格，若最後 0 張便明確回報 `no decoded ByteVC2 frames`，不再將只含音訊的輸出視為成功轉碼。此為保守防護，不代表實際 BVC2 解碼已通過。
 - **[bd9a203](https://github.com/IvanaGyro/hongguo-dl/commit/bd9a2032251f12b7ebc64b1ad70607c9f4dac58c)**：BVC2 workflow 加入 C source trigger，重建 Librempeg+x264 WASM 並以真正 H.264 MP4 合成負例測試必須回報 `input is not ByteVC2`；使用者的真實 ByteVC2 bitstream / 畫格仍尚未驗證，不能改標 PASS。
 - **下一步**：CENC browser 10/50/90 + 300s stress、1080p HEVC synthetic WASM、BVC2 negative test 依序取用已完成的結果；若有失敗只讀該失敗步驟。真實 1080p HEVC、Windows/Android 平台、ByteVC2 真實樣本仍是最終目標缺口。工作不因更新文件而停止。
+
+## 階段 19 — 2026-11-13 P2 10/50/90% 與 P3 300 秒真實 Browser 驗收通過（已取得詳細 PASS 證據，繼續 P1 / BVC2）
+
+- [Progressive CENC MSE browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)，job `131395647875`，**completed/success**；已核對真正 PASS 訊息與數值：
+  - Chromium + Firefox 15 秒合成 H.264/AAC CENC：EOF 前第一影格、播放 >1.5 秒均 PASS。
+  - Chromium + Firefox 70 秒合成 H.264/AAC：55 秒 unbuffered RAP seek、55 秒 reload resume、依序跨緩衝區 7s (10%) → 63s (90%) → 35s (50%) → 5s → 63s，全部 **PASS**。
+  - Chromium + Firefox 從 90% 再 reload：均 PASS；切到下載模式後停止 Worker/Range，返回播放恢復同一集：均 **PASS**。
+  - **Chromium 300 秒合成 CENC 實際播畢：PASS**。`video.ended=true`、`videoError=null`、`lastTime=300.021402s`、Range requests `32`、`maxBufferedSpan=78.021402s`、`maxBufferedAhead=41.395255s`、`samples=160`；沒有 unbounded 整檔下載。
+- **結論可升級**：P2 Chromium/Firefox synthetic 10/50/90% Seek、reload、UI 模式切換核心案例已通過。P3 已有 Chromium 合成 300s 播畢與 MSE 秒數界限證據；**不是 OS/GPU RSS 高水位，尚未測 30–60 分鐘，也尚未測 Firefox 300s**。
+- **P1 1080p proof 一次失敗並已修復**：[WASM #43278673487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43278673487) 在產生 1080p 合成樣本時因測試 key 輸入 17 bytes（`Invalid encryption key len 17 expected 16`）fail，而非 HEVC decoder fail。已提交 [4099507](https://github.com/IvanaGyro/hongguo-dl/commit/40995072764b86f7a13d7304d462b60daa95b43f) 改為正確 16-byte key。修復後 [WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089) 最後 snapshot **in_progress**，不可事先標記 PASS。
+- **BVC2 驗證**：[workflow #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447) 最後 snapshot **in_progress**；包含 C decoder 無 frame 拒絕邏輯及 genuine H264 negative fixture。**不是有效 ByteVC2 positive video，仍不得聲稱可用**。
+- **後續立即繼續**：更新 `docs/CENC-TEST-MATRIX.md` 的完成欄位，執行 1080p WASM proof 修復驗收、BVC2 negative tests、擴充取消時 Worker 零殘留／Firefox 長片測試或必要硬體檢查；不因本文件完成而停止。所有修改直接 main，無 PR。
