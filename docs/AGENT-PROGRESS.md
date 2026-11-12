@@ -437,3 +437,12 @@
 - **PENDING**：[CI #43292269071](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269071) 於 HEAD `63c19b9` 初查 `in_progress`；[Pages #43292269068](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269068) `in_progress`。不可宣稱新 fake MSE 測試 PASS。
 - **獨立 WASM proof**：階段 43 的 [WASM #43291965388](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965388) 預期在 synthetic HEVC/AAC fixture 上輸出 `PASS pinned Librempeg HEVC init MIME compatibility`，目前未確證通過；**原生 FFmpeg 7.1.5 輸出 hev1 只是一組對照，不等於 pinned Librempeg 結論**。
 - **未驗證限制及下一步**：針對上述 CI 若失敗則依斷言/測試 log 修復；實際 HEVC MSE browser/Android/Windows 裝置 + 合法紅果 206 來源、真實 ByteVC2 bitstream 仍 NOT TESTED。下一個工程動作是加強 403/416/429 HTTP metadata 探測錯誤分類，避免來源拒絕誤標為 HEVC 解碼失敗，並延續取消/模式切換壓測。
+
+
+## 階段 45 — 2026-11-13 CENC metadata 403/416/429/200 精確分類與禁止錯誤整檔備援
+
+- **工程目標與已提交程式**：[de84114](https://github.com/IvanaGyro/hongguo-dl/commit/de84114fe0a35a024e6b7271d1197b86f657fe84) 直接 main（parent `b6c2d7d`），修改 `src/clear-key.js`、`src/retry.js`，新增 `tests/cenc-source-errors.test.mjs`。CENC metadata 有界 Range 回覆 200、403、416、429 時分別回報 `CENC_RANGE_UNSUPPORTED`、`CENC_SOURCE_FORBIDDEN`、`CENC_RANGE_INVALID`、`CENC_RATE_LIMITED`；其他非206（例如503）回 `CENC_RANGE_HTTP`。清理 HTTP body，訊息只有 status、不記 signed URL/key；不再於這些明確來源錯誤發生後悄悄改以整檔 FFmpeg 下載，避免把 CDN 403 誤當 HEVC decode 失敗。
+- **重試策略**：200/403/416/429 為非重試，下一次用戶明確操作可重新取得來源；503（`CENC_RANGE_HTTP`）走既有有限重試（5 次相同錯誤、20 總上限）。Node 新增 5 組錯誤類型回歸，驗證只發一次 bounded metadata Range、body.cancel、無 EME、無私密網址或 key 訊息、retry 分類。修正過時的「最多 1MiB metadata」檔首註解為 8MiB moov。
+- **PENDING（新提交的 CI）**：[CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 首次查詢 `in_progress`；[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) `queued`；[CENC Browser #43292589271](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589271) `pending`；[HEVC WASM proof #43292588933](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292588933) `in_progress`。本階段測試尚無最新 PASS 結論，禁止以較舊成功 CI 取代。
+- **已知限制、NOT TESTED**：真實紅果有效授權 206 HEVC CENC 來源、Windows/Android HEVC MSE 裝置及 ByteVC2 真實正例仍缺；HTTP status 精確分類不代表已能繞過 CDN 403。合成 HEVC init + MSE 能力宣告亦不等於實際解碼成功。
+- **下一個具體動作**：根據最新 CI 若 FAIL 修正唯一具體斷言；再做數分鐘暫停及頻繁播放／下載切換的合成瀏覽器驗收，新增 Worker/HTTP Range/Object URL 高水位檢查。檢查最新 pinned Librempeg WASM proof 的 HEVC output sample entry 實證，不連續輪詢 Actions。
