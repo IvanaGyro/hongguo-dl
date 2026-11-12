@@ -39,14 +39,12 @@ cd "$OUTPUT/src/librempeg-$COMMIT"
   --target-os=none --arch=x86_32 --enable-cross-compile \
   --cc=emcc --cxx=em++ --ar=emar --ranlib=emranlib --nm=emnm \
   --disable-everything --disable-autodetect --disable-doc --disable-debug \
-  --disable-ffplay --disable-ffprobe --disable-asm --disable-x86asm \
+  --disable-programs --disable-asm --disable-x86asm \
   --disable-inline-asm --disable-stripping --disable-pthreads --disable-network \
-  --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avutil \
-  --enable-avfilter --enable-swscale \
+  --enable-avcodec --enable-avformat --enable-avutil --enable-swscale \
   --enable-decoder=bvc2,vvc,aac \
-  --enable-parser=aac --enable-encoder=libx264,aac \
-  --enable-muxer=mp4,null --enable-demuxer=mov \
-  --enable-filter=scale,format,aformat,null,anull \
+  --enable-parser=aac --enable-encoder=libx264 \
+  --enable-muxer=mp4 --enable-demuxer=mov \
   --enable-protocol=file,pipe \
   --enable-gpl --enable-agpl --enable-version3 --enable-libx264 \
   --pkg-config=pkg-config --pkg-config-flags=--static \
@@ -62,17 +60,39 @@ cd "$OUTPUT/src/librempeg-$COMMIT"
     fi
     exit 1
   }
-emmake make -j4 ffmpeg > "$OUTPUT/librempeg-build.log" 2>&1 || {
+emmake make -j4 libavcodec/libavcodec.a libavformat/libavformat.a \
+  libavutil/libavutil.a libswscale/libswscale.a > "$OUTPUT/librempeg-build.log" 2>&1 || {
   tail -120 "$OUTPUT/librempeg-build.log"; exit 1;
 }
-find . -maxdepth 2 -type f \( -name '*.wasm' -o -name '*.js' -o -name ffmpeg \) \
-  -exec ls -lh '{}' \; > "$OUTPUT/build-manifest.txt"
+# The ffmpeg CLI requires threads and is disabled above. Link the
+# memory-backed browser API directly instead of pulling in fftools.
+emcc "$ROOT/scripts/bvc2-transcoder.c" -O3 -msimd128 -I. \
+  -Llibavformat -Llibavcodec -Llibavutil -Llibswscale -L"$OUTPUT/prefix/lib" \
+  -Wl,--start-group -lavformat -lavcodec -lswscale -lavutil -lx264 -Wl,--end-group \
+  -lm -s MODULARIZE=1 -s EXPORT_ES6=1 -s ENVIRONMENT=web,worker,node \
+  -s FORCE_FILESYSTEM=1 -s ALLOW_MEMORY_GROWTH=1 \
+  -s INITIAL_MEMORY=67108864 -s MAXIMUM_MEMORY=1073741824 \
+  -s "EXPORTED_FUNCTIONS=['_bvc2_transcode','_bvc2_decoder_available','_bvc2_last_error']" \
+  -s "EXPORTED_RUNTIME_METHODS=['FS','cwrap','UTF8ToString']" \
+  -o "$OUTPUT/dist/bvc2-core.mjs" > "$OUTPUT/link.log" 2>&1 || {
+    tail -120 "$OUTPUT/link.log"; exit 1;
+  }
+cat > "$OUTPUT/dist/verify.mjs" <<'JS'
+import createModule from './bvc2-core.mjs';
+import { readFileSync } from 'node:fs';
+const wasmBinary = readFileSync(new URL('./bvc2-core.wasm', import.meta.url));
+const core = await createModule({ wasmBinary });
+if (core._bvc2_decoder_available() !== 1) throw new Error('Missing BVC2 decoder or x264 encoder');
+core.FS.writeFile('/bad.mp4', new Uint8Array([1, 2, 3, 4]));
+const rc = core.cwrap('bvc2_transcode', 'number', ['string', 'string', 'string'])(
+  '/bad.mp4', '/out.mp4', '');
+if (rc >= 0) throw new Error('Truncated MP4 unexpectedly succeeded');
+const error = core.UTF8ToString(core._bvc2_last_error());
+if (!error) throw new Error('Error message not exposed');
+console.log('BVC2+x264 WASM bridge linked, invalid input rejected: ' + error);
+JS
+node "$OUTPUT/dist/verify.mjs"
+du -h "$OUTPUT/dist/bvc2-core.wasm"
+find "$OUTPUT/dist" -maxdepth 1 -type f -exec ls -lh '{}' \; > "$OUTPUT/build-manifest.txt"
 cat "$OUTPUT/build-manifest.txt"
-# No web deployment until the exact build output is inspected for its
-# JS/wasm ABI and tested with an encrypted BVC2 fixture.
-for file in ffmpeg ffmpeg.js ffmpeg.wasm; do
-  if [[ -f "$file" ]]; then
-    cp "$file" "$OUTPUT/dist/"
-  fi
-done
-test -s "$OUTPUT/librempeg-build.log"
+# Experimental artifact only. A real encrypted BVC2 fixture is still needed.
