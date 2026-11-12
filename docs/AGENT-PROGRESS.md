@@ -471,3 +471,12 @@
 - **測試增加**：`tests/cenc-source-errors.test.mjs` 補 4 種合成正向錯誤注入：起點錯誤、宣告 65536 卻只回傳 100 bytes、回應多於宣告、Content-Length 與 Content-Range 不符；均要求 `CENC_RANGE_INVALID` 並確認每個錯誤只發一個有界 metadata Range。僅使用自行生成 HTTP body，無第三方來源/key。
 - **PENDING**：新 [CI #43293840096](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293840096)、[Pages #43293839559](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839559)、[WASM #43293839030](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839030) 首查 `in_progress`，[Browser #43293839080](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839080) `pending`；不可宣稱最新測試已 PASS。前版 200/403/416/429/503 單測已在 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) PASS，但不涵蓋這個新 206 斷言。
 - **限制與下一步**：仍待跑最新 CI，真實 CDN/HEVC/BVC2/Android NOT TESTED。下一個具體工程動作是 HTTP `fetch()` throw/已連線 body `reader.read()` throw 時的錯誤分類與無敏感資訊返回，阻止暫時性斷網降級整檔下載；若新 CI 先失敗，按具體斷言修。
+
+
+## 階段 49 — 2026-11-13 CENC metadata fetch／reader 串流中斷安全分類與取消
+
+- **程式碼已提交 main**：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)，修改 `src/clear-key.js` 和 `tests/cenc-source-errors.test.mjs`。來源 fetch 同步/非同步 throw 及已建立 HTTP 206 body `reader.read()` throw，現先尊重 `AbortSignal`，再返回固定訊息與 `CENC_RANGE_HTTP`，避免將含 signed URL/key 的原生 exception message 公開給 UI，且不可藉錯誤路徑降級成整檔 FFmpeg 下載。維持原先的 Stream reader cancel + releaseLock。
+- **新增回歸測試**：mock `fetch()` throw 含私人 URL/金鑰的錯誤，以及 mock `reader.read()` throw；要求只發一次有界 `bytes=0-65535`，禁止 EME/整檔備援、錯誤訊息不洩漏 URL/key、讀取錯誤要 cancel reader，且 `recordFailure()` 可在總上限內重試。這不是新的真實來源可用性證明。
+- **PENDING**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811)、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) 首查 `in_progress`；[Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)、[WASM proof #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) `pending`。不得把尚未完成的最新 CI 或新的 120s pause / 三輪模式切換驗收標成 PASS。
+- **前述成功證據不變**：最後已核實的 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208)／[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) 是較早的 `de84114` 版 **completed/success**。HEVC 真實紅果合法 HTTP 206 片源、Android/Windows 實機、ByteVC2 正例仍 **NOT TESTED**。
+- **下一步**：先針對最新 CI 或 WASM proof 的具體失敗做最小修補；沒有具體失敗就進入長暫停、切集與載入中的 HTTP/Worker 取消測試。進度文件寫完不是結束條件；GitHub 各種操作不可無限輪詢。
