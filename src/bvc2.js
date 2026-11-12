@@ -9,7 +9,14 @@ export async function bvc2BridgeAvailable() {
   if (typeof Worker !== 'function') return false;
   if (!available) {
     available = fetch(CORE, { method: 'HEAD' })
-      .then(response => response.ok && Number(response.headers.get('content-length') || 0) < 32 * 1024 * 1024)
+      .then(response => {
+        // Vite/GitHub Pages may return index.html (HTTP 200) for missing
+        // assets. Check MIME rather than trusting status alone.
+        const mime = response.headers.get('content-type') || '';
+        const length = Number(response.headers.get('content-length') || 0);
+        return response.ok && /^(application\/wasm|application\/octet-stream)\b/i.test(mime) &&
+          length < 32 * 1024 * 1024;
+      })
       .catch(() => false);
   }
   return available;
