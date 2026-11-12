@@ -1,6 +1,6 @@
 # Hongguo DL — 交接與進度日誌
 
-> **固定交接入口**：任何 agent 接手本專案，請先閱讀本文件與 [CENC 技術決策](cenc-progressive-to-fmp4.md)，再檢查最新 Git SHA；勿依賴聊天摘要判定最新進度。
+> **中斷復原優先入口**：先讀精簡的 [AGENT-CURRENT.md](AGENT-CURRENT.md) 取得當前任務，再查本文件最近階段與 [CENC 技術決策](cenc-progressive-to-fmp4.md)，最後核對最新 main SHA；勿依賴聊天摘要判定最新進度。
 >
 > **更新規則**：每完成一個可獨立驗證的階段、合併、發布或重大失敗排查，立即提交本文件。列出分支、提交、已實作、已驗證、未驗證、阻礙及下一步。CI 執行中不得寫成成功；避免輪詢 Actions log 卡住。若被中斷，以本文件為交接依據。
 >
@@ -364,3 +364,10 @@
 - 目前重點程式 HEAD（不含後續文件提交）`205dc024c8d190df8162995e26d7191be1e11071`：BVC2/CENC optional WASM availability probe 已改為 transient fail 可重試；相應 [CI #43286523179](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523179) **completed/success**。
 - **仍待**：Browser #43285424033 的 `CENC_TEST_PAUSE=1` 具體 PASS；另一個排隊的新版 browser #43286523184；真的 1080p HEVC MSE／Android／ByteVC2 正例及其音畫／效能。若讀到 Browser 成功，但沒有 `paused CENC` PASS 日誌，不得標為暫停驗收。
 - 交接改善：因 AGENT-PROGRESS 已很長，下一步新增一份精簡「目前狀態」入口，讓被中斷的 agent 用少量 GitHub 操作即可取得最新待辦；日誌仍保留完整階段歷史。
+
+## 階段 37 — 2026-11-13 新增短版即時交接入口，減少中斷後的 GitHub 操作
+
+- [2bd9665](https://github.com/IvanaGyro/hongguo-dl/commit/2bd9665d7ad030e2adb323b5b81b0aeffb39d3cb)：新增 [AGENT-CURRENT.md](AGENT-CURRENT.md) 作為接手時**先讀的短文件**，聚合 1800 秒真實合成 Browser PASS、HEVC WASM proof、Worker lifecycle 修正、新測試 PASS 及 **CENC_TEST_PAUSE 尚未取得含旗標的 PASS** 的精確條件。長版歷史仍在 AGENT-PROGRESS，各成果以可點擊 commit/run 追溯。
+- [52a50ca](https://github.com/IvanaGyro/hongguo-dl/commit/52a50cad3684ea8a498839ead169fede26ade751) 將 NEXT-SESSION-PLAN 的入口指向短文件。本提交也將 AGENT-PROGRESS 頂端固定入口改為短文件優先。
+- **目的**：避免新 session 為讀取幾萬字 append-only 長日誌而卡住 GitHub 文件操作、看到歷史過期描述或回到已完成的工作。每次新階段仍須更新 AGENT-PROGRESS；如果當前待辦或 PASS 邊界改變，也同步更新 AGENT-CURRENT。
+- **接續工作**：追蹤一次含 `CENC_TEST_PAUSE=1` 的 browser PASS，必要時修補；真實紅果 1080p HEVC（合法 HTTP 206 來源與可解碼裝置）／ByteVC2 正例仍為外部驗收阻礙。直接 main、不開 PR；文件更新後繼續。
