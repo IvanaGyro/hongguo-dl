@@ -605,3 +605,11 @@
 - **直接修正並提交 main**：[f1ce714bdc9f726289e5345b7a86ab21d1358135](https://github.com/IvanaGyro/hongguo-dl/commit/f1ce714bdc9f726289e5345b7a86ab21d1358135)：修改 `tests/cenc-stream.browser.mjs` 的 Web Audio probe，在頁面新增僅測試用按鈕，由 Playwright `locator.click()` 送出瀏覽器可信 user gesture，於 click handler 同步建立 `AudioContext`、連接 `MediaElementAudioSource`／`AnalyserNode` 並呼叫 `resume()`；等待 context 真正 running 才執行原本 25×80ms PCM RMS 驗證，門檻（peak >0.01、至少 4 窗 >0.005）**不放寬**。完成時 close context 並清理按鈕與 Window 測試物件。
 - **PENDING**：[新版 Browser #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) 首次查詢 pending；Firefox 必須有實際 PCM 行且 fast job completed/success 才可稱通過；主 CI 與 Pages 另計。長時間 120s/1800s 版別亦需保留測試結果，不因新版 fast fail 而錯誤推論底層 remux 壞掉。
 - **下一步**：確認新版 Browser fast、逐字檢查 Firefox PCM 真正 RMS；若仍 FAIL，定位 user activation / audio backend / source mute 等差異。其後測 rapid seek／三輪模式切換後 PCM，而不只測初次播放。
+
+
+## 階段 65 — 2026-11-13 將 AAC PCM browser 測試擴大到 5 次遠距 Seek 與 3 次模式切換後
+
+- **上一版回歸結果**：[Browser #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) fast job `131470285731` **FAIL**；Chromium 初次播放 **PASS** `peakRms=0.0885524437, nonSilentWindows=25`；Firefox 即使透過 trusted Playwright `click()`，等待 `AudioContext.state===running` 超過 6s，仍未取得 PCM。與前一版沒有 user gesture 的 timeout 相同，須區分 Firefox policy 和 CI 音訊裝置。
+- **直接提交 main**：[23bef1edd0c003fac3b2d0b5c834f4269ab445f5](https://github.com/IvanaGyro/hongguo-dl/commit/23bef1edd0c003fac3b2d0b5c834f4269ab445f5)：只更改 `tests/cenc-stream.browser.mjs`、`.github/workflows/cenc-browser.yml`。把原 startup Web Audio PCM 正例抽成 `assertCencAacPcm(page, phase)`，啟動與 70s unbuffered 7→63→35→5→63s Seek、90% reload、三輪切到 download 再回 play 後，兩次都跑相同 PCM 25×80ms RMS（peak>0.01、至少四窗>0.005）及 mediaError 斷言；新增後段 Browser fast Chromium/Firefox 的 `CENC_TEST_AUDIO=1`。這使「有可解碼畫面但實際 AAC 靜音」不能通過。
+- **驗證狀態 PENDING（新 HEAD）**：未把前版 Chromium startup PCM PASS 擴大解讀成後段 AAC PASS，也未聲稱 Firefox PCM 能正常跑；新 fast job 很可能會先遇到 Firefox policy/backend 問題，需要以實際 log 修正，而不是靜音或略過。長測 120s/1800s 不受這個新增 70s 測試內容改變。
+- **下一步**：Firefox AudioContext state timeout 必須取得可解釋的 browser state；Mozilla MDN 記載 `media.autoplay.block-webaudio` 獨立於 `media.autoplay.default`，後續可以在**測試環境**明確放行 Web Audio，但仍須保留 PCM 振幅斷言；如仍 fails，定位無音訊裝置問題。
