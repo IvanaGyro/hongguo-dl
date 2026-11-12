@@ -539,7 +539,7 @@ try {
         // actual forward clock and no HTMLMediaElement decoder error after
         // the final three tear-down/reopen cycles.
         const resumeAt = await page.locator('#player-video').evaluate(async video => {
-          assert.equal(video.error?.code || null, null);
+          if (video.error) throw new Error('MSE playback has a media decoder error');
           video.muted = true;
           const t = video.currentTime;
           await video.play();
