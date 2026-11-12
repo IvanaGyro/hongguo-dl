@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 60）
+# Hongguo DL — 目前狀態（2026-11-13，階段 61）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 61 全新 CENC Browser fast/long E2E 全部完成成功**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) `completed/success`；fast job 131460511145 參見階段 58；long job **131460510236** 另實際列印 Chromium 120000ms 暫停 Range **9→9**，300.021s 播畢（32 Range、MSE span 最大 **76.021s**、ahead **41.881s**，process-tree RSS first/peak/last **727.7/765.6/765.6 MiB**），1800.021s 播畢（104 Range、MSE span **72s**、ahead **43.078s**，RSS **800.9/837.3/834.7 MiB**）。長片均 videoError=null，合成素材非真實 HEVC/Android、非 GPU RAM；快測 Chromium 9 個 MOV 警訊仍待 AAC 可聽性定量。
 
 - **階段 60 技術文件與現行程式對齊**：[72f05e0](https://github.com/IvanaGyro/hongguo-dl/commit/72f05e087b147b83dabf5a560a51d3349c194871)：README 修正 ByteVC2 720p 明確選定不跨畫質 fallback、CENC 來源 403/429/錯誤 206 不整檔 fallback；`docs/cenc-progressive-to-fmp4.md` 修正 mux flags 為實際 `frag_keyframe+empty_moov+default_base_moof`，120s pause [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 已 PASS。此階段僅是已核實現況文件修正，無新程式或 CI 正例宣稱。
 
@@ -38,7 +40,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：階段 59 WASM direct/window 對照的實際結果；Browser fast 已 PASS；long job 完成後核對 120s 暫停／300s／1800s 有界 buffer。Chromium 快速 Seek 的 9 個 MOV/AAC 日誌警訊仍需確認是取消期間或真的傷害音訊；不能只依 video clock 代替音訊驗收。外部真實 HEVC/ByteVC2/裝置待測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：先確認階段 59 WASM direct/window 對照真正結論；Browser fast+long 均已 PASS。Chromium 9 個快速 Seek MOV/AAC 日誌警訊仍需區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 
