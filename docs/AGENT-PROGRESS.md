@@ -371,3 +371,11 @@
 - [52a50ca](https://github.com/IvanaGyro/hongguo-dl/commit/52a50cad3684ea8a498839ead169fede26ade751) 將 NEXT-SESSION-PLAN 的入口指向短文件。本提交也將 AGENT-PROGRESS 頂端固定入口改為短文件優先。
 - **目的**：避免新 session 為讀取幾萬字 append-only 長日誌而卡住 GitHub 文件操作、看到歷史過期描述或回到已完成的工作。每次新階段仍須更新 AGENT-PROGRESS；如果當前待辦或 PASS 邊界改變，也同步更新 AGENT-CURRENT。
 - **接續工作**：追蹤一次含 `CENC_TEST_PAUSE=1` 的 browser PASS，必要時修補；真實紅果 1080p HEVC（合法 HTTP 206 來源與可解碼裝置）／ByteVC2 正例仍為外部驗收阻礙。直接 main、不開 PR；文件更新後繼續。
+
+## 階段 38 — 2026-11-13 暫停網路背壓 E2E 正式 PASS，更新短版交接與測試矩陣
+
+- **含正確 workflow 旗標的實際證據**：[Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033)，HEAD `b226bc1`，job `131419302146`，**completed/success** 且已讀到 `PASS chromium paused CENC HTTP Range backpressure and playback resume`；實際值 `pausedAt=1.5784s`、`rangesAtPause=9`、`rangesAfterPause=9`。觀察期為 3 秒，確證該合成案例暫停後 HTTP Range **無新要求**，恢復後仍有播放進度。
+- **同 run 300s/1800s E2E 也有 PASS 行**：300s `ended=true`、`lastTime=300.021402`、`rangeRequests=32`、`maxBufferedSpan=72s`、`maxBufferedAhead=41.717s`、process-tree RSS 757.2/774.4/772.4 MiB；1800s `ended=true`、`lastTime=1800.021402`、104 Range、span=72s、ahead=42.91s、RSS 804.6/841.9/835.9 MiB；均為合成 H.264/AAC Linux Chromium，不是 Android/GPU RAM。
+- **本階段文件**：[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md) 已在 [f648939](https://github.com/IvanaGyro/hongguo-dl/commit/f6489392107a3a871d7c7310400ddf1ac1807841) 新增「暫停背壓/恢復」正式 PASS 列；[AGENT-CURRENT.md](AGENT-CURRENT.md) 已在 [23927a0](https://github.com/IvanaGyro/hongguo-dl/commit/23927a0c694217b36414dc3dd249a9c1920cb667) 改掉暫停 pending 狀態。
+- **限定解讀**：此 PASS 是 3 秒觀察及 300s 當次暫停/恢復，不能推論 30 分鐘暫停、手機背景休眠、真實 HEVC 音訊／長期 memory、ByteVC2 端到端都已完成。較新的 `205dc02` 加入 CENC WASM availability recheck，其獨立 Browser #43286523184 上次仍 in_progress；已完成的階段 38 證據是早一個 `b226bc1` 的合成 browser run。
+- **下一步仍繼續**：針對更長暫停／跨集關閉 worker 而無殘留 Range 進行新測試；真實紅果 HEVC 206 授權來源與 Android／Windows 影片解碼仍需實機，ByteVC2 需合法 bitstream。所有寫入 main、每一階段記錄，禁止因 GitHub 讀取/寫入/Actions 卡住而無限重試。
