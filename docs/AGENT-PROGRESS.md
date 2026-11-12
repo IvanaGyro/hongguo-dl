@@ -204,3 +204,11 @@
 - **離開播放頁釋放串流**：`30537f3` 在 `src/player.js` 新增 `deactivate()`，切換至下載模式時 abort 目前 Episode Worker/Range、停止來源、清除 prefetch 並保存進度；返回播放時重新從 progress 以 Range 建立串流但不強制 autoplay。 `65b539c` 的 `src/main.js` 模式切換改為使用 deactivate 而非純 pause。注意普通播放器內的 pause 仍維持緩衝／backpressure，不會關閉串流。
 - **模式切換 E2E**：`0151b15` 在 70s synthetic Chromium/Firefox 回歸後加入從 90% 續播切到 download，斷言 video src 清除且 800ms 不再發出新媒體請求，再切回播放要求成功恢復原位置與 bounded Range。 `0554a29` 增加 main/mode/Range 修改對 `cenc-browser.yml` 的 path trigger。**尚未得到該新增測試的成功結論**。
 - **後續**：優先檢查已完成的新增 CI 一次，若失敗只讀失敗 job；修正至通過後再完成 P3 長片 RAM 而非純 buffer 秒數、真實 HEVC 可用端點 / Windows or Android 測試與 ByteVC2；每階段更新文件而不是停工。所有提交直接 main，無 PR。
+
+## 階段 18 — 2026-11-13 跨緩衝區測試修正與 BVC2 安全護欄（已提交，繼續後續工作）
+
+- **[f2a27f1](https://github.com/IvanaGyro/hongguo-dl/commit/f2a27f11deddce3c7d7ddf6f2c043d64b0f6c42e)**：修正新增 10/50/90% 測試可能誤把已緩衝的 35s 當成 remote seek 的問題。改用 `[7,63,35,5,63]`：從 7 秒不會預讀到 63 秒、從 63 秒退到 35 秒也在範圍外、從 35 秒再退到 5 秒，最後才重新前進到 63 秒並驗證 reload。**這是針對測試設計的修復，CI 尚待驗證**。
+- **[4803bbb](https://github.com/IvanaGyro/hongguo-dl/commit/4803bbb9496baaf1292e661285927410c91cb898)**：`src/bvc2-worker.js` 改用受限 streaming read helper 讀取最多 32MiB WASM，不再相信 Content-Length 後直接 `response.arrayBuffer()`。避免代理/CDN 以超量回應造成額外配置記憶體。
+- **[fffd55c](https://github.com/IvanaGyro/hongguo-dl/commit/fffd55ce50142727c0ddf9b1a7f7cc9397bd9322)**：`scripts/bvc2-transcoder.c` 累計成功取得並送入 encoder 的畫格，若最後 0 張便明確回報 `no decoded ByteVC2 frames`，不再將只含音訊的輸出視為成功轉碼。此為保守防護，不代表實際 BVC2 解碼已通過。
+- **[bd9a203](https://github.com/IvanaGyro/hongguo-dl/commit/bd9a2032251f12b7ebc64b1ad70607c9f4dac58c)**：BVC2 workflow 加入 C source trigger，重建 Librempeg+x264 WASM 並以真正 H.264 MP4 合成負例測試必須回報 `input is not ByteVC2`；使用者的真實 ByteVC2 bitstream / 畫格仍尚未驗證，不能改標 PASS。
+- **下一步**：CENC browser 10/50/90 + 300s stress、1080p HEVC synthetic WASM、BVC2 negative test 依序取用已完成的結果；若有失敗只讀該失敗步驟。真實 1080p HEVC、Windows/Android 平台、ByteVC2 真實樣本仍是最終目標缺口。工作不因更新文件而停止。
