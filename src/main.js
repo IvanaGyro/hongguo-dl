@@ -235,6 +235,7 @@ function showSeries(result, fromHistory = false) {
   series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
   selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
   $('series-title').textContent = series.title || '未命名短劇';
+  document.title = (series.title || '短劇') + ' · Hongguo DL';
   $('series').hidden = false;
   if (series.kind === 'series') rememberSeries(localStorage, series);
   renderRecentSeries();
@@ -267,10 +268,55 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto') {
     '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
     '&codec=' + encodeURIComponent(codec));
 }
+async function lookupIds(ids) {
+  const list = [...new Set(ids)].slice(0, 20);
+  const currentRequest = ++lookupSequence;
+  loadingDeepLinks = true;
+  $('lookup-button').disabled = true;
+  $('lookup-error').hidden = true;
+  const area = $('linked-series');
+  area.hidden = false;
+  area.innerHTML = '<span class="subtle">讀取 ' + list.length + ' 部影集…</span>';
+  const results = [];
+  let shown = false;
+  for (const [index, id] of list.entries()) {
+    if (currentRequest !== lookupSequence) break;
+    try {
+      const result = await apiJson('/api/series?input=' + encodeURIComponent(id));
+      if (result.kind !== 'series') throw errorWith('INVALID_SERIES', '無法辨識影集');
+      rememberSeries(localStorage, result);
+      results.push({ id, title: result.title, ok: true });
+      if (!shown) {
+        $('input-url').value = id;
+        showSeries(result);
+        shown = true;
+      } else renderRecentSeries();
+    } catch (error) {
+      results.push({ id, title: classifyError(error).message, ok: false });
+    }
+    area.innerHTML = results.map(record => record.ok
+      ? '<button type="button" class="series-chip" data-linked-id="' +
+        escapeHtml(record.id) + '">✓ ' + escapeHtml(record.title) + '</button>'
+      : '<span class="series-chip error" title="' + escapeHtml(record.title) +
+        '">✕ ' + escapeHtml(record.id) + '</span>').join('');
+  }
+  loadingDeepLinks = false;
+  $('lookup-button').disabled = false;
+  area.hidden = !results.length;
+  if (!shown) {
+    $('lookup-error').textContent = '無法載入網址中的影集，請檢查 ID 或 Worker 連線';
+    $('lookup-error').hidden = false;
+  }
+}
 async function lookup(event) {
   event.preventDefault();
   const input = $('input-url').value.trim();
   if (!input) return;
+  const ids = /^\d+(?:[\s,;，、]+\d+)+$/.test(input)
+    ? input.split(/[\s,;，、]+/) : null;
+  if (ids?.length) return lookupIds(ids);
+  ++lookupSequence;
+  $('linked-series').hidden = true;
   $('lookup-button').disabled = true;
   $('lookup-error').hidden = true;
   try {
@@ -285,8 +331,8 @@ async function chooseFolder() {
   try {
     if (!window.showDirectoryPicker) throw errorWith('NO_DIRECTORY', '此瀏覽器沒有資料夾存取 API');
     directory = await window.showDirectoryPicker({ mode: 'readwrite' });
-    $('folder-status').textContent = '已選擇：' + directory.name;
-    $('browser-note').textContent = '可直接串流寫入資料夾，無須在記憶體保留整部影片。';
+    $('folder-status').textContent = '✓ ' + directory.name;
+    $('browser-note').textContent = '✓ 下載完成將自動寫入選擇的資料夾';
   } catch (e) {
     if (e.name !== 'AbortError') {
       $('browser-note').textContent = classifyError(e).message;
