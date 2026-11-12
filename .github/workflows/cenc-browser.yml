@@ -123,8 +123,8 @@ jobs:
           if [ "$CENC_SUITE" = "fast" ]; then
           CENC_BROWSER=chromium CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=chromium CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
-          CENC_BROWSER=firefox CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
+          CENC_BROWSER=chromium CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
+          CENC_BROWSER=firefox CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           else
           CENC_BROWSER=chromium CENC_TEST_STRESS=1 CENC_TEST_PAUSE=1 CENC_TEST_PAUSE_MS=120000 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-300s-fixture.mp4
           CENC_BROWSER=chromium CENC_TEST_STRESS=1 CENC_STRESS_SECONDS=1800 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-1800s-fixture.mp4
