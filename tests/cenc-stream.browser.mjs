@@ -297,7 +297,10 @@ try {
       if (process.env.CENC_TEST_MULTI_SEEK === '1') {
         // 10%, 50%, 90%, intentionally bouncing across noncontiguous ranges.
         // Each previous remote stream is disposed before a new one is opened.
-        for (const desired of [7, 35, 63]) {
+        // Each step is outside the previous stream's <=40s ahead window.
+        // The 5s return is deliberate: a direct 35s->63s jump can be
+        // already buffered and would not exercise remote RAP seeking.
+        for (const desired of [7, 63, 35, 5, 63]) {
           const start = mediaRequests.length;
           const beforeSeek = await page.evaluate(() => {
             const video = document.querySelector('#player-video');
