@@ -2,14 +2,18 @@
 // All media and source metadata are local. No actual Hongguo requests.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { firefox } from 'playwright';
+import { firefox, chromium } from 'playwright';
 
 const videoBytes = readFileSync(process.argv[2]);
 const KID = '11223344556677889900aabbccddeeff';
 const KEY = '00112233445566778899aabbccddeeff';
 assert(videoBytes.length > 65536, 'Fixture must exceed the metadata Range probe size');
-const browser = await firefox.launch({ headless: true,
-  firefoxUserPrefs: { 'media.autoplay.default': 0, 'media.eme.enabled': true } });
+const engine = process.env.HONGGUO_TEST_BROWSER === 'chromium' ? 'chromium' : 'firefox';
+const browser = await (engine === 'chromium' ? chromium : firefox).launch({
+  headless: true,
+  ...(engine === 'firefox'
+    ? { firefoxUserPrefs: { 'media.autoplay.default': 0, 'media.eme.enabled': true } } : {})
+});
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 const mediaRequests = [], pageErrors = [];
