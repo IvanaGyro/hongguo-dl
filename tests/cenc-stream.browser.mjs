@@ -151,6 +151,50 @@ try {
     assert(!mediaRequests.some(r => r.unbounded),
       'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
+    if (process.env.CENC_TEST_SEEK === '1') {
+      // 70s fixture; the worker should stop fetching after ~40s ahead.
+      // A 55s seek is genuinely outside SourceBuffer, not a local seek.
+      const target = 55;
+      const before = await page.evaluate(time => {
+        const video = document.querySelector('#player-video');
+        return { duration: video.duration,
+          buffered: Array.from({ length: video.buffered.length }, (_, i) =>
+            [video.buffered.start(i), video.buffered.end(i)]),
+          remoteTargetBuffered: Array.from({ length: video.buffered.length }, (_, i) =>
+            video.buffered.start(i) <= time && video.buffered.end(i) >= time).some(Boolean)
+        };
+      }, target);
+      assert(before.duration > target + 1,
+        'MSE must expose source movie duration for unbuffered seeking: ' +
+        JSON.stringify(before));
+      assert.equal(before.remoteTargetBuffered, false,
+        'Fixture target must not already be buffered: ' + JSON.stringify(before));
+      const firstSeekRequest = mediaRequests.length;
+      await page.evaluate(time => {
+        document.querySelector('#player-video').currentTime = time;
+      }, target);
+      await page.waitForFunction(() =>
+        document.querySelector('#player-status')?.textContent.includes('已跳轉到'),
+        null, { timeout: 90000 });
+      await page.waitForFunction(() => {
+        const video = document.querySelector('#player-video');
+        return video?.currentTime > 55.75 && video.readyState >= 2 &&
+          Array.from({ length: video.buffered.length }, (_, i) =>
+            video.buffered.start(i) <= 55.75 && video.buffered.end(i) > 55.75)
+            .some(Boolean);
+      }, null, { timeout: 90000 });
+      const jumped = mediaRequests.slice(firstSeekRequest);
+      assert(jumped.some(request => request.first > input.length * 0.5),
+        'Remote indexed seek must request new high-offset HTTP byte ranges: ' +
+        JSON.stringify(jumped.map(request => [request.first, request.last]).slice(0, 12)));
+      assert(!jumped.some(request => request.unbounded),
+        'Unbuffered seek cannot download the entire source');
+      assert(!errors.length, 'Unexpected browser errors after seek: ' + errors.join('; '));
+      console.log('PASS ' + browserName + ' unbuffered CENC RAP seek', JSON.stringify({
+        target, duration: before.duration, newRangeCount: jumped.length,
+        highestNewOffset: Math.max(...jumped.map(request => request.first))
+      }));
+    }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
       JSON.stringify({ ...frame, playbackSeconds: playback.currentTime, inputBytes: input.length,
         downloadedPercentAtFirstFrame: +((frame.lastByte + 1) / input.length * 100).toFixed(1),
