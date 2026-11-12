@@ -558,3 +558,11 @@
 - **尚未證明**：Chromium 在 rapid seek/cancel 階段記錄 **9 個** MOV demux diagnostics（種類：`subsample`、`corrupt-packet`、`partial-file`），Firefox **0 個**。允許固定格式訊息分流的同時已實證沒有 JS pageerror、MSE media error 且影片時間軸前進；但未證明 Chromium AAC 全程無缺包/聲音中斷，仍應避免聲稱警訊已消失或真正原因已鎖定。
 - **分流驗證**：新的 `Browser fast` job 已先完成，`Browser long` job `131460510236` 初查仍 `in_progress`；fast 判定不會等 120 秒真實暫停/1800 秒影片完成，也不會取消仍在跑的長測。**long 當前版本 PENDING**。前次 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 的 120s 已 PASS，但不是新 matrix 的 long job 證據。
 - **下一步**：核對 long job 的實際 120 秒 Range 9→9、300s/1800s EOF／bounded MSE 斷言；後續針對 Chromium AAC warnings 尋找可以檢測音訊連續性/落地輸出的指標。真實紅果 HEVC/Android/Windows/BVC2 仍欠外部合法片源與解碼裝置。
+
+
+## 階段 59 — 2026-11-13 用 pinned WASM 精確對照 direct AVIO 與 Worker 256 KiB 範圍快取的 AAC／fMP4
+
+- **原先證據限制**：階段 57 的四個 Seek 嚴格解碼以 Node memory direct slices 模擬底層 `readRange`，與 production `src/cenc-remux-worker.js` 的 256 KiB progressive HTTP Range cache 有不同預讀／partial chunk 行為；Chromium 仍有 9 個快速 Seek/cancel MOV log 訊息，而 Firefox 為 0。
+- **新增直接 main 提交**：[913418bb36c82dd189b61da426ad26f3b9135c15](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)，修改 `scripts/verify-cenc-stream-wasm.mjs` 以及 `.github/workflows/cenc-wasm-stream.yml`。驗證器新增 `CENC_VERIFY_WORKER_WINDOW=1`；對 pinned Librempeg 每次需要的 offset/length 模擬 256 KiB cache miss 窗口、offset cache hit、末尾短窗，保留 Asyncify Promise 換頁。在 70s H264/AAC CENC 的 7/35/55/63s RAP Seek，每點重新跑 direct-memory 與 Worker-window CENC remux，對 window 輸出執行 `ffmpeg -xerror` 音視訊嚴格解碼，並以 Node Buffer deepEqual 對整份 clear fMP4 逐位元組比對。若不同或 warning 導致解碼 FAIL，WASM job 不通過。
+- **新證據狀態 PENDING**：此次尚無 WASM 實跑結論，不能假裝 Worker-window 等同 direct，尤其 near-EOF Seek 與預讀可能觸及來源 EOF 的邊界。既有 direct seek [WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) **已 PASS**；新 Worker 模式需獨立驗證。
+- **下一步**：新 WASM workflow FAIL 則讀 failing step/精準定位（Range cache output 是否一致、AAC packet 是否 corruption），不能用 browser warning 分類代替；PASS 則可降低「HTTP window 分段讀取變更內容」的假設優先度，但仍需區分 Chrome worker cancel 競態。真實 HEVC/ByteVC2/Android 設備仍外部阻礙。

@@ -38,6 +38,8 @@
 
 | CENC Browser fast（首影格／Seek／三輪切換）與 long（120s 暫停／1800s）可獨立報告 | GitHub Actions matrix / Linux Chromium+Firefox | **PASS（fast）／PENDING（long）** | [main b5211a6](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3) 新 workflow matrix，[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) fast job 131460511145 completed/success，long job 131460510236 in_progress；不宣稱全 workflow PASS |
 
+| pinned WASM direct memory vs Worker 256 KiB HTTP Range window 快取對照；4 次 H264/AAC Seek | 自產 70s CENC；Node Asyncify／FFmpeg 嚴格影音解碼／clear fMP4 byte-equality | **PENDING（階段 59）** | [main 913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)；新增 `CENC_VERIFY_WORKER_WINDOW=1`，需等新 WASM proof 完成 |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
