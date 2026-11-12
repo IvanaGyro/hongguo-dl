@@ -379,3 +379,13 @@
 - **本階段文件**：[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md) 已在 [f648939](https://github.com/IvanaGyro/hongguo-dl/commit/f6489392107a3a871d7c7310400ddf1ac1807841) 新增「暫停背壓/恢復」正式 PASS 列；[AGENT-CURRENT.md](AGENT-CURRENT.md) 已在 [23927a0](https://github.com/IvanaGyro/hongguo-dl/commit/23927a0c694217b36414dc3dd249a9c1920cb667) 改掉暫停 pending 狀態。
 - **限定解讀**：此 PASS 是 3 秒觀察及 300s 當次暫停/恢復，不能推論 30 分鐘暫停、手機背景休眠、真實 HEVC 音訊／長期 memory、ByteVC2 端到端都已完成。較新的 `205dc02` 加入 CENC WASM availability recheck，其獨立 Browser #43286523184 上次仍 in_progress；已完成的階段 38 證據是早一個 `b226bc1` 的合成 browser run。
 - **下一步仍繼續**：針對更長暫停／跨集關閉 worker 而無殘留 Range 進行新測試；真實紅果 HEVC 206 授權來源與 Android／Windows 影片解碼仍需實機，ByteVC2 需合法 bitstream。所有寫入 main、每一階段記錄，禁止因 GitHub 讀取/寫入/Actions 卡住而無限重試。
+
+
+## 階段 39 — 2026-11-13 修復 HEVC codec 測試括號，主 CI 恢復
+
+- **目標／實際修改**：修復 `tests/hevc-codec.test.mjs` 的「invalid truncated, wrong version or missing hvcC is not guessed」單測最後 `assert.equal()` 缺失右括號；以原 blob SHA `76fad3c47280b72410dc183e26683ad8d16437f4` 核對後直接提交 main：[618bbab](https://github.com/IvanaGyro/hongguo-dl/commit/618bbab523513ff01ce60143752616c75cc90bf5)。本階段另更新 `docs/AGENT-PROGRESS.md`、`docs/AGENT-CURRENT.md`。
+- **PASS（本地語法）**：以 Node.js 22 執行 `node --check tests/hevc-codec.test.mjs`，語法檢查通過。因工作環境無 Bun、不能直接從 GitHub clone，這不是本機完整執行單測。
+- **PASS（完整 CI）**：[CI #43289090142](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289090142) 已確認 `completed/success`，HEAD 為 `618bbab523513ff01ce60143752616c75cc90bf5`；工作流程含 `bun ci`、`bun run test`、雙 WASM manifest verify、`VITE_BASE_PATH=/hongguo-dl/ bun run build`、Wrangler dry-run 與 Worker cold-start smoke。故最新修補的完整單測／Vite build 均已由 CI 驗證，而非僅推測語法正確。
+- **PENDING（部署）**：[Pages #43289089908](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289089908) 查詢時仍為 `in_progress`，不宣稱 deployed/success；後續文件提交可能取消舊 Pages workflow，應以後續最新 HEAD 的部署狀態為準，不輪詢。
+- **NOT TESTED**：本階段沒有新增 Chromium/Firefox 合成 browser E2E、真實紅果 HEVC/Android、ByteVC2 真實 bitstream 的驗收；原有 synthetic PASS 不得外推。
+- **下一個具體工程動作**：檢查最近 `6657a88` 至 `1c8d426` 的 HEVC codec/MSE 判斷與 `src/player.js` 進入 MSE 前的 codec guard 是否不一致；補精確單元測試和必要修正，提交 main 後繼續更新 checkpoint。
