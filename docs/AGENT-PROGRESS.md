@@ -22,7 +22,7 @@
 
 ## 後續階段（待填）
 
-- 階段 2：合併 main — 待寫。
+- 階段 2：合併 main — **完成**，詳見下方紀錄。
 - 階段 3：合併後 CI／部署確認 — 待寫。
 - 階段 4：實際 1080p HEVC + CENC 早期起播、seek、Android Firefox 驗證 — 尚未完成。
 
@@ -40,3 +40,12 @@
 2. 確認 `scripts/cenc-stream-remux.c`、`scripts/build-cenc-stream-wasm.sh`、`src/cenc-remux-worker.js`、`src/cenc-remux.js`、`src/fmp4-assembler.js` 的版本，以及相關 Actions workflow。
 3. 只在有需要時打開**失敗**作業的必要日誌，不要反覆輪詢尚未完成的 log。若工作中斷，先提交本文件記錄可驗證成果。
 4. 任何「已完成」都須附 SHA 或 Actions run；未驗證項目應清楚標示。
+
+## 階段 2 — 合併 feature 到 main（完成）
+
+- 已建立 [PR #4](https://github.com/IvanaGyro/hongguo-dl/pull/4)；GitHub 初次嘗試合併回報 add/add conflict。
+- 衝突僅出現在 `scripts/cenc-stream-remux.c` 和 `scripts/build-cenc-stream-wasm.sh`，因為 main 先前誤加入兩份重複且未測的實驗檔案。
+- **選擇已驗證的 feature 版本**：先在 main 將兩檔更新為與 feature 完全相同的 blob SHA，提交 `6ab4016a7f9695f8bbefe12de502ec08d51b299a` 與 `84320658c70941456abb53aa841b1e9218b90778`；沒有強制改寫歷史。
+- 然後 GitHub PR merge 成功，merge commit：[`bb9d808c32838ff853f305acfd43de8122fb1c8b`](https://github.com/IvanaGyro/hongguo-dl/commit/bb9d808c32838ff853f305acfd43de8122fb1c8b)。保留 main 和 feature 兩邊父系提交歷史。
+- 本文件已透過 feature 進入 main，以後每個完成的階段都持續直接更新 main 上的同一份文件。
+- **下一步**：只檢查一次合併後重要 GitHub Actions jobs 與 Pages deploy 狀態；若尚未完成寫「進行中」，不要等待迴圈卡住。驗證主分支必要檔案與測試未遭覆蓋。
