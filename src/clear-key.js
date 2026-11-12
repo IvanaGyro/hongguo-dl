@@ -4,6 +4,7 @@
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { inspectMp4TrackFormats, movieDurationSeconds } from './mp4-track-formats.js';
+import { clampStreamSeek } from './cenc-seek.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_MOOV = 1024 * 1024;
@@ -302,7 +303,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 }
 
 export async function openClearKeyStream({
-  video, source, codec, workerOrigin, signal,
+  video, source, codec, workerOrigin, signal, startSeconds = 0,
   fetchImpl = fetch,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
@@ -335,7 +336,10 @@ export async function openClearKeyStream({
     try {
       const remux = await openCencProgressiveStream({
         video, url, fileSize: metadata.fileSize,
-        codec, hasAac: metadata.hasAac, key: source.contentKey, signal
+        codec, hasAac: metadata.hasAac, key: source.contentKey, signal,
+        durationSeconds: metadata.movieDurationSeconds || source.duration || null,
+        startSeconds: clampStreamSeek(startSeconds,
+          metadata.movieDurationSeconds || source.duration || null) ?? 0
       });
       if (remux) {
         console.info('[Hongguo CENC] playback route: progressive-remux-to-mse');
