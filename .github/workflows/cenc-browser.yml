@@ -34,6 +34,8 @@ jobs:
           test -s public/cenc/cenc-core.mjs
       - name: Generate large synthetic encrypted H264/AAC progressive sample
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
           ffmpeg -nostdin -hide_banner -loglevel error \
             -f lavfi -i testsrc=size=480x270:rate=24 \
             -f lavfi -i sine=frequency=440:sample_rate=48000 \
