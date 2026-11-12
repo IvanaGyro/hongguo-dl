@@ -152,10 +152,14 @@ try {
   assert.match(partialTile, /--watch-progress:\s*[1-9]\d*%/);
   assert.equal(await page.locator('#episodes .watch-track').count(), 0,
     'Watch progress should fill the tile background, not a bottom bar');
-  const tileAppearance = await page.locator('button[data-play-vid="101"]').evaluate(el => ({
-    background: getComputedStyle(el).backgroundImage,
-    height: el.getBoundingClientRect().height
-  }));
+  await page.waitForFunction(() => {
+    const tile = document.querySelector('button[data-play-vid="101"]');
+    return tile?.isConnected && getComputedStyle(tile).backgroundImage.includes('linear-gradient');
+  }, null, { timeout: 8000 });
+  const tileAppearance = await page.evaluate(() => {
+    const el = document.querySelector('button[data-play-vid="101"]');
+    return { background: getComputedStyle(el).backgroundImage, height: el.getBoundingClientRect().height };
+  });
   assert.match(tileAppearance.background, /linear-gradient/, 'Playback progress fills the tile');
   assert(tileAppearance.height <= 54, 'Episode tiles must be compact');
   await page.waitForFunction(() => {
