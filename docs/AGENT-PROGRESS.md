@@ -534,3 +534,11 @@
 - **PENDING**：新 WASM workflow 尚未收到真正 completed/success；本變更增加驗證負載而不修改 WASM binary 或 SourceBuffer 代碼。即使通過，仍不能代替真實 Hongguo HEVC/Android 或同一 Worker 被取消中的 WebAudio quality proof。
 - **已完成其他證據**：前版 stage54 [CI #43297100841](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100841)、[Pages #43297100710](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100710) **completed/success**，含 pending MSE ACK 模擬測試；本版新 workflow 的狀態仍須獨立查證。
 - **下一步**：WASM 新正例如出現 `-xerror` FAIL，優先定位 audio packet / CTS/DTS 或 Librempeg MOV CENC seek 的問題，而非只在 Browser 隱藏 stderr；無具體 failure 時不得無限輪詢。瀏覽器三輪模式切換最新 E2E 仍待驗證。
+
+
+## 階段 56 — 2026-11-13 CENC Browser CI 快速播放與 120 秒長壓測平行分流
+
+- **問題**：`.github/workflows/cenc-browser.yml` 原本把 Chromium/Firefox 首影格與 RAP Seek、三輪模式切換及 Chromium **實際等待 120 秒**暫停/300 秒播放、1800 秒影片壓測全放在同一 job、同一個失敗閘門；不同類型的斷言與時程耦合，導致必須等長測才能知道快速回歸結果，也增加每次迭代 log 定位時間。
+- **直接提交 main**：[b5211a655915514a86bbe8fec68d8ed5f26cc7e3](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3)，僅改 `.github/workflows/cenc-browser.yml`。使用 matrix `suite: [fast, long]`、`fail-fast:false`、獨立 job 名稱；fast 生成 15/70s 素材並跑原四項 Chromium/Firefox first-frame、RAP seek/reload、多次切換；long 生成 300/1800s 素材，保留原 Chromium 120000ms 暫停與 300s/1800s 有界 MSE memory/Range/EOF 驗收。每個 job 使用自己的 Firefox/Chromium Playwright setup；global concurrency 仍不取消已啟動的工作。
+- **驗證狀態**：workflow 已由 GitHub 直接提交，**新的 matrix CI 結論 PENDING**；改動是執行排程與分組，不是播放演算法或將原有長測變短。不得把較早主 CI/Firefox pass 當 matrix pass。
+- **下一步**：新 fast/long job 成立後分別看結論，若 Chromium/Firefox fast FAIL，優先修具體斷言；long 120s 在測就繼續其他工程，不輪詢。並檢視 stage55 strict WASM H264/AAC decoded seek 是否成功。

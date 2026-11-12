@@ -36,6 +36,8 @@
 
 | pinned Librempeg 70s H264/AAC CENC：7／35／55／63s RAP Seek、AAC 與 AVC 嚴格解碼 | Ubuntu 24.04；自行生成 encrypted progressive MP4 | **PENDING（階段 55）** | [main fc18bc7](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb) 新增 WASM proof，`ffmpeg -xerror` + ffprobe PTS；不能以既有 6s HEVC Seek 代替 |
 
+| CENC Browser fast（首影格／Seek／三輪切換）與 long（120s 暫停／1800s）可獨立報告 | GitHub Actions matrix / Linux Chromium+Firefox | **PENDING（階段 56）** | [main b5211a6](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3) 新 workflow matrix，尚需 fast/long 各自 completed/success |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
