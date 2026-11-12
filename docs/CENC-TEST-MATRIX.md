@@ -17,7 +17,10 @@
 | 合成 1920×1080 HEVC/AAC encrypted → clear fMP4 + FFmpeg 解碼 | Ubuntu WASM proof；synthetic 4s | **PASS** | [WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)，HEVC、AAC、1920×1080 保留，首 fragment 前未讀到來源 EOF；非真實影片/瀏覽器 HEVC 驗證 |
 | 真實 1080p HEVC CENC：EOF 前影格、音訊、播畢、seek | Windows HEVC/MSE 環境；具合法存取權的真實集數 | **NOT TESTED** | 先前兩組候選 CDN HTTP Range 回 403，[bounded probe #43237370059](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43237370059)。403 不是 HEVC 解碼失敗 |
 | 真實 HEVC CENC | Android Firefox / Pixel | **NOT TESTED** | 需要裝置端 MSE / HEVC 解碼能力和可回 206 來源 |
-| ByteVC2 真實影格解碼、音畫同步、轉碼效能 | 有效 ByteVC2 bitstream + 專用 decoder | **NOT TESTED** | 普通 VVC decoder 不能代替 ByteVC2 驗證 |
+| BVC2 專用 decoder+x264 在 WASM 註冊；普通 H.264 負例拒絕 | Emscripten 3.1.74、固定 Librempeg/x264 | **PASS（ABI/負例）** | [Build proof #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447)，不能推論實際 ByteVC2 正例解出影格 |
+| BVC2 JS/WASM SHA256 + build provenance + Pages 守門 | main；`public/bvc2/manifest.json` | **PASS（資產配對）** | [Manifest publish #43280846374](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280846374)；本機 `node scripts/bvc2-wasm-bundle.mjs verify` |
+| ByteVC2 真實影格解碼、音畫同步、轉碼效能 | 有效授權 ByteVC2 bitstream + 專用 decoder | **NOT TESTED** | `scripts/verify-bvc2-fixture.mjs` 可在本機執行正例；尚無合法來源/正例結果 |
+| 本機 H.264/HEVC/HEVC Main10/VVC 宣告能力檢測 | Windows/Android/Linux 瀏覽器 | **PASS（UI 功能）** | [Browser #43280440977](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280440977)；宣告不代表真實 HEVC frame decode |
 
 ## 固定驗證指令
 
