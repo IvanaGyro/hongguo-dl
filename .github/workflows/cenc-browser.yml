@@ -79,6 +79,18 @@ jobs:
             -encryption_kid 11223344556677889900aabbccddeeff \
             -movflags +faststart -y /tmp/cenc-h264-300s-fixture.mp4
           test $(stat -c %s /tmp/cenc-h264-300s-fixture.mp4) -gt 600000
+          # 30-minute timeline with low sample-rate video to keep CI CPU and
+          # bytes bounded; still exercises real encrypted AVIO/MSE playback.
+          ffmpeg -nostdin -hide_banner -loglevel error \
+            -f lavfi -i testsrc=size=480x270:rate=6 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 1800 -c:v libx264 -preset ultrafast -crf 32 -g 24 \
+            -pix_fmt yuv420p -c:a aac -b:a 48k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y /tmp/cenc-h264-1800s-fixture.mp4
+          test $(stat -c %s /tmp/cenc-h264-1800s-fixture.mp4) -gt 600000
       - name: Build site with new CENC remux Web Worker
         env:
           VITE_BASE_PATH: /hongguo-dl/
@@ -99,3 +111,4 @@ jobs:
           CENC_BROWSER=chromium CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           CENC_BROWSER=chromium CENC_TEST_STRESS=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-300s-fixture.mp4
+          CENC_BROWSER=chromium CENC_TEST_STRESS=1 CENC_STRESS_SECONDS=1800 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-1800s-fixture.mp4
