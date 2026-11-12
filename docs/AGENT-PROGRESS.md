@@ -454,3 +454,12 @@
 - **PENDING（新 browser proof）**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 初查 `pending`；未有新 PASS 行，先在 `docs/CENC-TEST-MATRIX.md` 獨立標記 120 秒 PENDING，與先前 [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) 的 3 秒 PASS 分開。相同 HEAD 的 [CI #43292941854](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941854) 初查 `in_progress`。
 - **近期已確證**：前段錯誤分類 main `de84114` 的 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 與 [Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) 已在再次查詢時明確 `completed/success`，含新增 200/403/416/429/503 分類單元和 Vite build。這不等於目前新增 120 秒壓測已 PASS。
 - **限制與下一個具體動作**：長暫停仍僅 Linux Chromium 合成 H.264/AAC，非實際紅果 HEVC/Android。待首次完成的 Browser proof 結論，如失敗僅讀失敗 job/斷言並修，否則進一步測試反覆切集/播放下載模式、Worker 數量與 Object URL 釋放；繼續保持最新 main 及文件，不輪詢 Actions。
+
+
+## 階段 47 — 2026-11-13 三輪播放／下載切換、Object URL 與 Range 清理合成瀏覽器測試
+
+- **程式修改**：直接 main [ac615db](https://github.com/IvanaGyro/hongguo-dl/commit/ac615db6965c6978cecfe35ea3d70d5e497608d1)（`tests/cenc-stream.browser.mjs`），只新增可測試 hook：在 Playwright 載入文件前包裝 `URL.createObjectURL/revokeObjectURL`，只追蹤 `MediaSource` 物件的 live URL 數，不記源站 URL、key 或媒體位元組。既有 70 秒合成 CENC H.264/AAC 55s 與 10/50/90% seek/reload 驗收末尾，將一次播放／下載切換擴大為 **三輪**；每輪切至下載模式後 MSE live URL 應為 0、Range 靜止 800ms，切回播放後能以有界 Range 續播、live MSE URL 應為 1，最後 created−revoked=1（只留正在播放的 MediaSource）。
+- **PENDING（Browser E2E）**：[Browser #43293286765](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286765) 初次查詢 `pending`；[CI #43293286745](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286745) 與 [Pages #43293286729](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286729) `in_progress`。只在真正取得 PASS 行後才將矩陣 PENDING 改 PASS，不能用既有單輪切換 proof 替代。
+- **前段已驗證／限制**：階段 45 CENC metadata 200/403/416/429/503 的明確錯誤分類已在 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) **completed/success**，部署 [Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) **success**；此結果不等於最新三輪切換、120 秒暫停或真實 HEVC 正例。對 pinned Librempeg 是否輸出 `hev1`，仍以對應 WASM proof 執行結果為準。
+- **文件**：`docs/CENC-TEST-MATRIX.md` 加入本測試 PENDING 與已成功的 HTTP status 模擬回歸。重整 `docs/AGENT-CURRENT.md` 為短版最新摘要；歷史詳情仍全部保留本日誌。
+- **下一步**：若最新 Browser/CI 有具體 fail，查必要錯誤並修；否則接續 Android/Windows 規格差異、真實授權 HEVC 206 來源的有界診斷、ByteVC2 本機正例的外部素材依賴，並評估多次切集／暫停後 GPU/RSS。不得宣稱已做裝置驗收。
