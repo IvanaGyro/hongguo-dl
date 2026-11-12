@@ -26,7 +26,8 @@ async function assertCencAacPcm(page, phase) {
       Object.assign(button.style, {
         position: 'fixed', top: '8px', left: '8px', zIndex: '2147483647'
       });
-      button.addEventListener('click', () => {
+      button.addEventListener('click', event => {
+        window.__cencAudioClickTrusted = event.isTrusted;
         const video = document.querySelector('#player-video');
         const context = new AudioContext();
         const source = context.createMediaElementSource(video);
@@ -42,9 +43,30 @@ async function assertCencAacPcm(page, phase) {
       document.body.appendChild(button);
     });
     await page.locator('#cenc-activate-audio-test').click();
-    await page.waitForFunction(() =>
-      window.__cencAudioProbe?.context?.state === 'running' ||
-      window.__cencAudioProbe?.resumeFailed, null, { timeout: 6000 });
+    try {
+      await page.waitForFunction(() =>
+        window.__cencAudioProbe?.context?.state === 'running' ||
+        window.__cencAudioProbe?.resumeFailed, null, { timeout: 6000 });
+    } catch (error) {
+      // A Web Audio policy/backend issue is not an AAC decoding error.
+      const state = await page.evaluate(() => {
+        const video = document.querySelector('#player-video');
+        const ctx = window.__cencAudioProbe?.context;
+        return {
+          trustedClick: window.__cencAudioClickTrusted || false,
+          contextState: ctx?.state || 'missing',
+          resumeFailed: Boolean(window.__cencAudioProbe?.resumeFailed),
+          userActivated: navigator.userActivation?.hasBeenActive ?? null,
+          videoPaused: video?.paused ?? null,
+          videoMuted: video?.muted ?? null,
+          videoReadyState: video?.readyState ?? null,
+          videoError: video?.error?.code ?? null
+        };
+      });
+      console.error('CENC AAC Web Audio activation diagnostics:',
+        JSON.stringify({ browserName, phase, ...state }));
+      throw error;
+    }
     const audio = await page.evaluate(async () => {
       const video = document.querySelector('#player-video');
       const { context, analyser, resumeFailed } = window.__cencAudioProbe;
@@ -111,7 +133,14 @@ const KEY = '00112233445566778899aabbccddeeff';
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
   headless: true, ...(browserName === 'firefox'
-    ? { firefoxUserPrefs: { 'media.eme.enabled': true, 'media.autoplay.default': 0 } }
+    ? { firefoxUserPrefs: {
+      'media.eme.enabled': true,
+      'media.autoplay.default': 0,
+      // Headless Firefox separately blocks Web Audio even when video autoplay
+      // is allowed. Explicitly allow the synthetic audio *test* while still
+      // requiring a real trusted click and actual decoded non-silent PCM.
+      'media.autoplay.block-webaudio': false
+    } }
     : {})
 });
 const context = await browser.newContext({ acceptDownloads: true });
