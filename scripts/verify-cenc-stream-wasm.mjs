@@ -4,19 +4,24 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const [modulePath, wasmPath, fixturePath, outputPath] = process.argv.slice(2);
+const [modulePath, wasmPath, fixturePath, outputPath, seekSecondsText = '0'] = process.argv.slice(2);
+const seekSeconds = Number(seekSecondsText);
+assert(Number.isFinite(seekSeconds) && seekSeconds >= 0 && seekSeconds <= 86400,
+  'Invalid requested seek seconds');
 assert(modulePath && wasmPath && fixturePath, 'Usage: verify-cenc-stream-wasm.mjs core.mjs core.wasm fixture.mp4 [out.mp4]');
 const { default: createCore } = await import(pathToFileURL(modulePath).href);
 const encrypted = readFileSync(fixturePath);
 const chunks = [];
 const key = '00112233445566778899aabbccddeeff';
 let highestRequested = 0, firstMoofAt = null, calls = 0, outputLength = 0;
+let firstMoofHadNonzeroRange = false, nonzeroMediaRange = false;
 const core = await createCore({
   wasmBinary: readFileSync(wasmPath),
   readRange: async (offset, length) => {
     assert(offset >= 0 && offset < encrypted.byteLength);
     assert(length > 0 && length <= 1024 * 1024);
     highestRequested = Math.max(highestRequested, offset + length);
+    if (offset > 256 * 1024) nonzeroMediaRange = true;
     calls++;
     // Asynchronous to exercise C AVIO callbacks + Asyncify unwinding.
     await Promise.resolve();
@@ -25,14 +30,19 @@ const core = await createCore({
   writeChunk: async data => {
     chunks.push(data);
     outputLength += data.length;
-    if (firstMoofAt == null && chunks.some(c => Buffer.from(c).includes('moof')))
+    if (firstMoofAt == null && chunks.some(c => Buffer.from(c).includes('moof'))) {
       firstMoofAt = highestRequested;
+      firstMoofHadNonzeroRange = nonzeroMediaRange;
+    }
     await Promise.resolve();
   }
 });
 assert.equal(core._cenc_remux_available(), 1, 'MOV demuxer or MP4 muxer missing');
-const result = await core.ccall('cenc_stream_remux', 'number',
-  ['number', 'string'], [encrypted.byteLength, key], { async: true });
+const result = seekSeconds > 0
+  ? await core.ccall('cenc_stream_remux_at', 'number',
+    ['number', 'string', 'number'], [encrypted.byteLength, key, seekSeconds], { async: true })
+  : await core.ccall('cenc_stream_remux', 'number',
+    ['number', 'string'], [encrypted.byteLength, key], { async: true });
 const error = core.UTF8ToString(core._cenc_remux_error());
 assert.equal(result, 0, 'CENC streaming failed: ' + error + ' ' + JSON.stringify({
   bridgeError: core.bridgeError, readCalls: calls, readMaxOffset: highestRequested,
@@ -42,6 +52,8 @@ const output = Buffer.concat(chunks.map(c => Buffer.from(c)));
 assert(firstMoofAt != null, 'no output fragment observed');
 assert(firstMoofAt < encrypted.byteLength,
   'first moof arrived only after complete input was read');
+if (seekSeconds > 0) assert(firstMoofHadNonzeroRange,
+  'indexed seek did not request later HTTP byte ranges before the first fragment');
 for (const tag of ['ftyp', 'moov', 'mvex', 'moof', 'mdat'])
   assert(output.includes(tag), 'missing ' + tag);
 assert(!output.includes('tenc'), 'output still contains encrypted sample entry');
@@ -50,5 +62,6 @@ if (outputPath) writeFileSync(outputPath, output);
 console.log('PASS progressive CENC -> streaming clear fMP4 WASM:', JSON.stringify({
   inputBytes: encrypted.byteLength, outputBytes: output.length,
   firstFragmentReadBytes: firstMoofAt, sourceEofAtFirstFragment: false,
+  seekSeconds, firstMoofHadNonzeroRange,
   calls, moofCount: output.toString('latin1').match(/moof/g)?.length || 0
 }));
