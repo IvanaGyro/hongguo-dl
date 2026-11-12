@@ -203,11 +203,35 @@ try {
         null, { timeout: 30000 });
       await page.locator('#mode-play').click();
       await page.locator('#episodes button.play-episode').first().click();
-      await page.waitForFunction(() => {
-        const video = document.querySelector('#player-video');
-        return video?.currentTime > 54.5 && video.videoWidth === 480 &&
-          video.readyState >= 2;
-      }, null, { timeout: 90000 });
+      try {
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          return video?.currentTime > 54.5 && video.videoWidth === 480 &&
+            video.readyState >= 2;
+        }, null, { timeout: 90000 });
+      } catch (error) {
+        const state = await page.evaluate(() => {
+          const video = document.querySelector('#player-video');
+          const records = JSON.parse(localStorage.getItem('hongguo-dl-playback-history-v1') || '{}');
+          return {
+            status: document.querySelector('#player-status')?.textContent,
+            sourceInfo: document.querySelector('#player-source-info')?.textContent,
+            currentTime: video?.currentTime, duration: video?.duration,
+            readyState: video?.readyState, width: video?.videoWidth,
+            errorCode: video?.error?.code || null,
+            buffered: Array.from({ length: video?.buffered?.length || 0 }, (_, i) =>
+              [video.buffered.start(i), video.buffered.end(i)]),
+            savedPositions: Object.values(records).map(r => ({
+              seconds: r.seconds, duration: r.duration, completed: r.completed
+            }))
+          };
+        });
+        console.error('CENC reload resume diagnostics:', JSON.stringify({
+          browserName, ...state, mediaRequests: mediaRequests.slice(-12),
+          diagnosticMessages: diagnosticMessages.slice(-8), errors: errors.slice(-6)
+        }));
+        throw error;
+      }
       const resumedRanges = mediaRequests.slice(beforeReload);
       assert(resumedRanges.some(request => request.first > input.length * 0.5),
         'Reload resume must reindex near the saved timestamp instead of restarting at 0');
