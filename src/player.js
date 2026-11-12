@@ -354,6 +354,8 @@ export function createPlayer({
       ? 'video/mp4; codecs="vvc1"' : 'video/mp4; codecs="avc1.42E01E"';
     if (containerCodec && video.canPlayType(decoder) === '')
       sourceInfo.textContent += ' · 此編碼可能無法在本瀏覽器播放';
+    await keyCleanup;
+    if (signal.aborted || currentToken !== token) return;
     if (activeUrl) URL.revokeObjectURL(activeUrl);
     // The native key session belongs to this source and is released before
     // any subsequent selection, retry, or playback-mode transition.
@@ -505,6 +507,12 @@ export function createPlayer({
   video.addEventListener('error', () => {
     if (!current || loading || !controller || controller.signal.aborted) return;
     const currentToken = token, signal = controller.signal;
+    if (nativeStream) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      disposeNativeKeys();
+    }
     const parsed = { code: 'PLAYBACK_ERROR', message: video.error?.message || '播放中斷' };
     failure = recordFailure(failure, parsed, 5);
     setStatus(playbackFailureMessage(failure, parsed, 5));
