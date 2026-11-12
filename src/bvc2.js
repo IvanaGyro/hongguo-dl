@@ -3,30 +3,30 @@
 // dedicated worker and is never allowed to block Video.js's UI thread.
 import { errorWith } from './logic.js';
 import { runBvc2WorkerJob } from './bvc2-job.js';
+import { retryableAvailability } from './retryable-availability.js';
 
 const CORE = new URL(import.meta.env.BASE_URL + 'bvc2/bvc2-core.wasm', location.href);
 const MANIFEST = new URL(import.meta.env.BASE_URL + 'bvc2/manifest.json', location.href);
-let available = null;
+const checkBvc2Assets = retryableAvailability(async () => {
+  const [wasm, manifest] = await Promise.all([
+    fetch(CORE, { method: 'HEAD' }),
+    fetch(MANIFEST, { method: 'HEAD', cache: 'no-store' })
+  ]);
+  // A 200 SPA fallback is not evidence of a published decoder.
+  // Only advertise ByteVC2 when the versioned manifest is deployed too.
+  const wasmMime = wasm.headers.get('content-type') || '';
+  const manifestMime = manifest.headers.get('content-type') || '';
+  const length = Number(wasm.headers.get('content-length') || 0);
+  const manifestLength = Number(manifest.headers.get('content-length') || 0);
+  return wasm.ok && manifest.ok &&
+    /^(application\\/wasm|application\\/octet-stream)\\b/i.test(wasmMime) &&
+    /^(application\\/json|application\\/octet-stream)\\b/i.test(manifestMime) &&
+    length < 32 * 1024 * 1024 && manifestLength < 4096;
+});
 export async function bvc2BridgeAvailable() {
   if (typeof Worker !== 'function') return false;
-  if (!available) {
-    available = Promise.all([
-      fetch(CORE, { method: 'HEAD' }),
-      fetch(MANIFEST, { method: 'HEAD', cache: 'no-store' })
-    ]).then(([wasm, manifest]) => {
-      // A 200 SPA fallback is not evidence of a published decoder.
-      // Only advertise ByteVC2 when the verified manifest is deployed too.
-      const wasmMime = wasm.headers.get('content-type') || '';
-      const manifestMime = manifest.headers.get('content-type') || '';
-      const length = Number(wasm.headers.get('content-length') || 0);
-      const manifestLength = Number(manifest.headers.get('content-length') || 0);
-      return wasm.ok && manifest.ok &&
-        /^(application\/wasm|application\/octet-stream)\b/i.test(wasmMime) &&
-        /^(application\/json|application\/octet-stream)\b/i.test(manifestMime) &&
-        length < 32 * 1024 * 1024 && manifestLength < 4096;
-    }).catch(() => false);
-  }
-  return available;
+  // A transient 404 during Pages deploy must not persist until page reload.
+  return checkBvc2Assets();
 }
 
 export function transcodeBvc2(bytes, { contentKey = null, signal } = {}) {
