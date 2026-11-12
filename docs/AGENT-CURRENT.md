@@ -56,3 +56,9 @@
 - [`9279172`](https://github.com/IvanaGyro/hongguo-dl/commit/9279172b3ed0f38af62c56d832618aa3bdcf3c13) 修正 CENC Worker runtime error 未即時撤銷 Object URL：失敗與正常 close 共用冪等撤銷。新增 HEVC 精確 MIME 跨四次 Seek、前一 Worker terminate、Object URL 釋放與 Worker error 注入回歸。
 - [CI #43290902235](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902235)、[Pages #43290902283](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902283)、[WASM #43290902250](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902250) 初查 **in_progress**，[Browser #43290902255](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902255) **pending**；不冒稱最新 CI PASS。
 - **立即恢復點**：優先處理若有具體 CI 失敗；否則改善 HTTP 403/416 與不支援編碼之錯誤分類和有界降級，持續長暫停及多次切集測試。真實紅果 HEVC 及 ByteVC2 正例仍需合法片源和實機。
+
+## 最新工程 checkpoint（階段 43，2026-11-13）
+
+- [`5ac183a`](https://github.com/IvanaGyro/hongguo-dl/commit/5ac183a69de73f19d586f0ef79a3222476284a7b)：原生 FFmpeg 自生成 CENC HEVC→clear fMP4 對照輸出 `hev1`（**非 pinned Librempeg 證據**），因此修正上一階段不當強制 `hvc1`：HEVC 只比對精確 profile/constraint/level，實際從 WASM init 片段採用 `hev1` 或 `hvc1` 作 MSE SourceBuffer MIME，並再次檢查支援。新增 pinned Librempeg WASM proof 解析輸出 sample entry，仍待執行結果。
+- 新 [CI #43291965366](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965366) `in_progress`、[Pages #43291965210](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965210) `queued`、[WASM #43291965388](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965388) `in_progress`、[Browser #43291965317](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965317) `pending`，不可標 PASS。
+- **立即恢復點**：若 CI 有具體 FAIL，針對錯誤修復；新增 fake MediaSource 對 `hev1` 動態建 SourceBuffer 的正例、拒絕不支援輸出的負例。接續長暫停與反覆切集測試。真實 HEVC/ByteVC2 仍未有合法 sample 與目標裝置驗證。
