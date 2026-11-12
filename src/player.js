@@ -11,6 +11,7 @@ import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
+import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -21,7 +22,7 @@ function loadPrefs(storage) {
 function printableSource(source) {
   const names = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
   return [
-    names[source.codec] || source.codec || '',
+    (source.outputCodec ? 'ByteVC2 → H.264（WASM 轉碼）' : names[source.codec] || source.codec || ''),
     source.width && source.height ? source.width + '×' + source.height : source.quality || '',
     source.duration ? Math.round(source.duration) + ' 秒' : ''
   ].filter(Boolean).join(' · ');
@@ -40,6 +41,7 @@ export function createPlayer({
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
+  let canTranscodeBvc2 = false;
   // All measurements refer to the same selected-episode click, not the start
   // of an individual fetch or decoder stage. Never log signed URLs or keys.
   let startupStages = new Set();
@@ -88,8 +90,8 @@ export function createPlayer({
         const candidates = (variants || []).filter(v => qualityId(v) === option.value);
         option.disabled = available.qualities.length > 0 && !candidates.length;
         option.textContent = option.value + (candidates.length &&
-          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey)
-            ? '（VVC，無法解密播放）' : '');
+          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey) && !canTranscodeBvc2
+            ? '（ByteVC2，尚無可用 WASM）' : '');
       }
     }
   }
@@ -209,6 +211,11 @@ export function createPlayer({
         : await sourceFor(seriesId, episode.vid, 'auto', 'auto', signal);
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
+    // A standard browser VVC decoder is not a BVC2 decoder. Only advertise
+    // this tier when the dedicated Librempeg WASM bundle is deployed.
+    canTranscodeBvc2 = variants.some(v => codecId(v.codec) === 'bytevc2')
+      ? await bvc2BridgeAvailable() : false;
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     if (!quiet) {
       lastVariants = variants;
       lastVariantsVid = episode.vid;
@@ -225,7 +232,7 @@ export function createPlayer({
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
     const resolved = playbackRendition(variants,
-      { quality, codec }, mimeSupport, attempt);
+      { quality, codec }, mimeSupport, attempt, canTranscodeBvc2);
     const source = resolved.source;
     if (!source?.url) {
       const tiers = availableRenditions(variants);
@@ -234,7 +241,7 @@ export function createPlayer({
       throw errorWith('PLAYBACK_UNSUPPORTED',
         '所選 ' + (quality === 'auto' ? '自動畫質' : quality) +
         ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
-        '。加密 VVC 無法由目前的 FFmpeg.wasm 解密封裝，HEVC 也需要瀏覽器支援。');
+        '。ByteVC2 須部署 Librempeg WASM 轉碼器；HEVC 需瀏覽器支援。');
     }
     let fallbackNotice = '';
     if (resolved.fallback) {
@@ -252,6 +259,28 @@ export function createPlayer({
       }
     }
     const profile = source.source === 'app' ? 'app' : 'web';
+    if (codecId(source.codec) === 'bytevc2') {
+      if (isHlsUrl(source.url)) throw errorWith('PLAYBACK_UNSUPPORTED',
+        'ByteVC2 HLS 尚未支援；目前的 WASM 路徑只接受 MP4');
+      // Do not transcode a whole second episode during playback. Prefetch
+      // metadata now; take over when the user actually switches episodes.
+      if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
+      setStatus('讀取 ByteVC2 影片…');
+      const started = performance.now();
+      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
+        (length) => { if (length > 0) markStartupStage('first-media-byte'); });
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      setStatus('Librempeg ByteVC2 → H.264 轉碼中…');
+      const transcoded = await transcodeBvc2(raw,
+        { contentKey: source.contentKey, signal });
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      console.info('[Hongguo playback] E' + episode.index + ' ByteVC2 解密轉碼：' +
+        Math.round(performance.now() - started) + 'ms');
+      const playable = new Blob([transcoded], { type: 'video/mp4' });
+      const outputSource = { ...source, outputCodec: 'h264' };
+      cache.put(key, playable, outputSource);
+      return { blob: playable, source: outputSource, fallbackNotice, variants: null };
+    }
     if (!isHlsUrl(source.url) && !source.contentKey)
       return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
         source, fallbackNotice, variants: quiet ? variants : null };
@@ -329,6 +358,10 @@ export function createPlayer({
     // that one promise rather than issuing a second expensive media request.
     const prepared = handoff && attempt === 0 ? await handoff.promise : null;
     let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
+    if (resolved?.bvc2Pending) {
+      resolved = await sourceForEpisode(episode, signal, attempt,
+        { variants: resolved.variants });
+    }
     if (resolved?.nativePending) {
       await keyCleanup;
       const native = await openClearKeyStream({
@@ -358,7 +391,7 @@ export function createPlayer({
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
     if (resolved.native) sourceInfo.textContent += ' · 原生串流解密';
-    const containerCodec = codecId(resolved.source?.codec);
+    const containerCodec = resolved.source?.outputCodec || codecId(resolved.source?.codec);
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
       ? 'video/mp4; codecs="vvc1"' : 'video/mp4; codecs="avc1.42E01E"';
