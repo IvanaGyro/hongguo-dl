@@ -28,6 +28,9 @@ emmake make install-lib-static -j4 > "$OUTPUT/x264-build.log" 2>&1 || {
 }
 export PKG_CONFIG_PATH="$OUTPUT/prefix/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$OUTPUT/prefix/lib/pkgconfig"
+echo "x264 pkg-config version: $(pkg-config --modversion x264)"
+echo "x264 linker flags: $(pkg-config --libs --static x264)"
+test -s "$OUTPUT/prefix/lib/libx264.a"
 cd "$OUTPUT/src/librempeg-$COMMIT"
 emconfigure ./configure \
   --target-os=none --arch=x86_32 --enable-cross-compile \
@@ -43,11 +46,17 @@ emconfigure ./configure \
   --enable-filter=scale,format,aformat,null,anull \
   --enable-protocol=file,pipe \
   --enable-gpl --enable-agpl --enable-version3 --enable-libx264 \
-  --pkg-config-flags=--static \
+  --pkg-config=pkg-config --pkg-config-flags=--static \
   --extra-cflags="-O3 -msimd128 -I$OUTPUT/prefix/include" \
   --extra-ldflags="-L$OUTPUT/prefix/lib" \
   > "$OUTPUT/librempeg-configure.log" 2>&1 || {
-    tail -120 "$OUTPUT/librempeg-configure.log"; exit 1;
+    tail -60 "$OUTPUT/librempeg-configure.log"
+    echo '---- pkg-config / compiler probe diagnostics ----'
+    if [[ -f ffbuild/config.log ]]; then
+      grep -A30 -B8 -E 'x264_encoder_encode|libx264|ERROR: x264' ffbuild/config.log | tail -180 || true
+      cp ffbuild/config.log "$OUTPUT/librempeg-config-debug.log"
+    fi
+    exit 1
   }
 emmake make -j4 ffmpeg > "$OUTPUT/librempeg-build.log" 2>&1 || {
   tail -120 "$OUTPUT/librempeg-build.log"; exit 1;
