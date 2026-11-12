@@ -331,7 +331,7 @@ try {
     document.querySelector('#player-codec option[value="auto"]')?.textContent.includes('ByteVC2/VVC'));
   await page.waitForFunction(() => document.querySelector('#player-codec option[value="hevc"]')?.disabled,
     null, { timeout: 8000 });
-  assert.equal(await page.locator('#player-codec option[value="hevc"]').isDisabled(), true,
+  assert.equal(await page.locator('#player-codec option[value="hevc"]').evaluate(el => el.disabled), true,
     'HEVC must not be offered at VVC-only 720p');
   await page.waitForFunction(() =>
     document.querySelector('#player-status')?.textContent.includes('無法播放'));
