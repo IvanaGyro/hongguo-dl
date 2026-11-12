@@ -96,10 +96,17 @@ try {
     ['1', '2']);
   await page.locator('#player-panel').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#player-video').evaluate(v => v.controls), false,
-    'Custom controls replace native video-only fullscreen');
+    'Video.js replaces the browser native video-only fullscreen');
+  assert.equal(await page.locator('video-player > media-container').count(), 1);
+  assert.equal(await page.locator('media-controls media-time-slider').count(), 1);
+  assert.equal(await page.locator('media-controls media-play-button').count(), 1);
+  assert.equal(await page.locator('media-controls media-fullscreen-button').count(), 1);
+  assert.equal(await page.evaluate(() => Boolean(window.customElements?.get('video-player'))), true,
+    'Video.js video-player custom element must be registered');
   assert.equal(await page.locator('#player-prev').isVisible(), true);
   assert.equal(await page.locator('#player-play-pause').isVisible(), true);
   assert.equal(await page.locator('#player-next').isVisible(), true);
+  assert.equal(await page.locator('#player-mute').isVisible(), true);
   assert.equal(await page.locator('#player-fullscreen').isVisible(), true);
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
@@ -151,8 +158,14 @@ try {
   }));
   assert.match(tileAppearance.background, /linear-gradient/, 'Playback progress fills the tile');
   assert(tileAppearance.height <= 54, 'Episode tiles must be compact');
-  assert(Number(await page.locator('#player-seek').inputValue()) > 0,
-    'Custom seek slider tracks playback progress');
+  await page.waitForFunction(() => {
+    const slider = document.querySelector('#player-seek');
+    const fill = getComputedStyle(slider).getPropertyValue('--media-slider-fill');
+    return parseFloat(fill) > 0;
+  }, null, { timeout: 8000 });
+  const videoJsProgress = await page.locator('#player-seek').evaluate(el =>
+    getComputedStyle(el).getPropertyValue('--media-slider-fill'));
+  assert(parseFloat(videoJsProgress) > 0, 'Video.js slider tracks playback progress');
   await page.reload();
   await page.locator('button[data-linked-id="60"]').waitFor({ state: 'visible' });
   await page.locator('#mode-play').click();

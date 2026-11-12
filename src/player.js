@@ -1,6 +1,6 @@
 // Video.js 10 controls with a native <video> media element.
 // Source resolution, encryption, resume and episode navigation stay app-owned.
- // Only the current episode is active.
+// Only the current episode is active.
 // Both progress recording and restoration are guarded against the common
 // reload race: a 0-second metadata load must never erase a saved position.
 import { errorWith, classifyError, isHlsUrl, mediaProxyUrl } from './logic.js';

@@ -6,6 +6,7 @@ on:
       - 'src/ffmpeg.js'
       - 'src/main.js'
       - 'src/player.js'
+      - 'src/styles.css'
       - 'src/bulk.js'
       - 'src/zip.js'
       - 'src/archive-download.js'
