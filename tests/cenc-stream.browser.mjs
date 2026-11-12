@@ -100,6 +100,22 @@ try {
     await page.waitForFunction(() =>
       document.querySelector('#series-title')?.textContent?.includes('CENC streaming fixture'),
       null, { timeout: 30000 });
+    if (!process.env.CENC_TEST_STRESS && !process.env.CENC_TEST_SEEK) {
+      // A Windows/Android user can copy this local report without providing
+      // media URLs, CENC keys or any personally identifying device ID.
+      await page.locator('#codec-diagnostics summary').click();
+      await page.locator('#codec-diag-run').click();
+      await page.waitForFunction(() => {
+        const text = document.querySelector('#codec-diag-results')?.textContent || '';
+        return text.includes('"HEVC + AAC"') && text.includes('"mseSupported"');
+      }, null, { timeout: 15000 });
+      const report = JSON.parse(await page.locator('#codec-diag-results').textContent());
+      assert.equal(report.schema, 1);
+      assert(report.formats.some(format => format.codec === 'HEVC + AAC'));
+      assert(!JSON.stringify(report).includes('00112233445566778899aabbccddeeff'),
+        'Local codec report must never disclose media decryption keys');
+      await page.locator('#codec-diagnostics summary').click();
+    }
     await page.locator('#mode-play').click();
     await page.locator('#episodes button.play-episode').first().click();
     try {
