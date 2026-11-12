@@ -82,7 +82,7 @@ Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_
 
 ## 已知限制
 
-- 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單（官方標示前 5 集可看）、HEVC／ByteVC2 來源及部分 `206 Partial Content` HTTP Range 回應。**已用合成加密影片驗證 Firefox EME Clear Key 真正播放，但尚未完成紅果實際片源播放、Android Firefox 實機與大型 ZIP 端對端驗證**。來源 API、CDN 仍可能因地區或來源變更失敗。
+- 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單（官方標示前 5 集可看）、HEVC／ByteVC2 來源及部分 `206 Partial Content` HTTP Range 回應。**已用合成加密影片驗證 FFmpeg.wasm 備援播放；但目前 GitHub Actions 的 headless Firefox 在 EME 金鑰狀態為 `usable` 後仍回報 `MEDIA_ERR_DECODE`，所以尚不能宣稱 Firefox 原生 CENC 串流端對端成功。紅果實際片源播放、Android Firefox 實機與大型 ZIP 端對端驗證亦未完成**。來源 API、CDN 仍可能因地區或來源變更失敗。
 - 單集 Blob staging 上限 300 MiB；FFmpeg.wasm 來源讀取／HLS 分片 staging 上限約 320 MiB；ZIP 的 Blob 備援限 240 MiB；MP4 無損合併總輸入限 160 MiB。下載儲存途徑只有未加密且無需轉碼的原始串流能直接串流寫入資料夾，**不能保證 60 集可無損合併成一個 MP4**。
 - [ByteVC2 WASM 實驗](docs/bvc2-wasm.md)：已成功建置約 **4.81 MiB** 的單執行緒 Librempeg `bvc2` 解碼與 x264 編碼核心，並完成 Node.js 實際載入、ABI 檢查及錯誤輸入拒絕測試。瀏覽器播放及下載 H.264 的程式已具備可取消的 Worker 路徑；**但尚未以權限允許的真實 ByteVC2 MP4 驗證成功解密、輸出影格、音訊同步、速度與記憶體**。ByteVC2 現階段需要先下載完整 MP4 再轉碼，不屬於低延遲分段串流；Android Firefox 實機效能未知。沒有 WASM 時仍會明確提示或回退。來源沒有可靠音軌／字幕 metadata 時不顯示虛構選項。
 - 不支援 DRM 授權、直播 HLS、斷點續傳或使用者登入。重新載入頁面會中斷下載；不會保存已簽章媒體 URL 或影片密鑰。
