@@ -151,6 +151,51 @@ try {
     assert(!mediaRequests.some(r => r.unbounded),
       'Incremental playback must never request whole-file download');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
+    if (process.env.CENC_TEST_STRESS === '1') {
+      await page.evaluate(() => {
+        const video = document.querySelector('#player-video');
+        video.muted = true;
+        video.playbackRate = 8;
+        const stats = window.__cencStress = {
+          samples: 0, maxBufferedSpan: 0, maxBufferedAhead: 0,
+          maxDurationSeconds: 0, lastTime: 0
+        };
+        const sample = () => {
+          let total = 0, ahead = 0;
+          for (let i = 0; i < video.buffered.length; i++) {
+            const a = video.buffered.start(i), b = video.buffered.end(i);
+            total += b - a;
+            ahead = Math.max(ahead, b - video.currentTime);
+          }
+          stats.samples++;
+          stats.maxBufferedSpan = Math.max(stats.maxBufferedSpan, total);
+          stats.maxBufferedAhead = Math.max(stats.maxBufferedAhead, ahead);
+          stats.maxDurationSeconds = Math.max(stats.maxDurationSeconds, video.duration || 0);
+          stats.lastTime = video.currentTime;
+        };
+        video.addEventListener('timeupdate', sample);
+        video.addEventListener('progress', sample);
+        sample();
+      });
+      await page.waitForFunction(() => {
+        const video = document.querySelector('#player-video');
+        return video?.ended && video.currentTime >= 297 && video.duration >= 299;
+      }, null, { timeout: 180000 });
+      const stats = await page.evaluate(() => ({
+        ...window.__cencStress,
+        ended: document.querySelector('#player-video')?.ended,
+        videoError: document.querySelector('#player-video')?.error?.code || null
+      }));
+      assert(stats.ended && !stats.videoError && stats.samples > 10,
+        '300-second CENC playback must finish cleanly: ' + JSON.stringify(stats));
+      assert(stats.maxBufferedSpan < 120 && stats.maxBufferedAhead < 90,
+        'MSE window retained too much media during 300-second playback: ' +
+        JSON.stringify(stats));
+      assert(!mediaRequests.some(r => r.unbounded) && !errors.length,
+        '300-second playback unexpectedly used whole-file fetch or emitted browser errors');
+      console.log('PASS ' + browserName + ' 300-second CENC playback and bounded MSE window',
+        JSON.stringify({ ...stats, rangeRequests: mediaRequests.length }));
+    }
     if (process.env.CENC_TEST_SEEK === '1') {
       // 70s fixture; the worker should stop fetching after ~40s ahead.
       // A 55s seek is genuinely outside SourceBuffer, not a local seek.
