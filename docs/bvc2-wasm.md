@@ -5,10 +5,12 @@ uses a **native Librempeg bvc2 decoder**, not an ordinary H.266/VVC
 decoder. Its pinned revision is `cb1f8f3eef84999e61b27e2d44664858179bc240`.
 That source contains `ff_bvc2_decoder` in `libavcodec/vvc/dec.c`.
 
-The experimental WASM compilation step is intentionally **not installed as a
-production player**. It checks whether Emscripten can compile and link that
-decoder; a decoder-symbol probe is not evidence that encrypted BVC2 MP4s play.
-Before shipping, implement and independently test all of:
+The experimental Librempeg/x264 WASM bundle is now compiled by CI and
+published into `public/bvc2/` for an **experimental** worker-based player
+fallback. It is not a validated production BVC2 decoder: a decoder-symbol
+probe and an invalid-input rejection test do **not** demonstrate that an
+encrypted ByteVC2 MP4 produces correctly decoded pictures.
+Before treating it as production-ready, independently verify all of:
 
 1. Run a full, permissioned encrypted BVC2 CENC sample through the native
    decryptor or a separately validated CENC handler. The EME path cannot
@@ -41,8 +43,10 @@ verifies actual playback and its observed startup cost.
 - Emscripten 3.1.74 已將固定 Librempeg 原始碼中的 `bvc2` 解碼器
   連結到約 1.8 MiB WASM，並在 Node.js 確認 `avcodec_find_decoder_by_name("bvc2")`
   有效。[CI 編譯成功](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43190032040)。
-- 正在驗證 `libx264` 靜態庫與 Librempeg 的 WASM 完整轉碼連結；
-  與「已有可播放的 BVC2 輸出」是不同程度的驗證，必須獨立標示。
+- [WASM build / ABI CI #11](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43206278599)
+  已成功將 Librempeg `bvc2` 解碼器、x264 編碼器及 MP4 demux/mux
+  結合為約 4.81 MiB 的 `bvc2-core.wasm`，執行 Node.js smoke test 並發布至
+  `main`。**尚未有真實 BVC2 影格、同步與效能的端對端通過紀錄。**
 - [CENC Firefox 播放與同片源起播比較](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43189653163)：
   15 秒 H.264 加密測試片，在同一 CI Runner 的單次量測，原生 EME
   1,987 ms，FFmpeg.wasm 1,229 ms。這個極短小樣本反而是 FFmpeg
@@ -52,3 +56,16 @@ verifies actual playback and its observed startup cost.
   網路與 CDM 的系統呼叫遠大於這部分運算。應先量測耗時與
   WASM 初始化／資料複製成本，再評估是否移植 Rust；BVC2 核心
   則已是可編譯到 WASM 的 C，不需要重新實作演算法。
+
+## CENC native browser regression
+
+- `src/clear-key.js` uses bounded HTTP Range MP4 metadata reads, EME Clear Key
+  and the standardized Common SystemID PSSH (version 1).
+- In the GitHub Actions headless Firefox, a synthetic H.264 CENC MP4 now reaches
+  `MediaKeys` with a **usable key**, but the browser reports `MEDIA_ERR_DECODE`
+  (3), and the application correctly falls back to whole-file FFmpeg.wasm
+  remuxing. Do not claim this proves native EME playback works in Firefox.
+- Chromium comparison and real HEVC/browser-device verification are still
+  required. The low-latency EME path is **conditionally available**, not a
+  guarantee for every HEVC browser or source. Use `原生串流解密` in the
+  player source info as the runtime indicator.
