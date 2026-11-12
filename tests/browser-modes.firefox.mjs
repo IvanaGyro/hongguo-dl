@@ -116,6 +116,22 @@ try {
     'Player must retrieve available variants before choosing local source');
   await page.locator('#player-settings-toggle').click();
   await page.waitForFunction(() => document.querySelector('#player-video').readyState >= 1);
+  assert.equal(await page.locator('#player-play-pause').isVisible(), true);
+  assert.equal(await page.locator('#player-seek').isVisible(), true);
+  assert.equal(await page.locator('#player-stage').evaluate(el =>
+    getComputedStyle(el.querySelector('#player-video')).width !== '0px'), true);
+  if (await page.evaluate(() => document.fullscreenEnabled)) {
+    await page.locator('#player-fullscreen').click();
+    await page.waitForFunction(() => document.fullscreenElement?.id === 'player-stage',
+      null, { timeout: 8000 });
+    await page.locator('#player-settings-toggle').click();
+    assert.equal(await page.locator('#player-settings').isVisible(), true,
+      'Quality and codec settings remain available when fullscreen');
+    await page.locator('#player-settings-close').click();
+    await page.locator('#player-fullscreen').click();
+    await page.waitForFunction(() => document.fullscreenElement === null,
+      null, { timeout: 8000 });
+  }
   await page.locator('#player-video').evaluate(video => {
     video.pause();
     video.currentTime = 1.6;
@@ -129,6 +145,14 @@ try {
   assert.match(partialTile, /--watch-progress:\s*[1-9]\d*%/);
   assert.equal(await page.locator('#episodes .watch-track').count(), 0,
     'Watch progress should fill the tile background, not a bottom bar');
+  const tileAppearance = await page.locator('button[data-play-vid="101"]').evaluate(el => ({
+    background: getComputedStyle(el).backgroundImage,
+    height: el.getBoundingClientRect().height
+  }));
+  assert.match(tileAppearance.background, /linear-gradient/, 'Playback progress fills the tile');
+  assert(tileAppearance.height <= 54, 'Episode tiles must be compact');
+  assert(Number(await page.locator('#player-seek').inputValue()) > 0,
+    'Custom seek slider tracks playback progress');
   await page.reload();
   await page.locator('button[data-linked-id="60"]').waitFor({ state: 'visible' });
   await page.locator('#mode-play').click();
