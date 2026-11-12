@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 57）
+# Hongguo DL — 目前狀態（2026-11-13，階段 58）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 58 Browser fast 兩瀏覽器全部 PASS（但 Chromium 有 MOV 警訊）**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488)，fast job 131460511145 `completed/success`，日誌實際有 Chromium+Firefox CENC EOF 前首影格、55s RAP seek/reload、7→63→35→5→63s 多次跳轉、90% 重整續播、**三輪播放／下載模式切換**且 Worker/Range 停止、5 個 MSE URL 建立/4 個撤銷、剩餘僅當前 1 個、切回後 **video 時間軸真的前進**。Chromium warning 仍有 9 個 MOV subsample/corrupt-packet/partial-file；Firefox 0。**不聲稱 AAC 可聽性或無 glitch 已被證明**。long job 131460510236 查詢時仍 `in_progress`，120s/1800s 此版本尚待結果。
 
 - **階段 57 實證更新**：[WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) 已確認 `PASS H264/AAC pinned WASM seek strict decode: 7 / 35 / 55 / 63` 四行（`ffmpeg -xerror` 同時解碼影音）；同一 HEAD [CI #43297467112](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467112) 與 [Pages #43297467101](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467101) success。**只證明獨立 WASM seek**，不等於快速取消之音訊無 glitch。階段 56 Browser matrix 尚待兩 job 真正結論。
 
@@ -32,7 +34,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：確認階段 56 新 fast/long job 是否成功分流且快速三輪切換真正 PASS；若 FAIL 讀必要的單一 log 並修。對於 MOV 日誌的真實 AAC 音訊品質仍需獨立裝置／音訊證據 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：Browser fast 已 PASS；long job 完成後核對 120s 暫停／300s／1800s 有界 buffer。Chromium 快速 Seek 的 9 個 MOV/AAC 日誌警訊仍需確認是取消期間或真的傷害音訊；不能只依 video clock 代替音訊驗收。外部真實 HEVC/ByteVC2/裝置待測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 

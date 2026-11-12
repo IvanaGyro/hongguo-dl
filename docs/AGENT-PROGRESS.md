@@ -550,3 +550,11 @@
 - **配套 PASS**：[CI #43297467112](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467112) 與 [Pages #43297467101](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467101) `completed/success`，涵蓋當時 workflow 變更。未改原始 C bridge/WASM binary。
 - **限制**：這些是彼此獨立啟動的四次 seek，不是同一瀏覽器連續取消 Worker 後的音訊可聽性證明；快速 Seek 時 MOV stderr 仍有可能是舊 stream 的中止診斷。不能宣告全部消失或用合成成功替代真實紅果 HEVC/Android/ByteVC2。
 - **下一步**：追蹤階段 56 的 `Browser fast`／`Browser long` 各自結論，有 FAIL 時針對具體程式 bug 修；若 PASS，需進一步記錄音訊時間軸而非只靠 `videoWidth`。文件更新完繼續工程工作。
+
+
+## 階段 58 — 2026-11-13 CENC Browser fast 完整 PASS，三輪切換已驗證；Chromium AAC 警訊持續追查
+
+- **實際結果**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) 的 `Browser fast` job `131460511145` **completed/success**，不是依 workflow 排隊狀態猜測。Chromium+Firefox 均逐項列印 H264/AAC encrypted MP4 經 Librempeg MSE 在 HTTP EOF 前 first frame、遠距 55 秒 RAP seek、續播 reload、7→63→35→5→63s 重複 seek、90% 重新整理，以及 **3 playback/download cycles release MSE URLs and stop CENC Range**。每個瀏覽器 `active=1, created=5, revoked=4, playbackAdvanced=true`，確實播放前進，不只 `loadedmetadata`。
+- **尚未證明**：Chromium 在 rapid seek/cancel 階段記錄 **9 個** MOV demux diagnostics（種類：`subsample`、`corrupt-packet`、`partial-file`），Firefox **0 個**。允許固定格式訊息分流的同時已實證沒有 JS pageerror、MSE media error 且影片時間軸前進；但未證明 Chromium AAC 全程無缺包/聲音中斷，仍應避免聲稱警訊已消失或真正原因已鎖定。
+- **分流驗證**：新的 `Browser fast` job 已先完成，`Browser long` job `131460510236` 初查仍 `in_progress`；fast 判定不會等 120 秒真實暫停/1800 秒影片完成，也不會取消仍在跑的長測。**long 當前版本 PENDING**。前次 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 的 120s 已 PASS，但不是新 matrix 的 long job 證據。
+- **下一步**：核對 long job 的實際 120 秒 Range 9→9、300s/1800s EOF／bounded MSE 斷言；後續針對 Chromium AAC warnings 尋找可以檢測音訊連續性/落地輸出的指標。真實紅果 HEVC/Android/Windows/BVC2 仍欠外部合法片源與解碼裝置。
