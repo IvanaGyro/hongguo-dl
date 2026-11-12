@@ -12,7 +12,7 @@
 
 - **main 基線**：5c3732fd4c4699204269fb81bfa5b5dc8bbfe7dd 時 CI #43283368259 與 Pages #43283367990 成功；此後仍有直接 main 的新提交，最新 commit / 驗收以 [AGENT-PROGRESS.md](AGENT-PROGRESS.md) 為準。
 - **Synthetic PASS**：H.264/AAC CENC Chromium/Firefox 首影格於 EOF 前、遠距 Seek 55 秒、10/50/90% 往返、90% reload；Chromium 300s 完整播放（MSE span peak 78.021s，process-tree RSS 粗量測 first/peak/last 約 769.2/769.2/764.1 MiB）；1080p HEVC/AAC WASM stream copy + FFmpeg decode + 6s RAP seek。
-- **30 分鐘待驗**：1800s 首輪因 moov >1MiB 探測失敗，8MiB 有界修補與單元測試已提交。後續 browser acceptance 未有已確認 PASS 時只能標記 pending/in progress，不能推論成功。
+- **30 分鐘已驗證**：1800s 首輪因 moov >1MiB 探測失敗，提升至有界 8MiB 並補單元測試後，[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) 實際 **PASS**：Chromium 合成 H.264/AAC 播至 1800.021s ended=true、104 Range、MSE span max 72s、ahead 43.56s；Linux test harness+browser process-tree RSS first/peak/last 802.5/838.8/838.2 MiB，非 Android/GPU RAM。
 - **尚無正例**：真實紅果 HEVC 1080p EOF 前可見影格／聲音／完整播放、Android Firefox 解碼與真實 ByteVC2 正例均尚未驗證。ByteVC2 ABI/非 ByteVC2 負例與 bundle pin PASS，**不等同真實可解**。
 - **可靠交接**：每個工程階段直接提交 main，隨即新增 AGENT-PROGRESS checkpoint；GitHub 讀取／寫入／Actions 都可能阻塞，避免同一操作無限重試，不等長跑工作完成才記錄已有成果。
 
@@ -68,7 +68,7 @@
 
 經查主要具體風險：
 
-- src/cenc-remux.js **已使用 MSE eviction 與 ahead backpressure**，合成 Chromium 300 秒完整播放且 MSE buffered span 最高約 78 秒；仍須驗收 1800 秒、暫停很久與 quota 錯誤後的可恢復性，不能只依秒數推定 GPU 記憶體有界。
+- src/cenc-remux.js **已使用 MSE eviction 與 ahead backpressure**，合成 Chromium 300 秒完整播放且 MSE buffered span 最高約 78 秒；1800 秒合成 Chromium 已 PASS；仍須驗收長時間暫停、真實設備與 quota 錯誤後的可恢復性，不能只依秒數推定 GPU 記憶體有界。
 - 同檔 fail() 目前主要標記 MSE endOfStream('decode')；**沒有立即保證 Worker/Range abort 與 pending ACK 清理**。修正時注意避免 endOfStream、updateend 與 close 之間競態。
 - waitSourceOpen / waitAppend 的 Promise 未直接接受 AbortSignal；Worker 結束、切集或 sourceopen 尚未發生時，可能殘留未完成的等待。
 - src/cenc-remux-worker.js **已改用 readVerifiedRange() 有界讀取**，執行 HTTP 206/Content-Range/Content-Length 的防護與取消；後續仍需加入 stalled HTTP body、回應過大與切集競態回歸，避免任何備援退回無界整檔下載。
@@ -126,4 +126,4 @@
 
 ## 4. 新 session 的第一個可執行任務
 
-**目前工作入口（2026-11-13）**：最近核實的基線 5c3732f（CI #43283368259、Pages #43283367990 成功）；之後已直接 main 提交 BVC2 Worker lifecycle 修補與 7 個 Node 回歸案例，見進度階段 26–27。**優先查一次**新測試結果、1800s browser 長片（#43283216947 / #43283368141），失敗時看失敗 job；繼續真實 HEVC（需合法 206 來源／硬體）、30 分鐘緩衝與 abort、ByteVC2 正例（需合法 bitstream）。Seek 合成測試既已 PASS，不應重寫或宣稱未實作。直接提交 main、不開 PR，並每一階段更新 AGENT-PROGRESS；文件是 checkpoint，不是停止條件。
+**目前工作入口（2026-11-13）**：1800 秒合成 Chromium CENC 已有明確 PASS（#43283216947），不要重複研究此失敗。直接參考 [AGENT-PROGRESS.md](AGENT-PROGRESS.md) 最新階段及 main HEAD，檢查**含 CENC_TEST_PAUSE=1 的新 Browser run** 是否真有 pause/resume PASS；持續真實 HEVC（需合法 206 來源及 HEVC MSE 裝置）、ByteVC2 正例（需合法 bitstream）、長期取消／例外恢復與效能。合成 Seek/1800s 既已通過，不應誤稱尚未實作。直接提交 main、不開 PR，每個程式與測試階段更新 AGENT-PROGRESS；文件是 checkpoint，不是停止條件。
