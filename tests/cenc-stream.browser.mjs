@@ -481,6 +481,11 @@ try {
         JSON.stringify(before));
       assert.equal(before.remoteTargetBuffered, false,
         'Fixture target must not already be buffered: ' + JSON.stringify(before));
+      // A new MediaSource must not reset the UI's selected speed.
+      await page.locator('#player-settings-toggle').click();
+      await page.locator('#player-speed').selectOption('1.25');
+      await page.locator('#player-settings-close').click();
+      assert.equal(await page.locator('#player-video').evaluate(v => v.playbackRate), 1.25);
       const firstSeekRequest = mediaRequests.length;
       await page.evaluate(time => {
         document.querySelector('#player-video').currentTime = time;
@@ -495,6 +500,14 @@ try {
             video.buffered.start(i) <= 55.75 && video.buffered.end(i) > 55.75)
             .some(Boolean);
       }, null, { timeout: 90000 });
+      const seekRates = await page.locator('#player-video').evaluate(v => ({
+        playbackRate: v.playbackRate, defaultPlaybackRate: v.defaultPlaybackRate
+      }));
+      assert.deepEqual(seekRates, { playbackRate: 1.25, defaultPlaybackRate: 1.25 },
+        'Unbuffered CENC MSE seek must preserve 1.25x rate after video.load()');
+      await page.locator('#player-settings-toggle').click();
+      await page.locator('#player-speed').selectOption('1');
+      await page.locator('#player-settings-close').click();
       const jumped = mediaRequests.slice(firstSeekRequest);
       assert(jumped.some(request => request.first > input.length * 0.5),
         'Remote indexed seek must request new high-offset HTTP byte ranges: ' +

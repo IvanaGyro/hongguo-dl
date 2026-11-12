@@ -647,8 +647,14 @@ export function createPlayer({
           return;
         }
         nativeStream = nextStream;
+        // An unbuffered CENC seek replaces the whole MediaSource. load()
+        // may reset the element speed, even though quality-switch loads now
+        // preserve it. Keep the user's selected rate on both paths.
+        const rate = Number(speedSelect.value) || 1;
+        video.defaultPlaybackRate = rate;
         video.src = nextStream.url;
         video.load();
+        video.playbackRate = rate;
         await waitMetadata(signal);
         if (signal.aborted || seekToken !== token) return;
         await restoreTime(target, signal);
