@@ -14,9 +14,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Verify FFmpeg HEVC/AAC encoder and demuxer
+      - name: Install FFmpeg with HEVC encoder for synthetic fixture
         run: |
-          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep libx265
           ffprobe -version | head -1
       - name: Verify encrypted progressive input emits clear fMP4 before EOF
         run: python3 scripts/probe-cenc-remux.py
