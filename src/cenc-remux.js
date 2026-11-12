@@ -44,6 +44,37 @@ const waitAppend = (sourceBuffer, bytes) => new Promise((resolve, reject) => {
   try { sourceBuffer.appendBuffer(bytes); } catch (error) { cleanup(); reject(error); }
 });
 
+// Prevent the worker from fetching the rest of a paused 300-second episode.
+// ACK the next fragment only when the buffered-ahead interval falls below 25s.
+function waitBufferHeadroom(video, sourceBuffer, signal) {
+  let end = 0;
+  try {
+    if (!sourceBuffer.buffered.length) return Promise.resolve();
+    end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+  } catch { return Promise.resolve(); }
+  if (end - video.currentTime < 40) return Promise.resolve();
+  return new Promise(resolve => {
+    const finish = () => {
+      for (const event of ['timeupdate', 'seeked', 'playing'])
+        video.removeEventListener(event, check);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const check = () => {
+      if (signal?.aborted) return finish();
+      try {
+        if (!sourceBuffer.buffered.length ||
+            sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) -
+              video.currentTime < 25) finish();
+      } catch { finish(); }
+    };
+    for (const event of ['timeupdate', 'seeked', 'playing'])
+      video.addEventListener(event, check);
+    signal?.addEventListener('abort', finish, { once: true });
+    check();
+  });
+}
+
 /**
  * @returns {{url:string,kind:string,close:()=>Promise<void>}|null}
  * Returns immediately with an object URL. The caller must assign video.src
@@ -113,6 +144,7 @@ export async function openCencProgressiveStream({
       }
       if (!buffer) throw new Error('Missing MSE initialization');
       await waitAppend(buffer, new Uint8Array(data.bytes));
+      await waitBufferHeadroom(video, buffer, signal);
       if (!closed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(() => fail('source-buffer'));
   };
