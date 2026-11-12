@@ -4,20 +4,26 @@
 import { errorWith } from './logic.js';
 
 const CORE = new URL(import.meta.env.BASE_URL + 'bvc2/bvc2-core.wasm', location.href);
+const MANIFEST = new URL(import.meta.env.BASE_URL + 'bvc2/manifest.json', location.href);
 let available = null;
 export async function bvc2BridgeAvailable() {
   if (typeof Worker !== 'function') return false;
   if (!available) {
-    available = fetch(CORE, { method: 'HEAD' })
-      .then(response => {
-        // Vite/GitHub Pages may return index.html (HTTP 200) for missing
-        // assets. Check MIME rather than trusting status alone.
-        const mime = response.headers.get('content-type') || '';
-        const length = Number(response.headers.get('content-length') || 0);
-        return response.ok && /^(application\/wasm|application\/octet-stream)\b/i.test(mime) &&
-          length < 32 * 1024 * 1024;
-      })
-      .catch(() => false);
+    available = Promise.all([
+      fetch(CORE, { method: 'HEAD' }),
+      fetch(MANIFEST, { method: 'HEAD', cache: 'no-store' })
+    ]).then(([wasm, manifest]) => {
+      // A 200 SPA fallback is not evidence of a published decoder.
+      // Only advertise ByteVC2 when the verified manifest is deployed too.
+      const wasmMime = wasm.headers.get('content-type') || '';
+      const manifestMime = manifest.headers.get('content-type') || '';
+      const length = Number(wasm.headers.get('content-length') || 0);
+      const manifestLength = Number(manifest.headers.get('content-length') || 0);
+      return wasm.ok && manifest.ok &&
+        /^(application\/wasm|application\/octet-stream)\b/i.test(wasmMime) &&
+        /^(application\/json|application\/octet-stream)\b/i.test(manifestMime) &&
+        length < 32 * 1024 * 1024 && manifestLength < 4096;
+    }).catch(() => false);
   }
   return available;
 }
