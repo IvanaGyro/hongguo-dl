@@ -750,7 +750,26 @@ export function createPlayer({
       video.requestPictureInPicture().catch(() => setStatus('目前無法啟用子母畫面'));
     });
   }
-  window.addEventListener('pagehide', () => { savePosition(); cancelPrefetch(); });
+  // pagehide also fires when a document enters the back/forward cache.
+  // Explicitly abort the active Range/Worker before suspension, rather than
+  // relying on the browser to tear down a still-live CENC remux.
+  let resumeAfterPageShow = false;
+  window.addEventListener('pagehide', () => {
+    savePosition();
+    cancelPrefetch();
+    resumeAfterPageShow = Boolean(current && controller && !controller.signal.aborted);
+    if (resumeAfterPageShow) {
+      disposeSource();
+      token++; // invalidate late callbacks from the removed media source
+    }
+  });
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted || !resumeAfterPageShow || !current) return;
+    resumeAfterPageShow = false;
+    // A bfcache restore must not retain a stale Worker or autoplay without
+    // a new gesture. Restore the saved timestamp and current settings.
+    open(current, false, true);
+  });
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePosition(); });
   refreshButtons();
   return {

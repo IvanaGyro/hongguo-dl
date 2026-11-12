@@ -148,6 +148,24 @@ try {
     'Player must retrieve available variants before choosing local source');
   await page.locator('#player-settings-toggle').click();
   await page.waitForFunction(() => document.querySelector('#player-video').readyState >= 1);
+  // Pagehide must abort the active media source rather than only saving time.
+  // A persisted pageshow simulates BFCache return on the same document.
+  await page.evaluate(() => window.dispatchEvent(
+    new PageTransitionEvent('pagehide', { persisted: true })));
+  await page.waitForFunction(() => {
+    const video = document.querySelector('#player-video');
+    return video && !video.getAttribute('src') && video.paused &&
+      video.readyState === HTMLMediaElement.HAVE_NOTHING;
+  });
+  await page.evaluate(() => window.dispatchEvent(
+    new PageTransitionEvent('pageshow', { persisted: true })));
+  await page.waitForFunction(() => {
+    const video = document.querySelector('#player-video');
+    return video && video.getAttribute('src') && video.readyState >= 1 &&
+      video.playbackRate === 1.25 && video.paused &&
+      document.querySelector('#player-episode')?.textContent.includes('第 1 集');
+  }, null, { timeout: 30000 });
+  console.log('PASS Firefox pagehide aborts current media and BFCache return reopens paused');
   // Exercise near-end automatic prefetch without waiting for a real episode to
   // finish. The current 4-second mock video stays active while episode 2 is
   // looked up. Overrides are removed immediately after dispatch.
