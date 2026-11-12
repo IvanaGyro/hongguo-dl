@@ -41,6 +41,34 @@ const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
 });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
+// Only the multi-seek/mode-switch acceptance needs lifetime instrumentation.
+// Track MSE object URLs without exposing media URLs or CENC keys.
+if (process.env.CENC_TEST_MULTI_SEEK === '1') {
+  await page.addInitScript(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const live = new Set();
+    const stats = window.__cencMseUrlState = {
+      active: 0, created: 0, revoked: 0
+    };
+    URL.createObjectURL = object => {
+      const url = create(object);
+      if (typeof MediaSource === 'function' && object instanceof MediaSource) {
+        live.add(url);
+        stats.created++;
+        stats.active = live.size;
+      }
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      if (live.delete(url)) {
+        stats.revoked++;
+        stats.active = live.size;
+      }
+      return revoke(url);
+    };
+  });
+}
 const mediaRequests = [], errors = [], diagnosticMessages = [];
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
@@ -470,26 +498,38 @@ try {
           !resumed.some(r => r.unbounded),
           '90% reload must resume with high-offset bounded HTTP Range');
         console.log('PASS ' + browserName + ' 90% CENC resume after cross-range seeking');
-        // Switching to download mode must dispose the CENC Worker, rather
-        // than leaving a hidden 40s remux task running in the background.
-        await page.locator('#mode-download').click();
-        await page.waitForFunction(() =>
-          !document.querySelector('#player-video')?.getAttribute('src'),
-          null, { timeout: 10000 });
-        await page.waitForTimeout(350);
-        const canceledAt = mediaRequests.length;
-        await page.waitForTimeout(800);
-        assert.equal(mediaRequests.length, canceledAt,
-          'Download mode must stop requesting CENC media in the background');
-        await page.locator('#mode-play').click();
-        await page.waitForFunction(() => {
-          const video = document.querySelector('#player-video');
-          return video?.videoWidth === 480 && video.readyState >= 2 &&
-            video.currentTime >= 62.5 && video.currentTime < 67;
-        }, null, { timeout: 40000 });
-        assert(!mediaRequests.some(r => r.unbounded),
-          'Resuming from download mode must still use bounded Range');
-        console.log('PASS ' + browserName + ' playback/download mode releases and resumes CENC');
+        // Repeatedly switching modes must revoke each prior CENC MediaSource
+        // object URL and stop its Range/Worker rather than leaking an old job.
+        for (let cycle = 1; cycle <= 3; cycle++) {
+          await page.locator('#mode-download').click();
+          await page.waitForFunction(() =>
+            !document.querySelector('#player-video')?.getAttribute('src'),
+            null, { timeout: 10000 });
+          await page.waitForFunction(() =>
+            window.__cencMseUrlState?.active === 0,
+            null, { timeout: 10000 });
+          await page.waitForTimeout(350);
+          const canceledAt = mediaRequests.length;
+          await page.waitForTimeout(800);
+          assert.equal(mediaRequests.length, canceledAt,
+            'Download mode left a CENC Range request running in cycle ' + cycle);
+          await page.locator('#mode-play').click();
+          await page.waitForFunction(() => {
+            const video = document.querySelector('#player-video');
+            return video?.videoWidth === 480 && video.readyState >= 2 &&
+              video.currentTime >= 62.5 && video.currentTime < 69.5 &&
+              window.__cencMseUrlState?.active === 1;
+          }, null, { timeout: 40000 });
+          assert(!mediaRequests.some(r => r.unbounded),
+            'Resuming from download mode must still use bounded Range');
+        }
+        const urlState = await page.evaluate(() => window.__cencMseUrlState);
+        assert.equal(urlState.created - urlState.revoked, 1,
+          'Only the currently playing CENC MediaSource URL may remain active');
+        assert(!errors.length, 'Browser errors after mode cycling: ' + errors.join('; '));
+        console.log('PASS ' + browserName +
+          ' 3 playback/download cycles release MSE URLs and stop CENC Range',
+          JSON.stringify(urlState));
       }
     }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
