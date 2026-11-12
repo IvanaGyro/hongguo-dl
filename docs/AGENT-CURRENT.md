@@ -74,3 +74,9 @@
 - main [`de84114`](https://github.com/IvanaGyro/hongguo-dl/commit/de84114fe0a35a024e6b7271d1197b86f657fe84)：CENC metadata HTTP 200/403/416/429 分成不同安全錯誤，終止有問題的 whole-file fallback、限制重試；503 仍進有限重試。新增 `tests/cenc-source-errors.test.mjs` 五組 mock HTTP 回歸；不保留媒體 signed URL/keys。
 - [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) `in_progress`、[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) `queued`、[Browser #43292589271](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589271) `pending`、[HEVC WASM #43292588933](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292588933) `in_progress`，本階段 CI NOT YET VERIFIED。不可把 CDN 403 稱為解碼失敗。
 - **立即恢復點**：若最新 CI 失敗，檢查一個對應具體 job 修正。接續合成數分鐘長暫停／切集測試、資源釋放及 pinned Librempeg 真實 fMP4 sample-entry 驗證。紅果實際授權 HEVC、Android/Windows、ByteVC2 正例仍 NOT TESTED。
+
+## 最新工程 checkpoint（階段 46，2026-11-13）
+
+- [`e58213f`](https://github.com/IvanaGyro/hongguo-dl/commit/e58213f6fc2885cc0ebfea78e2b8952a6490a45f)：將合成 Chromium 300s CENC 的暫停背壓觀察延長為**真實牆鐘 120 秒**、恢復後播畢；可設上限 180 秒，不改 Librempeg。新 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 初查 `pending`，與已成功的 3 秒 [#43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) 分開，矩陣新增 PENDING 行。新 [CI #43292941854](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941854) 初查 `in_progress`。
+- **PASS（上一階段）**：main `de84114` 的 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 與 [Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) 已 `completed/success`，CENC HTTP 200/403/416/429/503 分類納入驗證。WASM 對實際 `hev1`／`hvc1` 的新 proof 若未 completed，不能冒稱 PASS。
+- **立即恢復點**：檢查單次 120 秒 pause proof 最終有無明確 PASS 行；若有失敗修具體原因。接著做反覆切集、播放／下載模式與 pending Worker/Range/ObjectURL 清理測試。合法真實 HEVC／ByteVC2 正例和 Android/Windows 裝置仍需外部素材。
