@@ -174,7 +174,8 @@ if (process.env.CENC_TEST_MULTI_SEEK === '1') {
   });
 }
 const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
-let exercisingRepeatedSeeks = false;
+const rapidDiagnosticPhases = [];
+let exercisingRepeatedSeeks = false, rapidPhase = 'not-started';
 // A canceled Librempeg AVIO demux can report a partial audio packet on its
 // stderr while the old Worker is being torn down. Track only these *specific*
 // MOV diagnostics separately from JS page exceptions and MSE/video errors.
@@ -185,9 +186,14 @@ page.on('console', message => {
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {
-    if (exercisingRepeatedSeeks && canceledSeekMovError.test(text))
+    if (exercisingRepeatedSeeks && canceledSeekMovError.test(text)) {
       canceledSeekDemuxDiagnostics.push(text.slice(0, 180));
-    else errors.push(text.slice(0, 180));
+      rapidDiagnosticPhases.push(rapidPhase);
+      // A damaged sample in a fully re-established active stream is not a
+      // canceled Worker. Keep it fatal even if video.currentTime advances.
+      if (rapidPhase.startsWith('steady') || rapidPhase === 'pcm-proof')
+        errors.push('Active CENC MOV demux error: ' + text.slice(0, 180));
+    } else errors.push(text.slice(0, 180));
   }
 });
 await page.exposeFunction('recordCencFirstFrame', () => {
@@ -563,6 +569,7 @@ try {
         // already buffered and would not exercise remote RAP seeking.
         exercisingRepeatedSeeks = true;
         for (const desired of [7, 63, 35, 5, 63]) {
+          rapidPhase = 'transition-seek-' + desired;
           const start = mediaRequests.length;
           const beforeSeek = await page.evaluate(() => {
             const video = document.querySelector('#player-video');
@@ -585,6 +592,8 @@ try {
                 video.buffered.start(i) <= time + 0.2 &&
                 video.buffered.end(i) >= time + 0.2).some(Boolean);
           }, desired, { timeout: 40000 });
+          rapidPhase = 'steady-after-seek-' + desired;
+          await page.waitForTimeout(250);
           const ranges = mediaRequests.slice(start);
           assert(ranges.some(r => r.first > input.length * Math.max(0.02, desired / 70 - 0.2)),
             'Seek must start new indexed Range near ' + desired + 's: ' +
@@ -596,6 +605,7 @@ try {
           }));
         }
         // Also verify last-watched position survives a second reload.
+        rapidPhase = 'transition-reload';
         const beforeFinalReload = mediaRequests.length;
         await page.reload();
         await page.waitForFunction(() =>
@@ -608,6 +618,7 @@ try {
           return video?.videoWidth === 480 && video.readyState >= 2 &&
             video.currentTime >= 62.5 && video.currentTime < 67;
         }, null, { timeout: 40000 });
+        rapidPhase = 'steady-after-reload';
         const resumed = mediaRequests.slice(beforeFinalReload);
         assert(resumed.some(r => r.first > input.length * 0.65) &&
           !resumed.some(r => r.unbounded),
@@ -616,6 +627,7 @@ try {
         // Repeatedly switching modes must revoke each prior CENC MediaSource
         // object URL and stop its Range/Worker rather than leaking an old job.
         for (let cycle = 1; cycle <= 3; cycle++) {
+          rapidPhase = 'transition-dispose-' + cycle;
           await page.locator('#mode-download').click();
           await page.waitForFunction(() =>
             !document.querySelector('#player-video')?.getAttribute('src'),
@@ -628,6 +640,7 @@ try {
           await page.waitForTimeout(800);
           assert.equal(mediaRequests.length, canceledAt,
             'Download mode left a CENC Range request running in cycle ' + cycle);
+          rapidPhase = 'transition-reopen-' + cycle;
           await page.locator('#mode-play').click();
           await page.waitForFunction(() => {
             const video = document.querySelector('#player-video');
@@ -635,6 +648,7 @@ try {
               video.currentTime >= 62.5 && video.currentTime < 69.5 &&
               window.__cencMseUrlState?.active === 1;
           }, null, { timeout: 40000 });
+          rapidPhase = 'steady-after-cycle-' + cycle;
           assert(!mediaRequests.some(r => r.unbounded),
             'Resuming from download mode must still use bounded Range');
         }
@@ -657,6 +671,7 @@ try {
             video.readyState >= 2 && video.currentTime > start + 0.35;
         }, resumeAt, { timeout: 12000 });
         if (process.env.CENC_TEST_AUDIO === '1') {
+          rapidPhase = 'pcm-proof';
           // The post-seek recovery must produce decoded AAC PCM, not merely a
           // moving video clock. Restore audible routing after the video-only
           // no-decoder-error check above.
@@ -671,7 +686,9 @@ try {
             JSON.stringify({ count: canceledSeekDemuxDiagnostics.length,
               kinds: [...new Set(canceledSeekDemuxDiagnostics.map(line =>
                 line.includes('subsample size') ? 'subsample' :
-                  line.includes('partial file') ? 'partial-file' : 'corrupt-packet'))] }));
+                  line.includes('partial file') ? 'partial-file' : 'corrupt-packet'))],
+              phases: Object.fromEntries([...new Set(rapidDiagnosticPhases)].map(phase =>
+                [phase, rapidDiagnosticPhases.filter(name => name === phase).length])) }));
         console.log('PASS ' + browserName +
           ' 3 playback/download cycles release MSE URLs and stop CENC Range',
           JSON.stringify({ ...urlState, playbackAdvanced: true,
