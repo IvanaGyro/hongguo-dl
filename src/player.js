@@ -23,7 +23,7 @@ function loadPrefs(storage) {
 function printableSource(source) {
   const names = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
   return [
-    (source.outputCodec ? 'ByteVC2 → H.264（WASM 轉碼）' : names[source.codec] || source.codec || ''),
+    (source.outputCodec ? 'ByteVC2 → H.264（WASM 實驗性轉碼）' : names[source.codec] || source.codec || ''),
     source.width && source.height ? source.width + '×' + source.height : source.quality || '',
     source.duration ? Math.round(source.duration) + ' 秒' : ''
   ].filter(Boolean).join(' · ');
@@ -326,7 +326,7 @@ export function createPlayer({
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
         (length) => { if (length > 0) markStartupStage('first-media-byte'); });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      setStatus('Librempeg ByteVC2 → H.264 轉碼中…');
+      setStatus('Librempeg ByteVC2 → H.264 實驗性轉碼中…');
       const transcoded = await transcodeBvc2(raw,
         { contentKey: source.contentKey, signal });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
