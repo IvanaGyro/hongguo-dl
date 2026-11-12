@@ -38,6 +38,7 @@ typedef struct Context {
     AVPacket *packet, *encoded;
     struct SwsContext *scale;
     int64_t next_pts;
+    int64_t decoded_frames;
 } Context;
 
 static int write_encoded(Context *c) {
@@ -79,6 +80,7 @@ static int process_frames(Context *c) {
         } else pts = c->next_pts;
         c->scaled->pts = pts;
         c->next_pts = pts + 1;
+        c->decoded_frames++;
         av_frame_unref(c->decoded);
         if ((ret = encode_frame(c, c->scaled)) < 0) return ret;
     }
@@ -196,6 +198,10 @@ static int execute(Context *c, const char *input, const char *output, const char
     if ((ret = avcodec_send_packet(c->decoder, NULL)) < 0)
         return fail(ret, "flush BVC2 decoder");
     if ((ret = process_frames(c)) < 0) return ret;
+    // A parser can accept a nominal BVC2 track yet decode no actual images.
+    // Reject such files rather than returning an AAC-only / empty video MP4.
+    if (!c->decoded_frames)
+        return fail(AVERROR_INVALIDDATA, "no decoded ByteVC2 frames");
     if ((ret = encode_frame(c, NULL)) < 0) return ret;
     if ((ret = av_write_trailer(c->output)) < 0) return fail(ret, "finalize MP4");
     return 0;
