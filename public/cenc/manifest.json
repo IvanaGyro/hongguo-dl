@@ -3,11 +3,11 @@
   "emsdk": "3.1.74",
   "librempegCommit": "cb1f8f3eef84999e61b27e2d44664858179bc240",
   "files": {
-    "cenc-core.mjs": "f2d277409fc7d2fe9db15954278b27c063773aa57f5391491dadb3600c5fdd4b",
-    "cenc-core.wasm": "9573ef3bb24dce34ebc324b4815ca25d12d11511de562e8560f9bdbcad31c369"
+    "cenc-core.mjs": "f848f82ef9feafdf53247d19e926cf98d8c5a3755d6ad172e19404e75b8137a7",
+    "cenc-core.wasm": "3d3ed74e65531ea3cc4ef0ec1aa5743c0f9bff002071888abe48c99bacfcdd42"
   },
   "inputs": {
-    "scripts/cenc-stream-remux.c": "bf20cc444247726ab81a12333e90fc4729003bb25a97bd52b9a4d2a0ef8603cb",
+    "scripts/cenc-stream-remux.c": "e2ee28da9d9ac35c08c87588dfc2c1faad7eecae2bfac1335f5ef34855a17362",
     "scripts/build-cenc-stream-wasm.sh": "9be3b5329a300b3b9d94c463df63236549ff7f46e85de632f8450846214df5a5"
   }
 }
