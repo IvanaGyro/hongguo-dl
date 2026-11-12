@@ -10,6 +10,7 @@ import { recordFailure, playbackFailureMessage } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
+import { openClearKeyStream } from './clear-key.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -38,6 +39,7 @@ export function createPlayer({
   let sourceAttempt = 0;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
+  let nativeStream = null, keyCleanup = Promise.resolve();
   const mimeSupport = mime => video.canPlayType(mime);
   const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
   video.controls = false;
@@ -99,6 +101,17 @@ export function createPlayer({
       video.currentTime, video.duration, completed);
     onProgress?.();
   }
+  function disposeNativeKeys() {
+    const stream = nativeStream;
+    if (!stream) return;
+    nativeStream = null;
+    // The media element is unloaded before clearing MediaKeys. New loads must
+    // await this cleanup, otherwise two episodes could race over one CDM.
+    keyCleanup = keyCleanup.catch(() => {}).then(async () => {
+      await stream.close();
+      await video.setMediaKeys(null);
+    }).catch(() => {});
+  }
   function disposeSource() {
     controller?.abort();
     controller = null;
@@ -107,6 +120,7 @@ export function createPlayer({
     video.pause();
     video.removeAttribute('src');
     video.load();
+    disposeNativeKeys();
     if (activeUrl) { URL.revokeObjectURL(activeUrl); activeUrl = null; }
   }
   async function waitMetadata(signal) {
@@ -231,6 +245,19 @@ export function createPlayer({
     if (!isHlsUrl(source.url) && !source.contentKey)
       return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
         source, fallbackNotice, variants: quiet ? variants : null };
+    // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
+    // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
+    // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
+    if (!quiet && attempt === 0 && source.contentKey && !isHlsUrl(source.url)) {
+      await keyCleanup;
+      const native = await openClearKeyStream({
+        video, source, codec: codecId(source.codec),
+        workerOrigin: getWorkerOrigin(), signal
+      });
+      if (native) return {
+        url: native.url, native, source, fallbackNotice, variants: null
+      };
+    }
     let bytes;
     if (isHlsUrl(source.url)) {
       if (!quiet) setStatus('準備串流中…');
@@ -303,6 +330,7 @@ export function createPlayer({
     }
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
+    if (resolved.native) sourceInfo.textContent += ' · 原生串流解密';
     const containerCodec = codecId(resolved.source?.codec);
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
@@ -310,6 +338,9 @@ export function createPlayer({
     if (containerCodec && video.canPlayType(decoder) === '')
       sourceInfo.textContent += ' · 此編碼可能無法在本瀏覽器播放';
     if (activeUrl) URL.revokeObjectURL(activeUrl);
+    // The native key session belongs to this source and is released before
+    // any subsequent selection, retry, or playback-mode transition.
+    nativeStream = resolved.native || null;
     activeUrl = resolved.blob ? URL.createObjectURL(resolved.blob) : null;
     loading = true;
     video.src = activeUrl || resolved.url;
@@ -346,6 +377,12 @@ export function createPlayer({
       catch (error) {
         const parsed = classifyError(error);
         handoff = null;
+        if (nativeStream) {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          disposeNativeKeys();
+        }
         if (signal.aborted || currentToken !== token || parsed.code === 'CANCELED') return;
         if (parsed.code === 'PLAYBACK_UNSUPPORTED') {
           loading = false;
