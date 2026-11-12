@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { idsFromUrl, urlForSeriesIds } from '../src/deep-link.js';
-import { episodeFileName, collectionFileName, originalExtension } from '../src/naming.js';
+import { episodeFileName, collectionFileName, originalExtension, filenameExtension } from '../src/naming.js';
 import { availableRenditions, chooseRendition, qualityId, renditionForAttempt } from '../src/source-options.js';
 import { orderQueueSelection, exportQueue } from '../src/queue-export.js';
 import { rememberPlayback, playbackKey, watchRecords } from '../src/library.js';
@@ -17,18 +17,32 @@ test('GitHub Pages URL IDs remain exact 19-digit strings, deduplicated and cappe
     [id, '60'])).searchParams.getAll('id')[0], id);
 });
 
-test('stable episode filenames naturally sort, sanitise, and indicate codecs', () => {
+test('episode filenames depend on series total, not quality/codec or chosen episode count', () => {
   const base = { id: 'abcdefgh-uuid', seriesId: '7699513062054710296',
     seriesTitle: 'nova：新星', vid: '7699522762213182488', mode: 'original',
-    quality: 'auto', codec: 'auto' };
+    quality: 'auto', codec: 'auto', seriesTotal: 60 };
   const one = episodeFileName({ ...base, index: 1 }, '.mp4');
   const sixty = episodeFileName({ ...base, index: 60 }, '.mp4');
-  assert.equal(one, 'nova：新星_第001集.mp4');
-  assert.equal(sixty, 'nova：新星_第060集.mp4');
+  assert.equal(one, 'nova：新星.E01.mp4');
+  assert.equal(sixty, 'nova：新星.E60.mp4');
   assert.ok(one < sixty);
   assert.equal(episodeFileName({ ...base, index: 2, quality: '720p', codec: 'hevc' }),
-    'nova：新星_第002集_720p_hevc.mp4');
+    'nova：新星.E02.mp4');
+  assert.equal(episodeFileName({ ...base, index: 2, mode: 'h264' }), 'nova：新星.E02.mp4');
+  for (const [total, expected] of [
+    [1, 'E02'], [9, 'E02'], [99, 'E02'], [100, 'E002'],
+    [999, 'E002'], [1000, 'E0002'], [9999, 'E0002'], [10000, 'E00002']
+  ]) {
+    assert.equal(episodeFileName({ ...base, seriesTotal: total, index: 2 }), 'nova：新星.' + expected + '.mp4');
+  }
+  assert.equal(episodeFileName({ ...base, seriesTotal: 100, index: 100 }), 'nova：新星.E100.mp4');
+  assert.equal(episodeFileName({ ...base, seriesTotal: 1000, index: 1000 }), 'nova：新星.E1000.mp4');
+  assert.equal(episodeFileName({ ...base, seriesTotal: null, index: 2 }), 'nova：新星.E02.mp4');
+  assert.equal(episodeFileName({ ...base, index: 2 }, '.mkv'), 'nova：新星.E02.mkv');
+  assert.equal(episodeFileName({ id: '12345678', vid: 'direct' }, '.webm'), '媒體直連_12345678.webm');
   assert.equal(originalExtension('https://cdn.example/path/video.webm?auth=abc'), '.webm');
+  assert.equal(filenameExtension('legacy_第002集.mkv'), '.mkv');
+  assert.equal(filenameExtension('unknown'), '.mp4');
   assert.equal(collectionFileName([
     { ...base, index: 5 }, { ...base, index: 1 }
   ], 'zip'), 'nova：新星_第1-5集.zip');
@@ -83,8 +97,8 @@ test('queue export chooses queue entries sorted by series and episode, not curre
 });
 
 test('MP4 queue export of one staged file does not re-fetch or transcode', async () => {
-  const job = { id: 'abc', vid: '123', seriesId: '42', index: 1, seriesTitle: '短劇',
-    mode: 'original', codec: 'h264', quality: 'auto' };
+  const job = { id: 'abc', vid: '123', seriesId: '42', index: 1, seriesTotal: 100,
+    seriesTitle: '短劇', mode: 'original', codec: 'h264', quality: 'auto' };
   const file = { id: 'abc', filename: '短劇_第001集.mp4',
     blob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'video/mp4' }), codec: 'h264' };
   let result;
@@ -95,7 +109,7 @@ test('MP4 queue export of one staged file does not re-fetch or transcode', async
     saveMp4: async (bytes, filename) => { result = { bytes, filename }; }
   });
   assert.equal(report.completed, 1);
-  assert.equal(result.filename, '短劇_第001集_h264.mp4');
+  assert.equal(result.filename, '短劇.E001.mp4');
   assert.deepEqual([...result.bytes], [1, 2, 3, 4]);
 });
 

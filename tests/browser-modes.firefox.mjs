@@ -136,17 +136,19 @@ try {
   await waitCompleted(2);
   assert.equal(downloadEvents, before, 'No automatic per-episode save prompts');
   assert.equal(await page.locator('#queue [data-action="save"]').count(), 2);
+  assert.equal(await page.locator('#queue .job-filename').count(), 0,
+    'Download queue must not display output filenames');
   const localDownload = page.waitForEvent('download', { timeout: 30000 });
   await page.locator('#queue button[data-action="save"]').first().click();
   const individual = await localDownload;
-  assert(individual.suggestedFilename().includes('第00'));
+  assert.match(individual.suggestedFilename(), /^播放測試短劇\.E0[12]\.mp4$/);
   assert(statSync(await individual.path()).size > 100);
 
   const beforeZip = calls.length;
   const archiveEvent = page.waitForEvent('download', { timeout: 120000 });
   await page.locator('#bulk-zip').click();
   const archive = await archiveEvent;
-  await zipInspect(await archive.path(), 2, '第001集.mp4', '第002集.mp4');
+  await zipInspect(await archive.path(), 2, '播放測試短劇.E01.mp4', '播放測試短劇.E02.mp4');
   assert.equal(calls.length, beforeZip, 'Export must not fetch sources twice');
   assert.equal(downloadEvents, before + 2, 'Only manual save plus one ZIP');
   // The same staged queue items must be muxed into one MP4 without another
@@ -181,7 +183,7 @@ try {
   const fullZip = await fullZipEvent;
   assert.equal(downloadEvents, beforeFullZip + 1);
   const fullPath = await fullZip.path();
-  await zipInspect(fullPath, 60, '第001集.mp4', '第060集.mp4');
+  await zipInspect(fullPath, 60, '六十集測試.E01.mp4', '六十集測試.E60.mp4');
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);

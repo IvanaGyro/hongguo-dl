@@ -125,7 +125,6 @@ footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
 .job-select { width: 20px; height: 20px; flex: none; accent-color: #9abfff; margin-top: .2rem; cursor: pointer; }
 .job-body { flex: 1; min-width: 0; }
 .job-topline { display: flex; gap: 1rem; align-items: start; justify-content: space-between; flex-wrap: wrap; }
-.job-filename { color: #90a8ca; font-size: .76rem; overflow-wrap: anywhere; margin-top: .2rem; }
 .job-controls { flex-wrap: wrap; justify-content: flex-end; }
 .job-controls button { font-size: .83rem; }
 .job-controls button.save-one { border-color: #6b9de1; color: #d8eaff; }

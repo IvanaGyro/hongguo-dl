@@ -1,6 +1,7 @@
 // Batch orchestration, independent of the browser UI. A ZIP is emitted as a
 // single ZIP64 stream; a lossless concat uses FFmpeg and is memory-limited.
 import { isHlsUrl, safeName, errorWith, classifyError } from './logic.js';
+import { episodeFileName } from './naming.js';
 import { recordFailure } from './retry.js';
 import { episodeCacheKey } from './media-cache.js';
 import { zipReadableStream } from './zip.js';
@@ -125,7 +126,10 @@ export async function runBulk({
       onStatus?.('ZIP：準備第 ' + ep.index + ' 集，' + (completed + failed) + '/' + ordered.length);
       try {
         const result = await request(ep);
-        const filename = safeName(title + '_第' + String(ep.index).padStart(3, '0') + '集') + result.ext;
+        const filename = episodeFileName({
+          seriesId: series.seriesId, seriesTitle: series.title,
+          seriesTotal: series.total, vid: ep.vid, index: ep.index
+        }, result.ext);
         yield { name: filename, open: async () => new Blob([result.bytes]).stream() };
         completed++;
       } catch (error) {

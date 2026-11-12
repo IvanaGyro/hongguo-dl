@@ -2,7 +2,7 @@
 // from the locally staged episode files, not a second network-fetch pipeline.
 import { zipReadableStream } from './zip.js';
 import { concatLosslessly } from './ffmpeg.js';
-import { collectionFileName, episodeFileName } from './naming.js';
+import { collectionFileName, episodeFileName, filenameExtension } from './naming.js';
 import { errorWith, classifyError } from './logic.js';
 
 export function orderQueueSelection(jobs) {
@@ -62,7 +62,8 @@ export async function exportQueue({
       try {
         const item = await waitUntilStaged(job, readFile, currentStatus, signal, onStatus);
         success++;
-        yield { name: item.filename, open: async () => item.blob.stream() };
+        yield { name: episodeFileName(job, filenameExtension(item.filename)),
+          open: async () => item.blob.stream() };
       } catch (err) {
         if (signal?.aborted || err.code === 'CANCELED') throw err;
         failed++;

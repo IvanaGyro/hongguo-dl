@@ -10,19 +10,21 @@ export function originalExtension(sourceUrl) {
     return normalizedExtension(ext);
   } catch { return '.mp4'; }
 }
-// The same episode receives a stable, naturally sorted name. Quality/codec
-// suffixes prevent overwriting a different rendition in a selected directory.
+// The same episode is named consistently regardless of source quality or mode.
+// Episode digits follow the full series count, with a minimum width of two.
+// Direct media does not belong to a series and retains its unique naming rule.
 export function episodeFileName(job, extension = '.mp4') {
   if (!job.seriesId || job.vid === 'direct') {
     return '媒體直連_' + String(job.id || 'unknown').slice(0, 8) + normalizedExtension(extension);
   }
   const title = safeName(job.seriesTitle || job.title?.split(' · 第')[0] || '短劇');
-  const padded = String(Number(job.index) || 1).padStart(3, '0');
-  const variants = [job.quality !== 'auto' ? job.quality : '',
-    job.codec !== 'auto' ? job.codec : '',
-    job.mode === 'h264' ? '轉H264' : ''].filter(Boolean);
-  return title + '_第' + padded + '集' + (variants.length ? '_' + safeName(variants.join('_')) : '') +
-    normalizedExtension(extension);
+  const total = Number(job.seriesTotal ?? job.total);
+  const width = Number.isSafeInteger(total) && total > 0 ? Math.max(2, String(total).length) : 2;
+  const index = Math.max(1, Math.trunc(Number(job.index) || 1));
+  return title + '.E' + String(index).padStart(width, '0') + normalizedExtension(extension);
+}
+export function filenameExtension(filename) {
+  return normalizedExtension(/\.[a-z0-9]+$/i.exec(String(filename || ''))?.[0]);
 }
 export function collectionFileName(items, format) {
   const ordered = [...items].sort((a, b) => Number(a.index) - Number(b.index));

@@ -6,7 +6,7 @@ import { recentSeries, rememberSeries, watchRecords, playbackKey } from './libra
 import { createPlayer } from './player.js';
 import { exportQueue } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
-import { episodeFileName, originalExtension } from './naming.js';
+import { episodeFileName, originalExtension, filenameExtension } from './naming.js';
 import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
@@ -82,8 +82,11 @@ const retryTimers = new Map();
 
 function restoreJobs() {
   try {
+    // Recover the series length for queue entries created before this field existed.
+    const totals = new Map(recentSeries(localStorage).map(item => [String(item.seriesId), item.total]));
     return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 300).map(item => ({
-      ...item, directUrl: null, progress: null, segment: null, controller: null,
+      ...item, seriesTotal: item.seriesTotal ?? totals.get(String(item.seriesId)) ?? null,
+      directUrl: null, progress: null, segment: null, controller: null,
       status: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'failed' : item.status,
       errorCode: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'INTERRUPTED' : item.errorCode,
       error: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ?
@@ -96,11 +99,11 @@ function saveJobs() {
   try {
     localStorage.setItem(STORE, JSON.stringify(jobs.map(({ id, seriesId, vid, index, title,
       quality, codec, mode, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
-      lastErrorKey, errorStreak, failureAttempts, fileName, seriesTitle,
+      lastErrorKey, errorStreak, failureAttempts, fileName, seriesTitle, seriesTotal,
       sourceWidth, sourceHeight, stored, onDisk }) => ({
       id, seriesId, vid, index, title, quality, codec, mode, status, bytes, totalBytes, error, errorCode,
       attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts,
-      fileName, seriesTitle, sourceWidth, sourceHeight, stored, onDisk
+      fileName, seriesTitle, seriesTotal, sourceWidth, sourceHeight, stored, onDisk
     }))));
   } catch { /* Browser storage may be disabled. */ }
 }
@@ -171,9 +174,7 @@ function renderQueue() {
       'data-export-id="' + escapeHtml(job.id) + '" aria-label="選取' + escapeHtml(job.title) +
       '以匯出"' + (chosen ? ' checked' : '') + '><div class="job-body">' +
       '<div class="job-topline"><div><b>' + escapeHtml(job.title) +
-      '</b><div class="job-filename" title="輸出檔名">' +
-      escapeHtml(job.fileName || episodeFileName(job)) + '</div>' +
-      '<div class="job-meta">' + escapeHtml(job.sourceCodec || job.codec || '未知編碼') +
+      '</b><div class="job-meta">' + escapeHtml(job.sourceCodec || job.codec || '未知編碼') +
       ' · ' + escapeHtml(job.mode === 'h264' ? 'H.264' : job.mode === 'copy' ? '無損封裝' : '原始') +
       '</div></div><div class="job-controls"><span class="status s-' + escapeHtml(job.status) +
       '">' + escapeHtml(job.status === 'completed' ? '已備妥' : displayStatus(job.status)) +
@@ -353,13 +354,14 @@ function queueSelected() {
       j.mode === mode && j.codec === codec && j.quality === quality &&
       !['failed', 'canceled'].includes(j.status));
     if (same) {
+      same.seriesTotal = series.total;
       exportSelected.add(same.id);
       continue;
     }
     const name = series.kind === 'direct' ? '媒體直連' :
       series.title + ' · 第 ' + String(ep.index).padStart(3, '0') + ' 集';
     const job = { id: crypto.randomUUID(), seriesId: series.seriesId || null,
-      seriesTitle: series.title || '影集', vid: ep.vid,
+      seriesTitle: series.title || '影集', seriesTotal: series.total, vid: ep.vid,
       directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
       bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null,
       lastErrorKey: '', errorStreak: 0, failureAttempts: 0, stored: false, onDisk: false };
@@ -468,7 +470,7 @@ async function saveOne(job) {
       error: '瀏覽器暫存已失效；請按「重試」重新下載此集', errorCode: 'STORAGE_MISSING' });
     return;
   }
-  triggerSave(file.blob, file.filename || job.fileName || episodeFileName(job));
+  triggerSave(file.blob, episodeFileName(job, filenameExtension(file.filename || job.fileName)));
 }
 function assertOk(response) {
   if (!response.ok) return response.json().catch(() => null).then(data => {
