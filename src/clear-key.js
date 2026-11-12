@@ -177,7 +177,7 @@ export function mimeForCodec(codec) {
 // Only fragmented MP4 is valid as a progressive ISO BMFF MSE stream.
 // A regular faststart MP4 can have a valid KID but cannot be appended into a
 // SourceBuffer as if it contained moof/mdat segments.
-function openCencMse({ mime, url, signal, fetchImpl }) {
+function openCencMse({ video, mime, url, signal, fetchImpl }) {
   if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(mime))
     return null;
   const mediaSource = new MediaSource();
@@ -209,6 +209,36 @@ function openCencMse({ mime, url, signal, fetchImpl }) {
     controller.signal.addEventListener('abort', stopped, { once: true });
     try { sourceBuffer.appendBuffer(bytes); } catch (error) { cleanup(); reject(error); }
   });
+  // Apply transport backpressure rather than buffering the entire remaining
+  // episode when the user pauses. Keep ~40s of playable media ahead.
+  const waitForBufferRoom = () => {
+    if (closed || !sourceBuffer?.buffered?.length) return Promise.resolve();
+    let end;
+    try { end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1); }
+    catch { return Promise.resolve(); }
+    if (!Number.isFinite(end) || end - video.currentTime <= 40)
+      return Promise.resolve();
+    return new Promise(resolve => {
+      const check = () => {
+        if (closed || controller.signal.aborted ||
+            !sourceBuffer?.buffered?.length) return finish();
+        try {
+          if (sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) -
+              video.currentTime <= 25) finish();
+        } catch { finish(); }
+      };
+      const finish = () => {
+        for (const type of ['timeupdate', 'seeked', 'playing'])
+          video.removeEventListener(type, check);
+        controller.signal.removeEventListener('abort', finish);
+        resolve();
+      };
+      for (const type of ['timeupdate', 'seeked', 'playing'])
+        video.addEventListener(type, check);
+      controller.signal.addEventListener('abort', finish, { once: true });
+      check();
+    });
+  };
   const pump = async () => {
     sourceBuffer = mediaSource.addSourceBuffer(mime);
     // A single open-ended Range request is consumed incrementally. This is
@@ -225,6 +255,8 @@ function openCencMse({ mime, url, signal, fetchImpl }) {
     let total = 0;
     try {
       while (!closed) {
+        await waitForBufferRoom();
+        if (closed || signal?.aborted) break;
         const { done, value } = await reader.read();
         if (done) break;
         if (!value?.byteLength) continue;
@@ -329,7 +361,7 @@ export async function openClearKeyStream({
       session.keyStatuses ? Array.from(session.keyStatuses.values()).join(',') || 'empty' : 'unavailable');
     aborted(signal);
     const mse = metadata.fragmented
-      ? openCencMse({ mime, url, signal, fetchImpl }) : null;
+      ? openCencMse({ video, mime, url, signal, fetchImpl }) : null;
     console.info('[Hongguo EME] playback route:', mse ? 'mse-fmp4' : 'progressive-mp4');
     return {
       url: mse?.url || url, kind: mse?.kind || 'progressive',
