@@ -498,3 +498,13 @@
 - **已直接修改 main**：[404a6d7741c7db1b56b932c611fe0533e458b9eb](https://github.com/IvanaGyro/hongguo-dl/commit/404a6d7741c7db1b56b932c611fe0533e458b9eb)，僅修改 `src/player.js`。過去於 `video.load()` 前設 `playbackRate`，HTMLMediaElement 重新載入來源可能恢復 default rate；現在同時設 `defaultPlaybackRate` 並在 `load()` 後再次設定 `playbackRate`，選項 change 時亦同步兩者。適用速度變更、重選畫質／編碼、換集、重新載入。
 - **現有回歸**：`tests/browser-modes.firefox.mjs:142` 的 `playbackRate===1.25`、畫質變更後 codec 選單及 720p VVC negative case，無需取消既有驗收。此版新 Firefox E2E **PENDING**，不宣稱修復已經瀏覽器驗收成功。
 - **下一步**：優先修另一 [CENC Browser #43295263804](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263804) 三輪模式切換測試末尾 `tests/cenc-stream.browser.mjs:529` 的 MOV demux stderr/partial-file 診斷；保留真正 JS、MSE 與影片解碼錯誤的斷言，避免以隱藏錯誤假裝通過。再以一次對應 HEAD 的 Firefox CI/Browser E2E 檢查。
+
+
+## 階段 52 — 2026-11-13 分流快速 Seek 取消時 MOV stderr 與真正的 JS／MSE 播放失敗
+
+- **來源／定位**：[CENC Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965) 與 [#43295263804](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263804) 均在 Chromium 合成 70 秒 CENC 多次 7→63→35→5→63s Seek、90% reload、多次停止後，最終 `tests/cenc-stream.browser.mjs:529` 將 WASM MOV demux 的 `subsample size exceeds the packet size left`／`Packet corrupt`／`partial file` 主控台 stderr 當成 JS/MSE fatal error。前面的首影格／Seek／保存位置／Range/MSE object URL assertions 都達到相應點。不能因此斷言 AAC 沒有錯誤，也不能冒充實際用戶影音驗收。
+- **對照**：本機 FFmpeg 7.1.5 使用與 CI 相同 70s H.264/AAC CENC 加密參數，自行生成測試片，在 0、5、7、35、55、63 秒 `-decryption_key ... -ss ... -c copy` 測試皆沒有 stderr；僅表示原始合成檔與一般 seek 未直接重現，不是 pinned WASM seek 的無問題證明。
+- **已直接提交 main**：[ac42226](https://github.com/IvanaGyro/hongguo-dl/commit/ac422262e90541ad8af6da3141a2b222eb0e281a)、瀏覽器 evaluate 修正 [a4a30d0](https://github.com/IvanaGyro/hongguo-dl/commit/a4a30d0f519f03dab374bbe121681ef27db9ed22)，只更改 `tests/cenc-stream.browser.mjs`：多次 Seek 才開始對**完整、嚴格字串匹配**的 MOV stderr 分流記錄並列印種類/數量，非匹配的 console errors 與 pageerrors 仍 FAIL；三輪 MSE URL 撤銷/有界 Range invariant 不放寬，最後 additionally `video.error===null` 並 `video.play()`、等待時鐘實際前進 0.35 秒。無改 C bridge、Librempeg binary 或私密來源。
+- **PASS（另一條獨立工作流程）**：階段 51 的 [Firefox FFmpeg.wasm full browser #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **completed/success**，包括 Firefox remux、播放器功能與之前失敗的 720p VVC-only、1.25× 回歸；[CI #43295729082](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729082)、[Pages #43295728699](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295728699) **success**。不等於這個新 CENC 三輪 Browser 已成功。
+- **PENDING**：階段 52 新 Browser 尚未讀取結果。即使通過，也僅證明合成 Chromium/Firefox 畫面與時間軸恢復；MOV 取消期間 stderr 的真實 AAC 連續性及裝置端 HEVC/BVC2 仍未驗。
+- **下一步**：取得對應 CENC Browser 失敗的具體報告、修正真正程式錯誤，不連續輪詢 Actions；之後再測 pending Worker ACK／stalled HTTP Range 的中止與資源清理。
