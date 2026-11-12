@@ -15,9 +15,12 @@ on:
       - 'tests/cenc-stream.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
+# Keep a running 30-minute acceptance job alive even when a later main
+# commit queues a newer run. GitHub maintains at most one running and one
+# pending job for this concurrency group.
 concurrency:
   group: cenc-browser-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
