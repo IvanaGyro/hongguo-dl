@@ -171,8 +171,10 @@ static int execute(Stream *reader, const char *key, double start_seconds) {
     writer_io->seekable = 0;
     output->pb = writer_io;
     output->flags |= AVFMT_FLAG_CUSTOM_IO;
-    // Do not normalize a nonzero seek time to zero in the fMP4 timeline.
-    output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_DISABLED;
+    // Preserve the baseline zero-start muxer's automatic timestamp shift.
+    // A nonzero indexed RAP must retain its source time instead.
+    if (start_seconds > 0.5)
+        output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_DISABLED;
     // For a nonzero seek, delay moov until the first RAP packet reveals
     // its DTS, and mark the missing earlier fragments as a discontinuity.
     // Otherwise MOV muxer silently normalizes the output near t=0.
