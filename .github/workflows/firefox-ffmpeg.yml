@@ -6,6 +6,9 @@ on:
       - 'src/ffmpeg.js'
       - 'src/main.js'
       - 'src/player.js'
+      - 'src/clear-key.js'
+      - 'tests/clear-key.test.mjs'
+      - 'tests/clear-key.firefox.mjs'
       - 'src/styles.css'
       - 'src/bulk.js'
       - 'src/zip.js'
@@ -53,6 +56,15 @@ jobs:
           ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=320x180:r=24 -t 4 \
             -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart -y /tmp/ffmpeg-playback.mp4
           test -s /tmp/ffmpeg-playback.mp4
+      - name: Generate reproducible encrypted CENC MP4 fixture
+        run: |
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=480x270:rate=24 -t 15 \
+            -c:v libx264 -preset ultrafast -crf 15 -pix_fmt yuv420p \
+            -movflags +faststart -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -y /tmp/ffmpeg-cenc.mp4
+          test $(stat -c %s /tmp/ffmpeg-cenc.mp4) -gt 65536
       - name: Run real FFmpeg.wasm remux in Firefox headless
         shell: bash
         run: |
@@ -72,3 +84,4 @@ jobs:
           done
           node tests/ffmpeg.firefox.mjs /tmp/ffmpeg-smoke.mp4
           node tests/browser-modes.firefox.mjs /tmp/ffmpeg-playback.mp4
+          node tests/clear-key.firefox.mjs /tmp/ffmpeg-cenc.mp4
