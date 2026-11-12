@@ -2,6 +2,7 @@
 // Encrypted progressive MP4 -> clear fMP4 over MSE.
 // Works with a dedicated pinned Librempeg WASM; never buffers an entire episode.
 import { errorWith } from './logic.js';
+import { evictionEnd } from './mse-eviction.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
 let availability = null;
@@ -19,31 +20,42 @@ export async function cencRemuxAvailable() {
   }
   return availability;
 }
-const waitSourceOpen = mediaSource => new Promise((resolve, reject) => {
+const waitSourceOpen = (mediaSource, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) return reject(new Error('CENC stream canceled'));
   if (mediaSource.readyState === 'open') return resolve();
   const cleanup = () => {
     mediaSource.removeEventListener('sourceopen', opened);
     mediaSource.removeEventListener('sourceclose', closed);
+    signal?.removeEventListener('abort', canceled);
   };
   const opened = () => { cleanup(); resolve(); };
   const closed = () => { cleanup(); reject(new Error('MediaSource closed')); };
+  const canceled = () => { cleanup(); reject(new Error('CENC stream canceled')); };
   mediaSource.addEventListener('sourceopen', opened, { once: true });
   mediaSource.addEventListener('sourceclose', closed, { once: true });
+  signal?.addEventListener('abort', canceled, { once: true });
+  if (signal?.aborted) canceled();
 });
-const waitAppend = (sourceBuffer, bytes) => new Promise((resolve, reject) => {
+const waitBufferUpdate = (sourceBuffer, action, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) return reject(new Error('CENC stream canceled'));
   const cleanup = () => {
     sourceBuffer.removeEventListener('updateend', done);
     sourceBuffer.removeEventListener('error', failed);
     sourceBuffer.removeEventListener('abort', failed);
+    signal?.removeEventListener('abort', canceled);
   };
   const done = () => { cleanup(); resolve(); };
-  const failed = () => { cleanup(); reject(new Error('SourceBuffer append failed')); };
+  const failed = () => { cleanup(); reject(new Error('SourceBuffer operation failed')); };
+  const canceled = () => { cleanup(); reject(new Error('CENC stream canceled')); };
   sourceBuffer.addEventListener('updateend', done, { once: true });
   sourceBuffer.addEventListener('error', failed, { once: true });
   sourceBuffer.addEventListener('abort', failed, { once: true });
-  try { sourceBuffer.appendBuffer(bytes); } catch (error) { cleanup(); reject(error); }
+  signal?.addEventListener('abort', canceled, { once: true });
+  try {
+    if (signal?.aborted) return canceled();
+    action();
+  } catch (error) { cleanup(); reject(error); }
 });
-
 // Prevent the worker from fetching the rest of a paused 300-second episode.
 // ACK the next fragment only when the buffered-ahead interval falls below 25s.
 function waitBufferHeadroom(video, sourceBuffer, signal) {
@@ -99,13 +111,20 @@ export async function openCencProgressiveStream({
   const worker = new Worker(new URL('./cenc-remux-worker.js', import.meta.url), {
     type: 'module'
   });
-  let closed = false, buffer = null, queued = Promise.resolve(), finished = false;
+  const internal = new AbortController();
+  let closed = false, failed = false, buffer = null, queued = Promise.resolve();
+  let finished = false;
+  // Stop Range fetch and pending ACK *before* reporting the media error.
+  // SourceBuffer errors are not permitted to leave a live WASM worker behind.
   const fail = cause => {
-    if (closed) return;
-    // Do not show original URL or key in logs.
+    if (closed || failed) return;
+    failed = true;
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
+    internal.abort();
+    try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
+    worker.terminate();
     const endWithError = () => {
-      if (closed) return;
+      if (closed || failed) return;
       if (buffer?.updating) {
         buffer.addEventListener('updateend', endWithError, { once: true });
         return;
@@ -121,40 +140,60 @@ export async function openCencProgressiveStream({
   const close = async () => {
     if (closed) return;
     closed = true;
+    internal.abort();
     signal?.removeEventListener('abort', onAbort);
-    worker.postMessage({ type: 'cancel' });
+    try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
     worker.terminate();
     URL.revokeObjectURL(objectUrl);
   };
   const onAbort = () => { void close(); };
   signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) await close();
+  const trimOldMedia = async (behind = 30, minimum = 8) => {
+    const end = evictionEnd(buffer?.buffered, video.currentTime, behind, minimum);
+    if (end !== null) await waitBufferUpdate(buffer,
+      () => buffer.remove(0, end), internal.signal);
+    return end !== null;
+  };
+  const append = async bytes => {
+    // Normal playback retains only the recent rewind window. If MSE reaches
+    // quota first, attempt a stronger eviction and retry the same unit once.
+    await trimOldMedia();
+    try {
+      await waitBufferUpdate(buffer, () => buffer.appendBuffer(bytes), internal.signal);
+    } catch (error) {
+      if (error?.name !== 'QuotaExceededError' || !await trimOldMedia(10, 1))
+        throw error;
+      await waitBufferUpdate(buffer, () => buffer.appendBuffer(bytes), internal.signal);
+    }
+  };
   worker.onerror = event => {
     event.preventDefault();
     fail('worker-error');
   };
   worker.onmessage = ({ data }) => {
-    if (closed || !data) return;
+    if (closed || failed || !data) return;
     if (data.type === 'error') return fail('wasm-remux');
     if (data.type === 'done') {
       finished = true;
       void queued.then(() => {
-        if (!closed && ms.readyState === 'open' && !buffer?.updating)
+        if (!closed && !failed && ms.readyState === 'open' && !buffer?.updating)
           ms.endOfStream();
       }).catch(() => fail('finish'));
       return;
     }
     if (data.type !== 'init' && data.type !== 'media') return;
     queued = queued.then(async () => {
-      await waitSourceOpen(ms);
+      await waitSourceOpen(ms, internal.signal);
       if (closed) return;
       if (data.type === 'init') {
         if (buffer) throw new Error('Duplicate MSE init');
         buffer = ms.addSourceBuffer(mime);
       }
       if (!buffer) throw new Error('Missing MSE initialization');
-      await waitAppend(buffer, new Uint8Array(data.bytes));
-      await waitBufferHeadroom(video, buffer, signal);
-      if (!closed) worker.postMessage({ type: 'ack', id: data.id });
+      await append(new Uint8Array(data.bytes));
+      await waitBufferHeadroom(video, buffer, internal.signal);
+      if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(() => fail('source-buffer'));
   };
   worker.postMessage({ type: 'start', url, fileSize, key });
