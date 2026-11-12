@@ -4,6 +4,7 @@
 import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
 import { retryableAvailability } from './retryable-availability.js';
+import { assertHevcInitCodecMatches } from './cenc-init-codec.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
 const checkCencCore = retryableAvailability(async () => {
@@ -103,7 +104,7 @@ export async function openCencProgressiveStream({
     throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
   const videoCodec = codec === 'hevc' ?
     (/^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/.test(
-      videoCodecString || '') ? videoCodecString : 'hvc1') :
+      videoCodecString || '') ? videoCodecString : null) :
     codec === 'h264' ? 'avc1.42E01E' : null;
   if (!videoCodec) return null;
   const mime = 'video/mp4; codecs="' + videoCodec +
@@ -206,6 +207,8 @@ export async function openCencProgressiveStream({
       if (closed || failed) return;
       if (data.type === 'init') {
         if (buffer) throw new Error('Duplicate MSE init');
+        if (codec === 'hevc')
+          assertHevcInitCodecMatches(new Uint8Array(data.bytes), videoCodec);
         buffer = ms.addSourceBuffer(mime);
         // An empty-moov mux cannot signal the complete episode duration.
         // Set the original MP4 mvhd timeline to make distant seeks possible
@@ -217,7 +220,8 @@ export async function openCencProgressiveStream({
       await append(new Uint8Array(data.bytes));
       await waitBufferHeadroom(video, buffer, internal.signal);
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
-    }).catch(() => fail('source-buffer'));
+    }).catch(error => fail(error?.code === 'HEVC_INIT_MISMATCH'
+      ? 'hevc-init-mismatch' : 'source-buffer'));
   };
   try {
     worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });

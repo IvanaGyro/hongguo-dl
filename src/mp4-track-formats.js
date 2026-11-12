@@ -51,7 +51,7 @@ function formatForSample(data, entry) {
 // Read the actual hvcC configuration from an HEVC sample entry instead of
 // guessing a generic "hvc1" codec. The C remuxer's output uses clear HEVC
 // samples (hvc1), regardless of whether the input encrypted entry was encv.
-export function hevcCodecStringFromMoov(moov) {
+function parseHevcCodecFromMoov(moov, requireClear) {
   if (!(moov instanceof Uint8Array) || moov.length < 8 ||
       u32(moov, 0) !== moov.length || fourcc(moov, 4) !== 'moov') return null;
   for (const trak of boxes(moov, 8, moov.length).filter(box => box.type === 'trak')) {
@@ -59,17 +59,33 @@ export function hevcCodecStringFromMoov(moov) {
       stbl = minf && child(moov, minf, 'stbl'),
       stsd = stbl && child(moov, stbl, 'stsd');
     for (const entry of sampleEntries(moov, stsd)) {
-      if (!['hvc1', 'hev1'].includes(formatForSample(moov, entry))) continue;
-      // VisualSampleEntry is 86 bytes including the MP4 box header.
+      const originalFormat = formatForSample(moov, entry);
+      if (!['hvc1', 'hev1'].includes(originalFormat)) continue;
+      // For a clear fMP4 init, MIME must match the actual sample entry tag.
+      // An encrypted encv entry cannot itself be used as a clear init.
+      if (requireClear && entry.type !== originalFormat) continue;
       if (entry.start + 86 > entry.end) continue;
       const hvcc = boxes(moov, entry.start + 86, entry.end)
         .find(box => box.type === 'hvcC');
       if (!hvcc) continue;
-      const string = hevcCodecStringFromHvcc(moov.subarray(hvcc.payload, hvcc.end));
-      if (string) return string;
+      const sampleEntry = requireClear ? entry.type : 'hvc1';
+      const codec = hevcCodecStringFromHvcc(
+        moov.subarray(hvcc.payload, hvcc.end), sampleEntry);
+      if (codec) return codec;
     }
   }
   return null;
+}
+
+// The C remuxer clears encv and uses an hvc1 sample description on output.
+export function hevcCodecStringFromMoov(moov) {
+  return parseHevcCodecFromMoov(moov, false);
+}
+
+// After remux, inspect the *actual* clear output tag and hvcC bytes rather
+// than assuming hev1 and hvc1 are interchangeable in SourceBuffer MIME.
+export function hevcCodecStringFromClearMoov(moov) {
+  return parseHevcCodecFromMoov(moov, true);
 }
 
 export function inspectMp4TrackFormats(moov) {
