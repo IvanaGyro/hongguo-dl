@@ -9,6 +9,7 @@ import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
+import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -36,6 +37,7 @@ export function createPlayer({
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
   let sourceAttempt = 0;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
+  let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   const mimeSupport = mime => video.canPlayType(mime);
   const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
   video.controls = false;
@@ -162,26 +164,33 @@ export function createPlayer({
     });
     if (!signal.aborted) trySeek();
   }
-  async function sourceForEpisode(episode, signal, attempt = 0) {
+  async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
-    const quality = qualitySelect.value, codec = codecSelect.value;
-    const key = episodeCacheKey(series?.seriesId, episode.vid, quality, codec);
-    const blob = attempt === 0 ? cache.get(key) : null;
-    if (blob) return { blob, source: { codec, quality, source: 'cache' } };
+    const quality = options.quality ?? qualitySelect.value;
+    const codec = options.codec ?? codecSelect.value;
+    const quiet = !!options.quiet;
+    const seriesId = options.seriesId ?? series?.seriesId;
+    const key = episodeCacheKey(seriesId, episode.vid, quality, codec);
+    const entry = attempt === 0 ? cache.getEntry(key) : null;
+    if (entry?.blob) return { blob: entry.blob,
+      source: entry.source || { codec, quality, source: 'cache' } };
     // Keep a short-lived source list to rotate through alternate CDNs on
     // retry without another upstream API call. Refresh on the next cycle.
-    const sameList = lastVariantsVid === episode.vid && Date.now() - lastVariantsAt < 30000;
+    const sameList = !quiet && lastVariants && lastVariantsVid === episode.vid &&
+      Date.now() - lastVariantsAt < 30000;
     const list = episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList && attempt > 0 && attempt < lastVariants.length
         ? { variants: lastVariants }
-        : await sourceFor(series.seriesId, episode.vid, 'auto', 'auto');
+        : await sourceFor(seriesId, episode.vid, 'auto', 'auto', signal);
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
-    lastVariants = variants;
-    lastVariantsVid = episode.vid;
-    lastVariantsAt = Date.now();
-    updateCodecOptions(variants);
+    if (!quiet) {
+      lastVariants = variants;
+      lastVariantsVid = episode.vid;
+      lastVariantsAt = Date.now();
+      updateCodecOptions(variants);
+    }
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
     const resolved = playbackRendition(variants,
@@ -204,7 +213,7 @@ export function createPlayer({
         .map(id => CODEC_NAMES[id] || id).join('/');
       fallbackNotice = original + ' 只有 ' + originalCodecs +
         '，已改用 ' + actual + ' ' + (CODEC_NAMES[codecId(source.codec)] || source.codec);
-      if (actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
+      if (!quiet && actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
         qualitySelect.value = actual;
         codecSelect.value = 'auto';
         updateCodecOptions(variants);
@@ -213,27 +222,29 @@ export function createPlayer({
     }
     const profile = source.source === 'app' ? 'app' : 'web';
     if (!isHlsUrl(source.url) && !source.contentKey)
-      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()), source, fallbackNotice };
+      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
+        source, fallbackNotice, variants: quiet ? variants : null };
     let bytes;
     if (isHlsUrl(source.url)) {
-      setStatus('準備串流中…');
+      if (!quiet) setStatus('準備串流中…');
       bytes = await convertHls(source.url, {
         mode: 'copy', contentKey: source.contentKey, signal,
         fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, max),
-        segmentProgress: x => setStatus('準備串流 ' + x.current + '/' + x.total)
+        segmentProgress: x => { if (!quiet) setStatus('準備串流 ' + x.current + '/' + x.total); }
       });
     } else {
       // Encrypted MP4s still require the complete source before decryption.
       // Initialize FFmpeg after the first media chunk, in parallel with the
       // remaining download, so the initial startup stages do not run serially.
       let warmup = null, received = 0, lastUpdate = 0;
-      setStatus('載入影片…');
-      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
+      if (!quiet) setStatus('載入影片…');
+      const raw = await fetchBytes(source.url, profile, signal,
+        quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
         (length, total) => {
           if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
           received += length;
           const now = Date.now();
-          if (now - lastUpdate > 250) {
+          if (!quiet && now - lastUpdate > 250) {
             lastUpdate = now;
             setStatus(total ? '載入影片 ' + Math.min(100, Math.round(100 * received / total)) + '%'
               : '載入影片…');
@@ -242,17 +253,37 @@ export function createPlayer({
       const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
       if (warmupError) throw warmupError;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      setStatus('解密並封裝影片…');
+      if (!quiet) setStatus('解密並封裝影片…');
       bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
     }
     if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');
     const result = new Blob([bytes], { type: 'video/mp4' });
-    cache.put(key, result);
-    return { blob: result, source, fallbackNotice };
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+    cache.put(key, result, source);
+    return { blob: result, source, fallbackNotice, variants: quiet ? variants : null };
   }
-  async function load(episode, currentToken, signal, autoPlay) {
-    const resolved = await sourceForEpisode(episode, signal, sourceAttempt++);
+  async function load(episode, currentToken, signal, autoPlay, handoff = null) {
+    const attempt = sourceAttempt++;
+    // If the incoming episode is already being downloaded/decrypted, consume
+    // that one promise rather than issuing a second expensive media request.
+    const prepared = handoff && attempt === 0 ? await handoff.promise : null;
+    const resolved = prepared || await sourceForEpisode(episode, signal, attempt);
     if (signal.aborted || currentToken !== token) return;
+    if (prepared?.variants?.length) {
+      lastVariants = prepared.variants;
+      lastVariantsVid = episode.vid;
+      lastVariantsAt = Date.now();
+      updateCodecOptions(prepared.variants);
+      if (prepared.fallbackNotice) {
+        const actual = qualityId(prepared.source);
+        if (actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
+          qualitySelect.value = actual;
+          codecSelect.value = 'auto';
+          updateCodecOptions(prepared.variants);
+          persistPrefs();
+        }
+      }
+    }
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
     const containerCodec = codecId(resolved.source?.codec);
@@ -278,6 +309,7 @@ export function createPlayer({
     readyForHistory = true;
     loading = false;
     recoveryStart = video.currentTime;
+    lastStartupSeconds = Math.max(0, (performance.now() - loadStartedAt) / 1000);
     setStatus(resolved.fallbackNotice || (wanted > 0 ? '已續播' : ''));
     onProgress?.();
     if (autoPlay) {
@@ -288,12 +320,13 @@ export function createPlayer({
       }
     }
   }
-  async function run(episode, currentToken, signal, autoPlay, previous = null) {
+  async function run(episode, currentToken, signal, autoPlay, previous = null, handoff = null) {
     let errors = previous;
     while (!signal.aborted && currentToken === token) {
-      try { await load(episode, currentToken, signal, autoPlay); return; }
+      try { await load(episode, currentToken, signal, autoPlay, handoff); return; }
       catch (error) {
         const parsed = classifyError(error);
+        handoff = null;
         if (signal.aborted || currentToken !== token || parsed.code === 'CANCELED') return;
         if (parsed.code === 'PLAYBACK_UNSUPPORTED') {
           loading = false;
@@ -311,8 +344,42 @@ export function createPlayer({
       }
     }
   }
+  function cancelPrefetch(exceptVid = null) {
+    if (prefetched && prefetched.vid !== exceptVid) {
+      prefetched.controller.abort();
+      prefetched = null;
+    }
+  }
+  function maybePrefetchNext() {
+    if (!current || !readyForHistory || !getSeries() || !video.duration) return;
+    const next = nextEpisode(ordered(), current.vid);
+    if (!shouldPrefetchNext({
+      duration: video.duration, position: video.currentTime,
+      startupSeconds: lastStartupSeconds, paused: video.paused,
+      autoNext: autoNextInput.checked, saveData: !!navigator.connection?.saveData,
+      hasNext: !!next
+    })) return;
+    const seriesId = getSeries().seriesId, quality = qualitySelect.value;
+    const codec = codecSelect.value;
+    const key = episodeCacheKey(seriesId, next.vid, quality, codec);
+    if (prefetched?.key === key || cache.getEntry(key)) return;
+    cancelPrefetch();
+    const preloadController = new AbortController();
+    // A prefetch is intentionally bounded to one episode and <=32 MiB of
+    // incoming encrypted media. Failures remain silent until actually played.
+    const promise = sourceForEpisode(next, preloadController.signal, 0, {
+      quiet: true, quality, codec, seriesId
+    }).catch(() => null);
+    prefetched = { vid: next.vid, key, controller: preloadController, promise };
+  }
   function open(episode, autoPlay = true, keepSettings = false) {
     if (!episode) return;
+    const key = episodeCacheKey(getSeries()?.seriesId, episode.vid,
+      qualitySelect.value, codecSelect.value);
+    const handoff = prefetched?.vid === episode.vid && prefetched.key === key
+      ? prefetched : null;
+    if (handoff) prefetched = null;
+    else cancelPrefetch();
     savePosition();
     disposeSource();
     current = episode;
@@ -328,8 +395,10 @@ export function createPlayer({
     if (!keepSettings) showSettings(false);
     const signal = (controller = new AbortController()).signal;
     const currentToken = ++token;
+    loadStartedAt = performance.now();
+    if (handoff) signal.addEventListener('abort', () => handoff.controller.abort(), { once: true });
     setStatus('載入中…');
-    void run(episode, currentToken, signal, autoPlay);
+    void run(episode, currentToken, signal, autoPlay, null, handoff);
     onProgress?.();
   }
   function step(direction) {
@@ -338,6 +407,7 @@ export function createPlayer({
   }
   video.addEventListener('timeupdate', () => {
     if (!current || !readyForHistory || !Number.isFinite(video.currentTime)) return;
+    maybePrefetchNext();
     const now = Date.now();
     if (failure && video.currentTime - recoveryStart > 5) failure = null;
     if (now - lastUiPaint > 950) { lastUiPaint = now; onProgress?.(); }
@@ -348,6 +418,7 @@ export function createPlayer({
   });
   video.addEventListener('seeked', () => {
     if (readyForHistory) savePosition();
+    maybePrefetchNext();
   });
   video.addEventListener('ended', () => {
     if (!current || !readyForHistory) return;
@@ -388,7 +459,11 @@ export function createPlayer({
   });
   speedSelect.addEventListener('change', () => { video.playbackRate = Number(speedSelect.value) || 1; persistPrefs(); });
   fitSelect.addEventListener('change', () => { video.style.objectFit = fitSelect.value; persistPrefs(); });
-  autoNextInput.addEventListener('change', persistPrefs);
+  autoNextInput.addEventListener('change', () => {
+    persistPrefs();
+    if (!autoNextInput.checked) cancelPrefetch();
+    else maybePrefetchNext();
+  });
   video.style.objectFit = fitSelect.value;
   if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') {
     pipButton.hidden = false;
@@ -396,7 +471,7 @@ export function createPlayer({
       video.requestPictureInPicture().catch(() => setStatus('目前無法啟用子母畫面'));
     });
   }
-  window.addEventListener('pagehide', () => savePosition());
+  window.addEventListener('pagehide', () => { savePosition(); cancelPrefetch(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePosition(); });
   refreshButtons();
   return {
@@ -406,6 +481,7 @@ export function createPlayer({
       if (series) open(suggestedEpisode(series, watchRecords(storage)));
     },
     stop() {
+      cancelPrefetch();
       savePosition(); current = null; disposeSource(); token++;
       label.textContent = '尚未播放'; refreshButtons();
     },
