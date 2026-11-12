@@ -508,3 +508,12 @@
 - **PASS（另一條獨立工作流程）**：階段 51 的 [Firefox FFmpeg.wasm full browser #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **completed/success**，包括 Firefox remux、播放器功能與之前失敗的 720p VVC-only、1.25× 回歸；[CI #43295729082](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729082)、[Pages #43295728699](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295728699) **success**。不等於這個新 CENC 三輪 Browser 已成功。
 - **PENDING**：階段 52 新 Browser 尚未讀取結果。即使通過，也僅證明合成 Chromium/Firefox 畫面與時間軸恢復；MOV 取消期間 stderr 的真實 AAC 連續性及裝置端 HEVC/BVC2 仍未驗。
 - **下一步**：取得對應 CENC Browser 失敗的具體報告、修正真正程式錯誤，不連續輪詢 Actions；之後再測 pending Worker ACK／stalled HTTP Range 的中止與資源清理。
+
+
+## 階段 53 — 2026-11-13 CENC AVIO Range transport 例外固定字串與 Worker 訊息防洩漏
+
+- **安全／可靠性問題**：`src/http-range.js` 在 `fetchImpl()` 或 HTTP 206 `reader.read()` throw 時直接傳播原生錯誤。部分 fetch adapter 的例外可能包含 proxy 上的 signed URL 或 key；`src/cenc-remux-worker.js` 又使用 `String(error?.message).slice(0,160)` 將原始訊息傳送到主執行緒，即使目前主線忽略 detail，仍不應穿越 Worker 邊界。這與階段 49 的 moov metadata 範圍讀取錯誤遮蔽是獨立程式路徑。
+- **程式碼直接提交 main**：[3939d30751907dc7abd357367fef6f7bd58ade35](https://github.com/IvanaGyro/hongguo-dl/commit/3939d30751907dc7abd357367fef6f7bd58ade35)，修改 `src/http-range.js`、`src/cenc-remux-worker.js`、`tests/http-range.test.mjs`。AVIO fetch 或 HTTP body read 出錯會產生固定 `HTTP Range connection failed`／`HTTP Range body read failed`，若 signal 已 abort 則仍為 `Canceled`。Worker 只回傳固定 `CENC streaming worker failed`，不可任意拋出原生錯誤內容。SourceBuffer / Worker 既有 cancel、terminate 和 Object URL 回收照舊。
+- **新增回歸**：mock fetch 或 reader.read 故意丟含私人 URL／`token=`／`key=` 的例外，要求公開錯誤完全不含私密片段，並確認 reader cancel/releaseLock；另 mock 在 signal.abort 後 fetch 才 reject，必須保留 `Canceled`。通過固定補丁規則，**CI 新回歸尚 PENDING**（不虛稱 Node 實跑）。
+- **基線證據**：[CI #43296135497](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135497)／[Pages #43296135463](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135463) 是前階段 52 `a4a30d0` 的 **completed/success**；[Browser #43296135487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135487) 查詢時仍 `in_progress`。另一前版 Firefox 全套 [#43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **success**。真實 HEVC/Android/Windows/BVC2 仍 **NOT TESTED**。
+- **下一個工程動作**：有 stage53 新 CI FAIL 先修；沒有則檢視 CENC Worker abort 與 MSE ACK stalled 的 lifecycle 回歸；對 Browser 真正三輪成功與 AAC packet warnings 保持獨立標記，絕不把主 CI 當瀏覽器驗收。

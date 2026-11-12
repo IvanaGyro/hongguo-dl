@@ -30,6 +30,8 @@
 
 | 已選定 720p 只有 ByteVC2、WASM 不可用時保留品質並禁用 HEVC 選項 | Firefox + Node 合成來源；VVC-only 720p、HEVC 1080p | **PASS（Firefox E2E + Node 單元）** | [main 修復 005ad1a](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)；[Firefox #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) completed/success；[CI #43295729082](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729082) success，非真實 ByteVC2 decode |
 
+| CENC AVIO HTTP fetch／reader throw 不洩漏簽章 URL，abort 保持取消 | Node/Bun 合成異常與 AbortSignal | **PENDING（階段 53）** | [main 3939d30](https://github.com/IvanaGyro/hongguo-dl/commit/3939d30751907dc7abd357367fef6f7bd58ade35) 新增 mock fetch/read/abort 回歸；需等此版 CI PASS |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。

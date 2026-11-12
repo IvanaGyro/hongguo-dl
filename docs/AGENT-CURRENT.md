@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 52）
+# Hongguo DL — 目前狀態（2026-11-13，階段 53）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 53 CENC Range/Worker 無私密資料錯誤**：[3939d30](https://github.com/IvanaGyro/hongguo-dl/commit/3939d30751907dc7abd357367fef6f7bd58ade35)：`src/http-range.js` 的 fetch/read throw 改為固定字串、abort 保留 `Canceled`，`src/cenc-remux-worker.js` 不再傳回 arbitrary `error.message`（可能含 proxy signed URL/key），`tests/http-range.test.mjs` 增加 fetch、body reader、abort 回歸。**新 CI PENDING**；stage52 CENC [Browser #43296135487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135487) 查詢時 `in_progress`，不得寫 PASS。
 
 - **階段 52 CENC Browser 驗收增強**：[a4a30d0](https://github.com/IvanaGyro/hongguo-dl/commit/a4a30d0f519f03dab374bbe121681ef27db9ed22)（前導 [ac42226](https://github.com/IvanaGyro/hongguo-dl/commit/ac422262e90541ad8af6da3141a2b222eb0e281a)）：`tests/cenc-stream.browser.mjs` 針對多次 Seek/模式切換的已知 MOV demux stderr（subsample/packet corrupt/partial file）與 JS pageerror/其他 console error 分流，**保留實際 MediaSource URL、Range、media error 檢查，新增三輪切換後前向播放時鐘必須 >0.35s**，並列印特殊警訊數目，不直接刪除。**階段 52 Browser E2E 尚待證明 PASS**，MOV 音訊警訊不能聲稱已修復；本機對相同 FFmpeg CENC 合成片在 0、5、7、35、55、63s 解密 Seek 沒有重現 stderr，尚不能排除瀏覽器 Asyncify AVIO 競態。
 
@@ -22,7 +24,7 @@
 
 ## 下一個工程動作及外部阻礙
 
-**立即下一步**：單次確認階段 52 的 CENC Browser E2E 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
+**立即下一步**：依新增 CI 的具體 FAIL 修復（若有），再確認階段 52 的 CENC Browser E2E 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
 
 **NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
 
