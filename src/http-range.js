@@ -7,10 +7,17 @@ export async function readVerifiedRange(fetchImpl, url, start, end, fileSize, si
       end >= fileSize || expected > 1024 * 1024)
     throw new Error('Invalid bounded Range request');
   if (signal?.aborted) throw new Error('Canceled');
-  const response = await fetchImpl(url, {
-    headers: { Range: 'bytes=' + start + '-' + end },
-    signal, cache: 'no-store'
-  });
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      headers: { Range: 'bytes=' + start + '-' + end },
+      signal, cache: 'no-store'
+    });
+  } catch {
+    if (signal?.aborted) throw new Error('Canceled');
+    // Native fetch failures can contain signed query parameters.
+    throw new Error('HTTP Range connection failed');
+  }
   if (signal?.aborted) {
     await response.body?.cancel().catch(() => {});
     throw new Error('Canceled');
@@ -40,7 +47,14 @@ export async function readVerifiedRange(fetchImpl, url, start, end, fileSize, si
   try {
     while (true) {
       if (signal?.aborted) throw new Error('Canceled');
-      const { done, value } = await reader.read();
+      let packet;
+      try { packet = await reader.read(); }
+      catch {
+        if (signal?.aborted) throw new Error('Canceled');
+        // Do not propagate a URL-bearing body stream exception to the Worker.
+        throw new Error('HTTP Range body read failed');
+      }
+      const { done, value } = packet;
       if (signal?.aborted) throw new Error('Canceled');
       if (done) break;
       if (!(value instanceof Uint8Array) || received + value.byteLength > expected)

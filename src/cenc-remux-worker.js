@@ -116,7 +116,9 @@ self.onmessage = ({ data }) => {
   if (data?.type !== 'start') return;
   void run(data).catch(error => {
     if (controller?.signal.aborted) return;
-    // No signed media URL or CENC key in this error.
-    self.postMessage({ type: 'error', detail: String(error?.message || 'Remux failed').slice(0, 160) });
+    // The Worker receives a proxied, signed URL and a CENC key. A native
+    // fetch/decoder error can include either; never relay arbitrary messages.
+    // The main thread handles all failures through the same resource cleanup.
+    self.postMessage({ type: 'error', detail: 'CENC streaming worker failed' });
   });
 };

@@ -87,3 +87,46 @@ test('canceling during an outstanding Range body read releases the stream prompt
   await assert.rejects(pending, /Canceled/);
   assert.equal(canceled, 1);
 });
+
+test('fetch and body reader failures cannot expose a signed media URL', async () => {
+  const secret = 'https://worker.example/api/media?token=private-and-key=secret';
+  let canceled = 0, released = 0;
+  for (const phase of ['fetch', 'body']) {
+    const transport = async (_url, options) => {
+      assert.equal(options.headers.Range, 'bytes=10-13');
+      if (phase === 'fetch') throw new Error(secret);
+      return {
+        status: 206,
+        headers: new Headers({ 'Content-Range': 'bytes 10-13/100' }),
+        body: { getReader: () => ({
+          read: async () => { throw new Error(secret); },
+          cancel: async () => { canceled++; },
+          releaseLock: () => { released++; }
+        }) }
+      };
+    };
+    await assert.rejects(readVerifiedRange(transport,
+      secret, 10, 13, 100), error => {
+      assert.match(error.message, new RegExp('HTTP Range (?:connection|body read) failed'));
+      assert.doesNotMatch(error.message, /private|secret|token=|key=|https?:/);
+      return true;
+    });
+  }
+  assert.equal(canceled, 1, 'Failed reader must be canceled');
+  assert.equal(released, 1, 'Failed reader lock must be released');
+});
+
+test('a transport that rejects after abort remains cancellation, not a network error', async () => {
+  const controller = new AbortController();
+  let signalSeen;
+  const pending = readVerifiedRange(async (_url, { signal }) => {
+    signalSeen = signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () =>
+        reject(new Error('secret signed URL inside aborted fetch')), { once: true });
+    });
+  }, '/api/media', 10, 13, 100, controller.signal);
+  assert.equal(signalSeen, controller.signal);
+  controller.abort();
+  await assert.rejects(pending, { message: 'Canceled' });
+});
