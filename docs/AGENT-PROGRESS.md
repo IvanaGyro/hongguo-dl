@@ -331,3 +331,11 @@
 - **完成邊界**：以上改動 **尚待新 CI 結論**；時間軸起訖偏差檢查**不是**逐影格 A/V sync 或畫質驗證，更**沒有真實 BVC2 正例**，因此 ByteVC2 正式播放仍 NOT TESTED。不存在音訊時不宣稱音畫同步通過。
 - **其他已驗收**：[CI #43285460654](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285460654) 含階段 31 的 CENC Worker 故障注入單元測試 **completed/success**；[CI #43285502025](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285502025) **success**。CENC 暫停節流的 browser proof 尚須獨立 PASS。
 - 下一步：更新 BVC2 驗收說明、消除殘留過期 metadata 敘述，核對此次新 CI 的一次結論；有錯就修，無錯繼續針對真實來源不可驗的外部阻礙做產品錯誤診斷。所有修改直接 main，不開 PR。
+
+## 階段 33 — 2026-11-13 BVC2 時間軸單測 PASS；識別暫停測試 workflow 版本差異
+
+- **ByteVC2 輔助驗收工具已通過 CI**：[CI #43285864402](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285864402)（新 5 個 timeline 單元）、[CI #43285897450](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285897450)（`verify-bvc2-fixture.mjs` 接線）均 **completed/success**。只證明 helper 測試與建置成功；**沒有執行真實 ByteVC2**。
+- [bvc2-wasm.md](bvc2-wasm.md) 已在 [61101b0](https://github.com/IvanaGyro/hongguo-dl/commit/61101b0f7b235199782345123d1c0c53ee5c4f29) 同步說明本機 ffprobe 的 A/V 起迄時間 ±1.5s 檢查，與現行 8MiB CENC metadata 界線。
+- **重大測試版本辨識**：[Browser #43285003886](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285003886) 雖然 **completed/success** 且讀到 300s/1800s PASS 行，但該 run HEAD 是 `b4d9440`（只新增測試程式），**尚未包含後來 [7b46f19](https://github.com/IvanaGyro/hongguo-dl/commit/7b46f19a3812dbfd742670e4fe438e52a1afac8c) 在 workflow 設定 `CENC_TEST_PAUSE=1` 的提交**，因此 **並無 paused backpressure PASS 行**，禁止把此結果當作暫停驗收。
+- [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) 為包含較新 workflow 的後續 run，最後一次查看仍 **in_progress**；其完成前暫停節流仍是 **NOT YET VERIFIED**。部分中間 run 被 GitHub concurrency 取消，不屬於功能失敗；避免不斷檢查被取消的執行。
+- 持續進行可靠性改善：下一步評估解碼器 WASM availability HEAD 探測的「首次 404／網路失敗被永久 cache」問題，先補可獨立單測的恢復邏輯，再讓 CENC 與 BVC2 共用。每階段提交 main 並記錄，不開 PR。
