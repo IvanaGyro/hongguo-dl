@@ -87,3 +87,14 @@
 - **真實 HEVC／ByteVC2**：尚未執行片源下載或播放；無 URL、KID、key、影片內容寫入 repo；不以 Ubuntu 轉封裝的成功推斷 Windows/Android 硬體解碼。
 - **已知未完成**：Worker C 端沒有按時間 `avformat_seek_file` 跳到 RAP，unbuffered seek 仍屬 P2 未完成；真實 1080p HEVC EOF 前首影格、完整音畫、300s+ 記憶體壓測、ByteVC2 真實解碼仍未通過驗證。MSE eviction/abort 是初版修補，須通過自動及瀏覽器壓測。
 - **下一步**：建立 PR 並確認 CI URL 與初次 status；不要輪詢未完的工作；若檢查失敗只讀取失敗步驟。WASM workflow 若完成驗證將 JS、WASM、manifest 一起提交到 feature branch；其 `GITHUB_TOKEN` 提交不會觸發後續 CI，必須再以人工／agent commit 觸發 PR checks。CI 成功後合併 PR，之後對真實片源做有限探測、實際 HEVC 測試與 P2 seek。
+
+## 階段 6 — 2026-11-12 P1 片源 metadata 與結構化 codec 辨識（已提交；實片源連線未成功）
+
+- [PR #5](https://github.com/IvanaGyro/hongguo-dl/pull/5) 已建立，涵蓋階段 5 發布一致性和串流穩定性修補。
+- **新分支驗證**：`0086496fc3ac06cb077aae24ccac3cb30445d6a5` 的 [PR CI #43236464613](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43236464613) 與 [PR WASM proof #43236464666](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43236464666) 均 **completed/success**；這只驗證當時提交的合成素材、測試、manifest 與編譯，不代表後續提交也已通過。
+- **codec metadata**：新增 `src/mp4-track-formats.js` (`8973ba9`) 和 `tests/mp4-track-formats.test.mjs` (`c81af50`)，循 moov/trak/mdia/minf/stbl/stsd 與加密 sample entry 的 sinf/frma 分辨 HEVC/AVC/AAC 等格式；`src/clear-key.js` (`319a08f`) 改用結構化 hasAac，偵測來源宣告與實際 sample entry codec 不一致時拒絕錯誤 MIME。測試命令 `node --test tests/mp4-track-formats.test.mjs tests/clear-key.test.mjs`。
+- **真實片源有限探測**：將 `.github/workflows/live-cenc-layout.yml` (`f1e6600`) 加入 CENC feature 分支 trigger；只執行一支既有 bounded 來源探測，最大 2 個 CDN candidates、6 個 Range、3 MiB 名目量，不下載影片或記錄 URL/key。
+- **真實探測結果：FAIL / SOURCE ACCESS**，[Actions #43237370059](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43237370059) 已完成失敗：兩個 CDN candidate 的 HTTP Range 均回 **403**，沒有成功取得媒體位元組；未達 demux、HEVC 解碼或首影格階段。這不是 CENC remux 或 HEVC decoder 失敗的證據；禁止改標 PASS，也不無限重試被拒絕的 CDN。
+- **瀏覽器觀察**：公開 Pages 的遠端 Linux Chromium 首集 UI 曾顯示 `Librempeg ByteVC2 → H.264 轉碼中…`；不是 HEVC 播放證據，也沒有可信任的完成影格與 A/V 同步驗收。該工作階段已關閉。
+- **已知後續**：須在使用者授權且來源可成功回 206 的環境進行實際 1080p HEVC／Android 測試；如無法存取，先以合成有界測試驗證錯誤、RAM、取消及 seek，再對真實片源區分 HTTP 403、格式或 decoder。
+- **PR 合併條件**：最新 commit 必須重新確認 PR CI、WASM proof、必要的瀏覽器 acceptance；若尚進行中就記錄並繼續可獨立工作，不等待 Actions 日誌。尚未開發 `avformat_seek_file` 的 unbuffered seek。
