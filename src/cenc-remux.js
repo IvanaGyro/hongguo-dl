@@ -111,9 +111,16 @@ export async function openCencProgressiveStream({
 
   const ms = new MediaSource();
   const objectUrl = URL.createObjectURL(ms);
-  const worker = new Worker(new URL('./cenc-remux-worker.js', import.meta.url), {
-    type: 'module'
-  });
+  let worker;
+  try {
+    worker = new Worker(new URL('./cenc-remux-worker.js', import.meta.url), {
+      type: 'module'
+    });
+  } catch {
+    // No stream object was returned, so no caller can close this URL for us.
+    URL.revokeObjectURL(objectUrl);
+    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
+  }
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
   let finished = false;
@@ -207,7 +214,14 @@ export async function openCencProgressiveStream({
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(() => fail('source-buffer'));
   };
-  worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });
+  try {
+    worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });
+  } catch {
+    // A synchronous structured-clone/terminated-worker failure must not
+    // strand the object URL or worker before the stream reaches its caller.
+    await close();
+    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法啟動');
+  }
   const seekTo = async seconds => {
     if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
     await close();
