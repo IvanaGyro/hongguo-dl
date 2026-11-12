@@ -487,9 +487,13 @@ export function createPlayer({
       });
     }
     video.src = activeUrl || resolved.url;
-    video.playbackRate = Number(speedSelect.value) || 1;
+    const selectedRate = Number(speedSelect.value) || 1;
+    // HTMLMediaElement.load() may reset playbackRate to defaultPlaybackRate.
+    // Keep the chosen speed across quality/codec changes, resume and next episode.
+    video.defaultPlaybackRate = selectedRate;
     video.style.objectFit = fitSelect.value;
     video.load();
+    video.playbackRate = selectedRate;
     await waitMetadata(signal);
     markStartupStage('loadedmetadata');
     if (signal.aborted || currentToken !== token) return;
@@ -721,7 +725,12 @@ export function createPlayer({
     persistPrefs();
     if (current) open(current, true, true);
   });
-  speedSelect.addEventListener('change', () => { video.playbackRate = Number(speedSelect.value) || 1; persistPrefs(); });
+  speedSelect.addEventListener('change', () => {
+    const rate = Number(speedSelect.value) || 1;
+    video.defaultPlaybackRate = rate;
+    video.playbackRate = rate;
+    persistPrefs();
+  });
   fitSelect.addEventListener('change', () => { video.style.objectFit = fitSelect.value; persistPrefs(); });
   autoNextInput.addEventListener('change', () => {
     persistPrefs();
