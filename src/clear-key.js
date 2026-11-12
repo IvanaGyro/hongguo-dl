@@ -155,6 +155,13 @@ export async function openClearKeyStream({
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
+  // Only report a stage and an error type. Media URLs and content keys are
+  // deliberately excluded from diagnostics (even on failures).
+  const declined = (stage, error = null) => {
+    console.info('[Hongguo EME] native stream unavailable:', stage,
+      error?.name || '');
+    return null;
+  };
   const mime = mimeForCodec(codec);
   if (!mime || !source?.contentKey || typeof requestAccess !== 'function' ||
       typeof video.setMediaKeys !== 'function' || !video.canPlayType(mime)) return null;
@@ -167,16 +174,16 @@ export async function openClearKeyStream({
       persistentState: 'not-allowed', distinctiveIdentifier: 'not-allowed',
       sessionTypes: ['temporary']
     }]);
-  } catch { return null; }
+  } catch (error) { return declined('key-system-access', error); }
   aborted(signal);
   const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
   let kid;
   try { kid = await probeCencKid(url, signal, fetchImpl); }
   catch (error) {
     if (signal?.aborted) throw error;
-    return null;
+    return declined('mp4-range-or-kid-probe', error);
   }
-  if (!kid) return null;
+  if (!kid) return declined('no-cenc-kid');
   const key = hexKey(source.contentKey);
   let session = null, mediaKeysSet = false;
   try {
@@ -208,6 +215,6 @@ export async function openClearKeyStream({
     await session?.close().catch(() => {});
     if (mediaKeysSet) await video.setMediaKeys(null).catch(() => {});
     if (signal?.aborted) throw error;
-    return null;
+    return declined('key-session-or-license', error);
   }
 }
