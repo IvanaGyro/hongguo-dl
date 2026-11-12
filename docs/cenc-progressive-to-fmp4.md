@@ -4,7 +4,7 @@
 
 **首選：精簡 Librempeg/Libavformat WASM，經 HTTP Range 增量讀取，CENC 解密後保持 HEVC/AAC 壓縮封包不變，以 MSE 需要的 fMP4 逐段輸出。**
 
-原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**合成 H.264/AAC 的 unbuffered Seek/續播已在 Chromium/Firefox 通過，Chromium 合成 300 秒完整播畢已通過，另有合成 HEVC 1080p WASM stream-copy proof；紅果真實 1080p HEVC 與 Android Firefox 仍未驗證，1800 秒合成 Chromium 完整播放、MSE 有界緩衝已通過，暫停網路節流仍須獨立驗證**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
+原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**合成 H.264/AAC 的 unbuffered Seek/續播已在 Chromium/Firefox 通過，Chromium 合成 300 秒完整播畢已通過，另有合成 HEVC 1080p WASM stream-copy proof；紅果真實 1080p HEVC 與 Android Firefox 仍未驗證，1800 秒合成 Chromium 完整播放、MSE 有界緩衝已通過，Chromium 合成影片暫停 120 秒後 Range 不繼續增長、恢復後正常播畢已獨立驗證**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
 
 ### 已有證據
 
@@ -54,7 +54,7 @@
       -> MediaSource / SourceBuffer → Video.js UI
 
 1. **自訂 AVIO**：使用 avio_alloc_context 的 read_packet、seek 和 AVSEEK_SIZE；以 Asyncify/EM_ASYNC_JS 暫停同步 C 呼叫、等待 Worker 內的非同步 fetch，並集中管理 Range 快取，不能要求 SharedArrayBuffer；206、Content-Range、403/416 都要正確檢查。現行 metadata moov 安全上限為 **8 MiB**，此前 1MiB 無法涵蓋 1800 秒合成樣本；超出限制須明確中止、**不得退回不受限的整檔下載**。
-2. **CENC 解密與串流封裝**：input 交由 mov demuxer 讀取 encrypted progressive MP4；output 由 MP4 muxer 保留 AVCodecParameters/HEVC hvcC/AAC extradata。傳送 packet 時 rescale DTS/PTS、處理 edit list 和 B-frame composition offset；使用 frag_custom 配合 av_write_frame(ctx, NULL) 在 RAP 或預算時間時 flush。
+2. **CENC 解密與串流封裝**：input 交由 mov demuxer 讀取 encrypted progressive MP4；output 由 MP4 muxer 保留 AVCodecParameters/HEVC hvcC/AAC extradata。傳送 packet 時 rescale DTS/PTS、處理 edit list 和 B-frame composition offset；現行使用 `frag_keyframe+empty_moov+default_base_moof` 在視訊 RAP 輸出片段，非使用 `frag_custom` 或自行 `av_write_frame(NULL)` flush。
 3. **MSE**：Worker 每次提交完整初始化片段或完成的 fMP4 fragment，前端 appendBuffer 的 updateend ACK 後再提供更多片段。防止 Worker 和 SourceBuffer 同時無界累積內容；建議下載預取視窗約 25–40 秒，可根據 seek、停頓調整。正確註冊影片與 AAC codec string。
 4. **兼容性**：clear fMP4 不需要 EME，但仍需要瀏覽器的 HEVC/MSE 解碼器。檢查 MediaSource.isTypeSupported / MediaCapabilities；無 HEVC 時選另一編碼或另走 H.264 轉碼，不能因為重新封裝就宣稱所有瀏覽器支援。Android Firefox 需實機驗證。
 5. **seek、續播與清理**：現行版本已實作 indexed RAP 附近的 CENC seek、Worker/MediaSource 重建、歷史位置恢復、MSE eviction 與取消清理；這些行為已通過合成 Chromium/Firefox 的 55 秒及 10/50/90% 跳轉／reload。真實來源及 Android 尚需重複驗證。
@@ -72,7 +72,7 @@
 
 ### 已定位並修補的 1800 秒影片索引問題（合成端到端已通過）
 
-- **1800 秒合成 CENC**：首輪 [Browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) FAIL：MP4 moov/sample tables 超過當時的 1MiB 限制，未找到 KID，備援回整檔得到 HTTP 416；修補為 8MiB bounded metadata 與單元回歸後，[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) **completed/success 且有實際 PASS 行**：Chromium 16× 播至 1800.021402s、ended=true、videoError=null、104 Range、MSE buffered span 最大 72s、ahead 43.56s；首影格於 HTTP EOF 前且僅取得約 6.6% 來源。process-tree RSS 802.5→peak 838.8→last 838.2 MiB，是 Linux Node harness + browser 粗量測，不能當成精確 GPU/Android RAM。**新增加的暫停後 Range 節流測試（CENC_TEST_PAUSE=1）必須另外有 PASS 行，不能用這輪 1800s 成功代替。**
+- **1800 秒合成 CENC**：首輪 [Browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) FAIL：MP4 moov/sample tables 超過當時的 1MiB 限制，未找到 KID，備援回整檔得到 HTTP 416；修補為 8MiB bounded metadata 與單元回歸後，[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) **completed/success 且有實際 PASS 行**：Chromium 16× 播至 1800.021402s、ended=true、videoError=null、104 Range、MSE buffered span 最大 72s、ahead 43.56s；首影格於 HTTP EOF 前且僅取得約 6.6% 來源。process-tree RSS 802.5→peak 838.8→last 838.2 MiB，是 Linux Node harness + browser 粗量測，不能當成精確 GPU/Android RAM。**另外的 120 秒暫停 Range 節流測試已取得獨立 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) PASS**；這是 Chromium 合成片，非 Android/HEVC 真實裝置驗收。
 
 ### 尚未驗證的最終產品條件
 
