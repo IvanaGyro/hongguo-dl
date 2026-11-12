@@ -23,6 +23,12 @@ export function episodeFileName(job, extension = '.mp4') {
   const index = Math.max(1, Math.trunc(Number(job.index) || 1));
   return title + '.E' + String(index).padStart(width, '0') + normalizedExtension(extension);
 }
+// Human-readable queue labels never inherit filename zero-padding.
+export function episodeDisplayTitle(job) {
+  if (!job.seriesId || job.vid === 'direct') return job.title || '媒體直連';
+  const title = job.seriesTitle || job.title?.split(' · 第')[0] || '影集';
+  return title + ' · 第 ' + (Number(job.index) || 1) + ' 集';
+}
 export function filenameExtension(filename) {
   return normalizedExtension(/\.[a-z0-9]+$/i.exec(String(filename || ''))?.[0]);
 }

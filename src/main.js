@@ -4,9 +4,9 @@ import { convertBytes, convertHls } from './ffmpeg.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
-import { exportQueue } from './queue-export.js';
+import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
-import { episodeFileName, originalExtension, filenameExtension } from './naming.js';
+import { episodeFileName, originalExtension, filenameExtension, episodeDisplayTitle } from './naming.js';
 import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
@@ -132,9 +132,11 @@ function renderQueue() {
   const complete = jobs.filter(job => job.status === 'completed').length;
   const failed = jobs.filter(job => job.status === 'failed').length;
   $('queue-summary').textContent = jobs.length
-    ? jobs.length + ' 集 · ' + running + ' 進行中 · ' + complete + ' 完成 · ' + failed + ' 失敗'
-    : '尚未加入下載';
-  $('queue-selected-count').textContent = selectedJobs.length + ' 集已選擇';
+    ? [jobs.length + ' 集', running && running + ' 進行中',
+      complete && complete + ' 完成', failed && failed + ' 失敗'].filter(Boolean).join(' · ')
+    : '';
+  $('queue-selected-count').textContent = selectedJobs.length
+    ? '已選 ' + selectedJobs.length + ' 集' : '尚未選取集數';
   $('bulk-zip').disabled = !selectedJobs.length || !!bulkController;
   $('bulk-concat').disabled = !selectedJobs.length || !!bulkController;
   $('retry-failed').disabled = !failed;
@@ -143,27 +145,32 @@ function renderQueue() {
   $('queue-select-all').disabled = !jobs.length;
   $('queue-select-none').disabled = !selectedJobs.length;
   if (!jobs.length) {
-    $('queue').innerHTML = '<div class="empty">從上方勾選分集加入佇列，下載完成後再選擇儲存或打包。</div>';
+    $('queue').innerHTML = '<div class="empty">尚無下載項目</div>';
     return;
   }
-  $('queue').innerHTML = jobs.map(job => {
+  $('queue').innerHTML = orderQueueSelection(jobs).map(job => {
     const busy = ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const chosen = exportSelected.has(job.id);
     const progress = job.status === 'completed' ? 100 :
       job.totalBytes > 0 ? Math.min(100, Math.round(100 * (job.bytes || 0) / job.totalBytes)) : 0;
-    const subtitle = job.status === 'completed'
-      ? job.onDisk ? '✓ 已存入選定資料夾' : '✓ 已暫存於瀏覽器 · 可匯出'
-      : job.status === 'retrying' ? '重試 · 連續相同錯誤 ' + (job.errorStreak || 1) + '/3'
-      : job.status === 'resolving' ? '正在取得來源…'
-      : job.status === 'queued' ? '等待下載'
-      : formatBytes(job.bytes || 0) + (job.totalBytes ? ' / ' + formatBytes(job.totalBytes) : '');
-    const detail = job.segment ? ' · 分片 ' + job.segment.current + '/' + job.segment.total
-      : job.status === 'processing' && Number.isFinite(job.progress) ?
-      ' · 媒體處理 ' + Math.round(job.progress * 100) + '%' : '';
+    const retryDetail = job.status === 'retrying'
+      ? '連續失敗 ' + (job.errorStreak || 1) + '/3' : '';
+    const bytesDetail = ['downloading', 'processing'].includes(job.status) && job.bytes > 0
+      ? formatBytes(job.bytes) + (job.totalBytes ? ' / ' + formatBytes(job.totalBytes) : '') : '';
+    const progressDetail = job.segment ? '分片 ' + job.segment.current + '/' + job.segment.total
+      : job.status === 'processing' && Number.isFinite(job.progress)
+        ? Math.round(job.progress * 100) + '%' : '';
+    const detail = [retryDetail, bytesDetail, progressDetail].filter(Boolean).join(' · ');
+    const selectedOptions = [
+      job.quality !== 'auto' && job.quality,
+      job.codec !== 'auto' && job.codec?.toUpperCase(),
+      job.mode === 'h264' ? '轉 H.264' : job.mode === 'copy' ? '無損封裝' : ''
+    ].filter(Boolean);
+    const displayTitle = episodeDisplayTitle(job);
     let action = '';
     if (job.status === 'completed')
       action = '<button class="save-one" data-action="save" data-id="' + escapeHtml(job.id) +
-        '" title="儲存這一集到裝置">↓ 儲存</button>';
+        '" title="將這一集儲存至裝置">' + (job.onDisk ? '另存' : '↓ 儲存') + '</button>';
     else if (busy)
       action = '<button data-action="cancel" data-id="' + escapeHtml(job.id) + '">取消</button>';
     else if (job.status === 'failed' || job.status === 'canceled')
@@ -171,17 +178,20 @@ function renderQueue() {
         (job.vid === 'direct' && !job.directUrl ? ' disabled' : '') + '>重試</button>';
     return '<article class="job ' + (chosen ? 'selected' : '') +
       '" role="listitem"><div class="job-layout"><input class="job-select" type="checkbox" ' +
-      'data-export-id="' + escapeHtml(job.id) + '" aria-label="選取' + escapeHtml(job.title) +
+      'data-export-id="' + escapeHtml(job.id) + '" aria-label="選取' + escapeHtml(displayTitle) +
       '以匯出"' + (chosen ? ' checked' : '') + '><div class="job-body">' +
-      '<div class="job-topline"><div><b>' + escapeHtml(job.title) +
-      '</b><div class="job-meta">' + escapeHtml(job.sourceCodec || job.codec || '未知編碼') +
-      ' · ' + escapeHtml(job.mode === 'h264' ? 'H.264' : job.mode === 'copy' ? '無損封裝' : '原始') +
-      '</div></div><div class="job-controls"><span class="status s-' + escapeHtml(job.status) +
-      '">' + escapeHtml(job.status === 'completed' ? '已備妥' : displayStatus(job.status)) +
+      '<div class="job-topline"><div><b>' + escapeHtml(displayTitle) +
+      '</b>' + (selectedOptions.length ? '<div class="job-meta">' +
+        escapeHtml(selectedOptions.join(' · ')) + '</div>' : '') +
+      '</div><div class="job-controls"><span class="status s-' + escapeHtml(job.status) +
+      '">' + escapeHtml(job.status === 'completed'
+        ? (job.onDisk ? '已儲存' : '可匯出') : displayStatus(job.status)) +
       '</span>' + action + '</div></div>' +
       '<div class="progress-track"><div class="progress-bar" style="width:' + progress +
-      '%"></div></div><div class="job-meta">' + escapeHtml(subtitle + detail) + '</div>' +
-      (job.error ? '<div class="job-error">' + escapeHtml(job.error) + '</div>' : '') +
+      '%"></div></div>' +
+      (detail ? '<div class="job-meta">' + escapeHtml(detail) + '</div>' : '') +
+      (job.error && job.status !== 'canceled' ? '<div class="job-error">' +
+        escapeHtml(job.error) + '</div>' : '') +
       '</div></div></article>';
   }).join('');
 }
@@ -198,13 +208,14 @@ function renderEpisodes() {
       Math.min(100, Math.max(0, Math.round(100 * seconds / duration))) : 0;
     if (currentMode === 'play') {
       const label = '第 ' + ep.index + ' 集' +
-        (watched ? '，已看完' : percent ? '，已看 ' + percent + '%' : '');
+        (watched ? '，已看完' : percent ? '，已看 ' + percent + '%' : '') +
+        (ep.available === false ? '，可能受限制' : '');
       return '<button type="button" class="episode play-episode ' +
         (watched ? 'watched ' : seconds > 0.5 ? 'in-progress ' : '') +
         (ep.vid === current ? 'current' : '') +
         '" data-play-vid="' + escapeHtml(ep.vid) + '" aria-label="' +
         escapeHtml(label) + '"><span>' +
-        (series.kind === 'direct' ? '媒體直連' : '第 ' + ep.index + ' 集') +
+        (series.kind === 'direct' ? '媒體直連' : ep.index) +
         '</span>' +
         (watched ? '<span class="watched-check" aria-hidden="true">✓</span>'
           : seconds > 0.5 ? '<small>' + formatTime(seconds) +
@@ -215,15 +226,18 @@ function renderEpisodes() {
     const checked = selected.has(ep.vid);
     return '<label class="episode ' + (checked ? 'selected' : '') +
       '"><input type="checkbox" data-vid="' + escapeHtml(ep.vid) +
+      '" aria-label="' + escapeHtml('第 ' + ep.index + ' 集' +
+        (ep.available === false ? '，可能受限制' : '')) +
       '"' + (checked ? ' checked' : '') + '><span>' +
-      (series.kind === 'direct' ? '媒體直連' : '第 ' + ep.index + ' 集') + '</span>' +
-      (ep.available === false ? '<small>可能受限制</small>' : '') + '</label>';
+      (series.kind === 'direct' ? '媒體直連' : ep.index) + '</span></label>';
   }).join('');
   const finished = series.episodes.filter(ep =>
     watch[playbackKey(series.seriesId, ep.vid)]?.completed).length;
+  const restricted = series.episodes.filter(ep => ep.available === false).length;
+  const restrictionNote = restricted ? ' · ' + restricted + ' 集可能受限制' : '';
   $('series-count').textContent = currentMode === 'play'
-    ? series.total + ' 集 · 已看完 ' + finished + ' 集'
-    : series.total + ' 集 · 已選擇 ' + selected.size + ' 集';
+    ? series.total + ' 集 · 已看完 ' + finished + ' 集' + restrictionNote
+    : series.total + ' 集 · 已選 ' + selected.size + ' 集' + restrictionNote;
   $('add-queue').disabled = !selected.size;
   $('select-all').hidden = currentMode === 'play';
   $('select-none').hidden = currentMode === 'play';
@@ -231,7 +245,7 @@ function renderEpisodes() {
 function renderRecentSeries() {
   const items = recentSeries(localStorage);
   $('recent-series').innerHTML = items.length
-    ? '<h3>最近查詢的影集（儲存在此瀏覽器）</h3><div class="recent-list">' +
+    ? '<h3>最近開啟</h3><div class="recent-list">' +
       items.map(item => '<button type="button" data-recent-id="' +
         escapeHtml(item.seriesId) + '">' + escapeHtml(item.title) + ' · ' +
         item.total + ' 集</button>').join('') + '</div>'
@@ -339,10 +353,11 @@ async function chooseFolder() {
     if (!window.showDirectoryPicker) throw errorWith('NO_DIRECTORY', '此瀏覽器沒有資料夾存取 API');
     directory = await window.showDirectoryPicker({ mode: 'readwrite' });
     $('folder-status').textContent = '✓ ' + directory.name;
-    $('browser-note').textContent = '✓ 下載完成將自動寫入選擇的資料夾';
+    $('browser-note').hidden = true;
   } catch (e) {
     if (e.name !== 'AbortError') {
       $('browser-note').textContent = classifyError(e).message;
+      $('browser-note').hidden = false;
     }
   }
 }
@@ -359,13 +374,13 @@ function queueSelected() {
       continue;
     }
     const name = series.kind === 'direct' ? '媒體直連' :
-      series.title + ' · 第 ' + String(ep.index).padStart(3, '0') + ' 集';
+      series.title + ' · 第 ' + ep.index + ' 集';
     const job = { id: crypto.randomUUID(), seriesId: series.seriesId || null,
       seriesTitle: series.title || '影集', seriesTotal: series.total, vid: ep.vid,
       directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
       bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null,
       lastErrorKey: '', errorStreak: 0, failureAttempts: 0, stored: false, onDisk: false };
-    jobs.unshift(job);
+    jobs.push(job);
     exportSelected.add(job.id);
   }
   persistExportSelection();
@@ -395,7 +410,7 @@ function cancel(job) {
 function pump() {
   const concurrency = Number($('concurrency').value) || 2;
   while (active.size < concurrency) {
-    const job = jobs.find(j => j.status === 'queued' && !active.has(j.id));
+    const job = orderQueueSelection(jobs).find(j => j.status === 'queued' && !active.has(j.id));
     if (!job) break;
     const controller = new AbortController();
     active.set(job.id, controller);
@@ -778,7 +793,7 @@ $('clear-finished').addEventListener('click', () => {
   const remove = jobs.filter(j => ['completed', 'canceled'].includes(j.status));
   if (!remove.length) return;
   if (!window.confirm('清除 ' + remove.length +
-    ' 個佇列項目？這會同時刪除瀏覽器內的暫存影片，但不會刪除已儲存到資料夾的影片。')) return;
+    ' 個佇列項目？尚未另存的影片也會一起刪除；已儲存到資料夾的影片不受影響。')) return;
   jobs = jobs.filter(j => !remove.includes(j));
   for (const job of remove) {
     exportSelected.delete(job.id);
@@ -787,19 +802,10 @@ $('clear-finished').addEventListener('click', () => {
   persistExportSelection(); saveJobs(); schedulePaint();
 });
 $('concurrency').addEventListener('change', pump);
+$('browser-note').hidden = true;
 if (!window.showDirectoryPicker) {
   $('choose-folder').hidden = true;
-  $('folder-status').textContent = '本機暫存';
-  $('browser-note').textContent = '✓ 影片完成後存入瀏覽器 · 請從佇列儲存或打包匯出';
-} else {
-  $('browser-note').textContent = '✓ 已完成的影片可逐集儲存，或用佇列 ZIP／MP4 匯出';
-}
-if (navigator.storage?.estimate) {
-  navigator.storage.estimate().then(estimate => {
-    if (estimate.quota && !directory)
-      $('browser-note').title = '瀏覽器暫存用量 ' + formatBytes(estimate.usage) +
-        ' / ' + formatBytes(estimate.quota);
-  }).catch(() => {});
+  $('folder-status').hidden = true;
 }
 renderQueue();
 setMode('download');
