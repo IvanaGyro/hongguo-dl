@@ -17,12 +17,14 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, key, fileSize }) {
+async function run({ url, key, fileSize, startSeconds = 0 }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
     throw new Error('Invalid source byte count');
   if (!/^[a-f0-9]{32}$/i.test(key || '')) throw new Error('Invalid CENC key');
+  if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
+    throw new Error('Invalid CENC seek time');
   const mediaUrl = new URL(url, self.location.origin);
   if (!['http:', 'https:'].includes(mediaUrl.protocol) ||
       !mediaUrl.pathname.endsWith('/api/media'))
@@ -83,8 +85,13 @@ async function run({ url, key, fileSize }) {
   });
   if (core._cenc_remux_available() !== 1)
     throw new Error('WASM missing MOV demuxer or MP4 muxer');
-  const ret = await core.ccall('cenc_stream_remux', 'number',
-    ['number', 'string'], [fileSize, key], { async: true });
+  if (startSeconds > 0.5 && typeof core._cenc_stream_remux_at !== 'function')
+    throw new Error('CENC remux WASM seek API unavailable');
+  const ret = startSeconds > 0.5
+    ? await core.ccall('cenc_stream_remux_at', 'number',
+      ['number', 'string', 'number'], [fileSize, key, startSeconds], { async: true })
+    : await core.ccall('cenc_stream_remux', 'number',
+      ['number', 'string'], [fileSize, key], { async: true });
   if (ret !== 0) {
     // Only expose the fixed stage name from C; no original URL/key.
     throw new Error(core.UTF8ToString(core._cenc_remux_error()) || 'Remux failed');
