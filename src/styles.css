@@ -12,11 +12,9 @@ button.quiet { background: transparent; }
 .topbar { height: 68px; border-bottom: 1px solid #2c3952; padding: 0 clamp(1rem, 4vw, 3rem); display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: .7rem; font-size: 1.13rem; letter-spacing: -.02em; font-weight: 800; }
 .brand-mark { display: inline-flex; width: 32px; height: 32px; border-radius: 10px; align-items: center; justify-content: center; color: #101727; background: #9dbdf8; font-size: 1.3rem; }
-.top-hint, .subtle, .help, footer, .job-meta { color: #a1b0ca; }
-.top-hint { font-size: .86rem; }
+.subtle, .help, .job-meta { color: #a1b0ca; }
 .layout { max-width: 1120px; margin: 0 auto; padding: 0 1.25rem 4rem; }
 .hero { padding: 3.8rem 0 2rem; }
-.eyebrow { font-size: .73rem; font-weight: 800; letter-spacing: .16em; color: #97b8f5; }
 h1 { margin: .7rem 0 .8rem; max-width: 750px; font-size: clamp(2rem, 4.5vw, 3.4rem); line-height: 1.17; letter-spacing: -.035em; }
 .hero p { margin: 0; max-width: 760px; line-height: 1.75; color: #bfcbde; }
 .panel { padding: clamp(1rem, 2.6vw, 1.8rem); margin: 1.3rem 0; background: #182236; border: 1px solid #34425b; border-radius: 17px; box-shadow: 0 14px 40px #0002; }
@@ -57,8 +55,7 @@ h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.01em; }
 .s-completed + .progress-bar { background: #a5e7c0; }
 .job-error { margin-top: .7rem; font-size: .82rem; color: #ffc4c4; overflow-wrap: anywhere; }
 .empty { padding: 2.8rem 1rem; text-align: center; color: #899ab5; border: 1px dashed #40516e; border-radius: 12px; }
-footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
-@media (max-width: 850px) { .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } .top-hint { display: none; } }
+@media (max-width: 850px) { .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 550px) { .settings { grid-template-columns: 1fr; } .input-row { flex-direction: column; } .section-title { flex-direction: column; } .job-head { flex-direction: column; } .episode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .api-settings { margin-top: 1.2rem; border-top: 1px solid #34425b; padding-top: 1rem; }
@@ -113,11 +110,9 @@ footer { line-height: 1.65; padding: 2rem 0; font-size: .85rem; }
 .recent-list button { border-radius: 999px; padding: .4rem .7rem; font-size: .83rem; }
 .batch-tools { display: none; }
 .browser-note { font-size: .84rem; color: #a9bdd7; margin-top: .8rem; display: flex; align-items: center; gap: .65rem; }
-.storage-indicator { color: #7bc8a9; }
 .queue-export { border-top: 1px solid #34435b; margin-top: 1rem; padding-top: 1rem; display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: space-between; }
 .queue-export > div:first-child { display: flex; flex-direction: column; gap: .2rem; }
 .queue-export strong { font-size: .95rem; }
-.export-hint { color: #93a7c4; font-size: .75rem; }
 .export-status { flex-basis: 100%; color: #a2caff; font-size: .85rem; min-height: 1.1em; }
 .job { padding: .85rem 1rem; transition: border-color .1s; }
 .job.selected { border-color: #89aff4; }

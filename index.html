@@ -9,12 +9,11 @@
 </head>
 <body>
   <div id="app">
-    <header class="topbar"><span class="brand"><span class="brand-mark">▶</span> Hongguo DL</span><span class="top-hint">播放 · 續看 · 下載</span></header>
+    <header class="topbar"><span class="brand"><span class="brand-mark">▶</span> Hongguo DL</span></header>
     <main class="layout">
       <section class="hero">
-        <div class="eyebrow">WATCH / SAVE / ORGANIZE</div>
-        <h1>你的短劇，從上次看到的地方接續。</h1>
-        <p>輸入劇集 ID、分享網址，或直接使用連結開啟影集。僅使用有權存取的內容。</p>
+        <h1>接著看，或下載短劇。</h1>
+        <p>輸入影集 ID 或分享網址，即可開始。</p>
       </section>
       <nav class="mode-tabs" aria-label="操作模式">
         <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
@@ -23,7 +22,7 @@
       <section class="panel">
         <div id="recent-series" class="recent-library" aria-label="最近看過的影集"></div>
         <form id="lookup-form" class="lookup">
-          <label for="input-url">劇集 ID 或網址</label>
+          <label for="input-url">影集 ID 或網址</label>
           <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
         </form>
         <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
@@ -37,7 +36,7 @@
               <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
             </div>
             <p id="worker-status" class="help"></p>
-            <p class="help">預設網址由 GitHub Pages 建置時設定的 PROXY 提供；自行修改後只儲存在此瀏覽器。網站會將分集查詢與影片下載請求傳送到指定的 Cloudflare Worker。</p>
+            <p class="help">查詢和下載會透過此 Worker；只有自訂網址會保存在目前裝置。</p>
             <div id="api-settings-error" class="alert" role="alert" hidden></div>
           </form>
         </details>
@@ -57,8 +56,8 @@
             <label>輸出 <select id="output-mode"><option value="original">保留原始媒體（不轉檔）</option><option value="copy">FFmpeg.wasm 無損封裝 MP4</option><option value="h264">FFmpeg.wasm 轉 H.264 MP4</option></select></label>
             <label>同時下載 <select id="concurrency"><option value="1">1 集</option><option value="2" selected>2 集</option><option value="3">3 集</option></select></label>
           </div>
-          <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle">依瀏覽器支援程度保存</span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
-          <div id="browser-note" class="browser-note" role="status"><span class="storage-indicator" aria-hidden="true">◉</span><span>載入儲存空間狀態…</span></div>
+          <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
+          <div id="browser-note" class="browser-note" role="status" hidden></div>
           </div>
         </div>
         <section id="player-panel" hidden aria-label="影集播放器">
@@ -102,18 +101,17 @@
             <button id="clear-finished" type="button" class="quiet">清除完成項目</button>
           </div>
         </div>
-        <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">選擇上方影集的分集，加入下載佇列。</div></div>
+        <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">尚無下載項目</div></div>
         <div class="queue-export">
-          <div><strong id="queue-selected-count">尚未選擇佇列項目</strong><span class="export-hint">檔案先暫存於瀏覽器；勾選後才匯出</span></div>
+          <div><strong id="queue-selected-count">尚未選取集數</strong></div>
           <div class="actions">
             <button id="bulk-zip" type="button" class="primary">↓ 匯出 ZIP</button>
-            <button id="bulk-concat" type="button">↓ 無損 MP4</button>
+            <button id="bulk-concat" type="button" title="合併已選擇的同一影集分集（不重新編碼）">合併 MP4</button>
             <button id="bulk-cancel" type="button" hidden>取消</button>
           </div>
           <div id="bulk-status" class="export-status" role="status" aria-live="polite"></div>
         </div>
       </section>
-      <footer>下載和觀看紀錄留在此瀏覽器；已完成的影片暫存在裝置的瀏覽器儲存空間，可逐集儲存或打包匯出。請勿將重要影片只存放在瀏覽器快取。</footer>
     </main>
   </div>
   <script type="module" src="/src/main.js"></script>

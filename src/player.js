@@ -211,7 +211,7 @@ export function createPlayer({
     readyForHistory = true;
     loading = false;
     recoveryStart = video.currentTime;
-    setStatus('第 ' + episode.index + ' 集' + (wanted > 0 ? ' · 已續播' : ''));
+    setStatus(wanted > 0 ? '已續播' : '');
     onProgress?.();
     if (autoPlay) {
       try { await video.play(); }
@@ -251,7 +251,7 @@ export function createPlayer({
     sourceInfo.textContent = '';
     const signal = (controller = new AbortController()).signal;
     const currentToken = ++token;
-    setStatus('載入第 ' + episode.index + ' 集…');
+    setStatus('載入中…');
     void run(episode, currentToken, signal, autoPlay);
     onProgress?.();
   }

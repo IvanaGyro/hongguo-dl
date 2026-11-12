@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { idsFromUrl, urlForSeriesIds } from '../src/deep-link.js';
-import { episodeFileName, collectionFileName, originalExtension, filenameExtension } from '../src/naming.js';
+import { episodeFileName, collectionFileName, originalExtension, filenameExtension, episodeDisplayTitle } from '../src/naming.js';
 import { availableRenditions, chooseRendition, qualityId, renditionForAttempt } from '../src/source-options.js';
 import { orderQueueSelection, exportQueue } from '../src/queue-export.js';
 import { rememberPlayback, playbackKey, watchRecords } from '../src/library.js';
@@ -46,6 +46,16 @@ test('episode filenames depend on series total, not quality/codec or chosen epis
   assert.equal(collectionFileName([
     { ...base, index: 5 }, { ...base, index: 1 }
   ], 'zip'), 'nova：新星_第1-5集.zip');
+});
+
+test('queue labels use unpadded episode numbers, including old saved jobs', () => {
+  const job = { seriesId: '42', seriesTitle: '短劇', vid: '101',
+    index: 6, title: '短劇 · 第 006 集', seriesTotal: 60 };
+  assert.equal(episodeDisplayTitle(job), '短劇 · 第 6 集');
+  assert.equal(episodeFileName(job), '短劇.E06.mp4');
+  assert.equal(episodeDisplayTitle({ ...job, index: 100, seriesTotal: 1000 }), '短劇 · 第 100 集');
+  assert.equal(episodeFileName({ ...job, index: 100, seriesTotal: 1000 }), '短劇.E0100.mp4');
+  assert.equal(episodeDisplayTitle({ vid: 'direct', title: '媒體直連' }), '媒體直連');
 });
 
 test('Nova source variant controls expose real resolution and codec tiers', () => {
