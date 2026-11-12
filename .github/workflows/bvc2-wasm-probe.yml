@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/bvc2-wasm-probe.yml'
       - 'scripts/build-bvc2-wasm-transcode.sh'
+      - 'scripts/bvc2-transcoder.c'
   workflow_dispatch:
 permissions:
   contents: write
@@ -19,7 +20,7 @@ jobs:
       - name: Install native pkg-config for Librempeg x264 dependency detection
         run: |
           apt-get update -qq
-          apt-get install -y pkg-config >/dev/null
+          apt-get install -y pkg-config ffmpeg >/dev/null
       - name: Validate Emscripten toolchain
         run: |
           emcc --version | head -n 1
@@ -29,6 +30,28 @@ jobs:
         run: bash scripts/build-bvc2-wasm-probe.sh /tmp/hongguo-bvc2-wasm
       - name: Try linking native BVC2 decode plus x264 encoder as browser WASM
         run: bash scripts/build-bvc2-wasm-transcode.sh /tmp/hongguo-bvc2-transcode
+      - name: Reject real H.264 MP4 inputs rather than claiming ByteVC2 decoding
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -nostdin -v error \
+            -f lavfi -i testsrc=size=160x90:rate=12 -t 1 \
+            -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -y /tmp/bvc2-negative-h264.mp4
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import {readFileSync} from "node:fs";
+            import createModule from "/tmp/hongguo-bvc2-transcode/dist/bvc2-core.mjs";
+            const core = await createModule({ wasmBinary:
+              readFileSync("/tmp/hongguo-bvc2-transcode/dist/bvc2-core.wasm") });
+            assert.equal(core._bvc2_decoder_available(), 1);
+            core.FS.writeFile("/not-bvc2.mp4", readFileSync("/tmp/bvc2-negative-h264.mp4"));
+            const rc = core.cwrap("bvc2_transcode", "number",
+              ["string","string","string"])("/not-bvc2.mp4", "/out.mp4", "");
+            assert(rc < 0, "H.264 input must not be misidentified as ByteVC2");
+            assert.match(core.UTF8ToString(core._bvc2_last_error()), /not ByteVC2/);
+            console.log("PASS BVC2 decoder rejects normal H.264 video");
+          '
       # Generated artifacts are committed only after the Node.js ABI check.
       # A real ByteVC2 frame fixture is still required for acceptance tests;
       # the web UI displays the converter as an experimental fallback.
