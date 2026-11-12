@@ -40,6 +40,15 @@
             <div id="api-settings-error" class="alert" role="alert" hidden></div>
           </form>
         </details>
+        <details class="api-settings" id="codec-diagnostics">
+          <summary>此裝置影片編碼支援檢測</summary>
+          <p class="help">僅讀取瀏覽器公開能力宣告，不會傳送影片、金鑰或裝置識別資料。即使顯示支援 HEVC，仍須實際影格測試才能確認。</p>
+          <div class="actions">
+            <button id="codec-diag-run" type="button" class="quiet">檢查此裝置</button>
+            <button id="codec-diag-copy" type="button" class="quiet" hidden>複製診斷結果</button>
+          </div>
+          <pre id="codec-diag-results" class="codec-diag-results" aria-live="polite"></pre>
+        </details>
         <div id="series" hidden>
           <div class="section-title"><div><h2 id="series-title">劇集</h2><p id="series-count" class="subtle"></p></div>
             <div class="actions">
