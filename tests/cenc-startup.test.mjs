@@ -151,3 +151,110 @@ test('HEVC seeks preserve codec and failed workers revoke URLs', async t => {
   await stream.close();
   assert.deepEqual(revoked, minted, 'close after failure double-revoked an URL');
 });
+
+test('MSE follows the actual clear HEVC sample entry rather than presumed hvc1', async t => {
+  const saved = {
+    Worker: globalThis.Worker, MediaSource: globalThis.MediaSource,
+    fetch: globalThis.fetch, location: globalThis.location,
+    createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL
+  };
+  t.after(() => {
+    for (const field of ['Worker', 'MediaSource', 'fetch', 'location']) {
+      if (saved[field] === undefined) delete globalThis[field];
+      else globalThis[field] = saved[field];
+    }
+    URL.createObjectURL = saved.createObjectURL;
+    URL.revokeObjectURL = saved.revokeObjectURL;
+  });
+  const box = (tag, payload = new Uint8Array(0)) => {
+    const result = new Uint8Array(payload.length + 8);
+    new DataView(result.buffer).setUint32(0, result.length);
+    result.set([...tag].map(c => c.charCodeAt(0)), 4);
+    result.set(payload, 8);
+    return result;
+  };
+  const join = (...parts) => {
+    const result = new Uint8Array(parts.reduce((sum, p) => sum + p.length, 0));
+    let offset = 0;
+    for (const part of parts) { result.set(part, offset); offset += part.length; }
+    return result;
+  };
+  const hvcC = new Uint8Array(23);
+  hvcC[0] = 1; hvcC[1] = 2; hvcC[2] = 0x20;
+  hvcC[6] = 0x90; hvcC[12] = 120;
+  const entry = box('hev1', join(new Uint8Array(78), box('hvcC', hvcC)));
+  const moov = box('moov', box('trak', box('mdia', box('minf',
+    box('stbl', box('stsd', join(new Uint8Array([0,0,0,0,0,0,0,1]),
+      entry)))))));
+  const init = join(box('ftyp', new Uint8Array(8)), moov);
+  const hvc1 = 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"';
+  const hev1 = 'video/mp4; codecs="hev1.2.4.L120.90, mp4a.40.2"';
+  const created = [], revoked = [], workers = [], sources = [];
+  URL.createObjectURL = () => {
+    const value = 'blob:hevc-entry-' + (created.length + 1);
+    created.push(value);
+    return value;
+  };
+  URL.revokeObjectURL = value => revoked.push(value);
+  globalThis.location = { href: 'https://example.test/hongguo-dl/' };
+  globalThis.fetch = async () => ({
+    ok: true, headers: new Headers({
+      'Content-Type': 'application/wasm', 'Content-Length': '1024'
+    })
+  });
+  let supportHev1 = true;
+  globalThis.MediaSource = class extends EventTarget {
+    readyState = 'open';
+    constructor() { super(); sources.push(this); }
+    static isTypeSupported(mime) {
+      return mime === hvc1 || (supportHev1 && mime === hev1);
+    }
+    addSourceBuffer(mime) {
+      this.actualMime = mime;
+      const sb = new EventTarget();
+      sb.buffered = { length: 0 };
+      sb.updating = false;
+      sb.appendBuffer = () => queueMicrotask(() =>
+        sb.dispatchEvent(new Event('updateend')));
+      return sb;
+    }
+    endOfStream(reason) { this.endReason = reason; }
+  };
+  globalThis.Worker = class {
+    constructor() { this.messages = []; this.terminated = false; workers.push(this); }
+    postMessage(message) { this.messages.push(message); }
+    terminate() { this.terminated = true; }
+  };
+  const base = {
+    video: { canPlayType: () => '' },
+    url: '/api/media?synthetic=1', fileSize: 10240,
+    codec: 'hevc', hasAac: true,
+    videoCodecString: 'hvc1.2.4.L120.90',
+    key: '00112233445566778899aabbccddeeff'
+  };
+  const deliver = async (worker, bytes) => {
+    const packet = bytes.slice();
+    worker.onmessage({ data: { type: 'init', id: 1, bytes: packet.buffer } });
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  const stream = await openCencProgressiveStream(base);
+  assert.equal(stream.mime, hvc1, 'Input hvcC should be a provisional MIME');
+  await deliver(workers.at(-1), init);
+  assert.equal(sources.at(-1).actualMime, hev1,
+    'The clear fMP4 sample entry must decide SourceBuffer MIME');
+  assert.equal(stream.mime, hev1);
+  assert(workers.at(-1).messages.some(message => message.type === 'ack'));
+  await stream.close();
+  assert.deepEqual(revoked, created);
+
+  supportHev1 = false;
+  const unsupported = await openCencProgressiveStream(base);
+  assert(unsupported, 'Preflight can accept hvc1 before the mux output is known');
+  await deliver(workers.at(-1), init);
+  assert.equal(sources.at(-1).actualMime, undefined,
+    'Unsupported clear output must not be appended as hvc1');
+  assert.equal(sources.at(-1).endReason, 'decode');
+  assert.equal(workers.at(-1).terminated, true);
+  assert.deepEqual(revoked, created);
+  await unsupported.close();
+});
