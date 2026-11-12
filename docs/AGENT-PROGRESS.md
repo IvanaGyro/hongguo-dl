@@ -273,3 +273,12 @@
 - **新單元測試 [7e66b0b](https://github.com/IvanaGyro/hongguo-dl/commit/7e66b0bb20f9e0e4bc9ce569bfe7a2eae5649546)**：實造 1.25MiB `moov` 加 KID，期望兩次有界 Range 可取得 key；合成宣告超過 8MiB 的 `moov` 必須一次 header 判定拒絕、不再 fetch。**這是針對具體診斷所做修補，尚待新 1800 秒 Browser CI 通過才可升級 PASS**。
 - **README 同步 [01c7d44](https://github.com/IvanaGyro/hongguo-dl/commit/01c7d445578abf81d583b96011ceb6bd43997e02)**：修正過時的「所有 seek／長片緩衝均未驗證」，列出新合成 CENC 55s/10/50/90%、300 秒、1080p HEVC 及 BVC2 negative 的真實 PASS，清楚標示真實來源／Android／ByteVC2 正例缺口。
 - **後續**：繼續執行長片 code/test 閉環、新 30min browser proof；若長片 moov >8MiB，再以實際 log 與安全上限評估，不放寬到無界。完整驗收仍需合法真實 HEVC/ByteVC2 bitstream 與設備。
+
+## 階段 26 — 2026-11-13 中斷復原 checkpoint：確認最新成功、待測 1800s，重啟程式碼稽核
+
+- **重讀而非依賴聊天記憶**：此 checkpoint 前的 main HEAD 為 `5c3732fd4c4699204269fb81bfa5b5dc8bbfe7dd`；[CI #43283368259](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368259)、[Pages #43283367990](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283367990)、[Firefox FFmpeg.wasm browser #43283368069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368069) **completed/success**。
+- **1800s 狀態不冒稱成功**：[較早的 #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) 查詢當下 **in_progress**；[當前 #43283368141](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368141) **pending**。修正 8MiB moov 後，30 分鐘瀏覽器壓測是否通過**尚未確證**。既有 300s/seek 的成功證據在階段 25。
+- **實際重新檢查的程式碼**：`src/clear-key.js` 的 metadata Range 上限 8MiB，`src/bvc2.js` Worker 轉碼採 transferable ArrayBuffer；`src/player.js` 和 `src/main.js` 的呼叫點目前均直接傳新下載的 Uint8Array，未確認實際有共享 cache detachment bug，**不能把風險當成確定 bug**。
+- **發現可具體處理的競態**：`transcodeBvc2()` 在初始 `signal.aborted` 檢查與 Worker 建立／註冊 abort listener 之間有時間窗；`worker.postMessage()` 同步 throw 時也可能留下未終止 Worker。下一步補原始碼防護與測試；尚未提交程式碼、尚未跑相關測試。
+- **必須同步修正的過時交接**：`docs/NEXT-SESSION-PLAN.md` 的 P2 仍寫「Worker 尚無 seek 路徑」、P3 仍寫「無 MSE eviction」，均已被目前程式碼及合成 CI 推翻；`docs/cenc-progressive-to-fmp4.md` 仍寫 1MiB moov、長片/seek 未測及 WASM 發布未完成。修正時保留歷史脈絡，明確區分 synthetic PASS 與真實裝置 NOT TESTED。
+- **使用者作業規則**：所有成果直接提交 `main`，不建立 PR。GitHub 操作可能卡在讀/寫/查詢本身，不僅 Actions；單次獨立讀→修改→提交，避免反覆重試或連續輪詢。**每完成一段程式與驗證就立即再寫下一個 checkpoint，寫完文件還要繼續修復。**
