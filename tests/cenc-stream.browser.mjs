@@ -69,14 +69,22 @@ if (process.env.CENC_TEST_MULTI_SEEK === '1') {
     };
   });
 }
-const mediaRequests = [], errors = [], diagnosticMessages = [];
+const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
+let exercisingRepeatedSeeks = false;
+// A canceled Librempeg AVIO demux can report a partial audio packet on its
+// stderr while the old Worker is being torn down. Track only these *specific*
+// MOV diagnostics separately from JS page exceptions and MSE/video errors.
+const canceledSeekMovError = /^\[mov,mp4,m4a,3gp,3g2,mj2 @ 0x[0-9a-f]+\] (?:subsample size exceeds the packet size left|Packet corrupt \(stream = \d+, dts = -?\d+\)\.|stream \d+, offset 0x[0-9a-f]+: partial file)$/i;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
   const text = message.text();
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
-  if (message.type() === 'error' && !text.includes('favicon'))
-    errors.push(text.slice(0, 180));
+  if (message.type() === 'error' && !text.includes('favicon')) {
+    if (exercisingRepeatedSeeks && canceledSeekMovError.test(text))
+      canceledSeekDemuxDiagnostics.push(text.slice(0, 180));
+    else errors.push(text.slice(0, 180));
+  }
 });
 await page.exposeFunction('recordCencFirstFrame', () => {
   const lastByte = mediaRequests.reduce((max, item) => Math.max(max, item.last), -1);
@@ -447,6 +455,7 @@ try {
         // Each step is outside the previous stream's <=40s ahead window.
         // The 5s return is deliberate: a direct 35s->63s jump can be
         // already buffered and would not exercise remote RAP seeking.
+        exercisingRepeatedSeeks = true;
         for (const desired of [7, 63, 35, 5, 63]) {
           const start = mediaRequests.length;
           const beforeSeek = await page.evaluate(() => {
@@ -526,10 +535,34 @@ try {
         const urlState = await page.evaluate(() => window.__cencMseUrlState);
         assert.equal(urlState.created - urlState.revoked, 1,
           'Only the currently playing CENC MediaSource URL may remain active');
+        // MSE loadedmetadata alone is not a successful recovery: require an
+        // actual forward clock and no HTMLMediaElement decoder error after
+        // the final three tear-down/reopen cycles.
+        const resumeAt = await page.locator('#player-video').evaluate(async video => {
+          assert.equal(video.error?.code || null, null);
+          video.muted = true;
+          const t = video.currentTime;
+          await video.play();
+          return t;
+        });
+        await page.waitForFunction(start => {
+          const video = document.querySelector('#player-video');
+          return video && !video.error && video.videoWidth === 480 &&
+            video.readyState >= 2 && video.currentTime > start + 0.35;
+        }, resumeAt, { timeout: 12000 });
         assert(!errors.length, 'Browser errors after mode cycling: ' + errors.join('; '));
+        // Do not silently erase Librempeg diagnostics. The synthetic sample
+        // still needs an independent AAC quality test on a real device.
+        if (canceledSeekDemuxDiagnostics.length)
+          console.warn('CENC rapid seek/cancel MOV demux diagnostics:',
+            JSON.stringify({ count: canceledSeekDemuxDiagnostics.length,
+              kinds: [...new Set(canceledSeekDemuxDiagnostics.map(line =>
+                line.includes('subsample size') ? 'subsample' :
+                  line.includes('partial file') ? 'partial-file' : 'corrupt-packet'))] }));
         console.log('PASS ' + browserName +
           ' 3 playback/download cycles release MSE URLs and stop CENC Range',
-          JSON.stringify(urlState));
+          JSON.stringify({ ...urlState, playbackAdvanced: true,
+            demuxWarningsAfterRapidSeeks: canceledSeekDemuxDiagnostics.length }));
       }
     }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
