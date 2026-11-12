@@ -70,6 +70,13 @@ bun run dev          # http://localhost:5173
 
 Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_ORIGIN`，即可使用此代理。
 
+## 真實片源低頻 CI 驗證
+
+- [Live Worker source smoke](https://github.com/IvanaGyro/hongguo-dl/actions/workflows/live-worker-smoke.yml) 與一般 CI 分開，**每週一 04:17 UTC** 自動測試 **1 集**；也可以在 Actions → Run workflow 手動選 **1 或 2 集**。不會因每次 push 而對真實來源發送請求。
+- 每次執行只取得 **1 次** `/api/series` 分集 metadata，每集 **1 次** `/api/source`，並最多對 **2 個不同 CDN** 分別送出 `Range: bytes=0-255`。1 集最多 4 個請求，手動 2 集最多 7 個。**不下載完整影片、不自動重試、遇到 HTTP 429 立即停止**，測試日誌不輸出簽章 URL 或內容金鑰。
+- 驗證官方分集、來源變體、GitHub Pages CORS、206 Partial Content 與 HTTP Range；若 CDN 403 或無法取得有效 206，工作流程會明確失敗，以便區分來源故障與本地 mock 測試。真實播放器解密、Android Firefox 實機與影片接續播放**仍須另外測試**。
+- 原有 Firefox 的 60 集 ZIP 測試使用**合成影片／mock 來源**，不會向紅果取得 60 集實際媒體。
+
 ## 已知限制
 
 - 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單（官方標示前 5 集可看）、HEVC／ByteVC2 來源及部分 `206 Partial Content` HTTP Range 回應。**尚未完成真實影片解密播放、畫面 seek、Android Firefox 實機與大型 ZIP 端對端驗證**。來源 API、CDN 仍可能因地區或來源變更失敗。
