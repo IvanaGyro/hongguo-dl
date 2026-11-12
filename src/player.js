@@ -40,6 +40,15 @@ export function createPlayer({
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
+  // All measurements refer to the same selected-episode click, not the start
+  // of an individual fetch or decoder stage. Never log signed URLs or keys.
+  let startupStages = new Set();
+  function markStartupStage(stage) {
+    if (!current || startupStages.has(stage) || !loadStartedAt) return;
+    startupStages.add(stage);
+    console.info('[Hongguo startup] E' + current.index + ' ' + stage + ': ' +
+      Math.round(performance.now() - loadStartedAt) + 'ms');
+  }
   const mimeSupport = mime => video.canPlayType(mime);
   const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
   video.controls = false;
@@ -286,6 +295,7 @@ export function createPlayer({
         (length, total) => {
           if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
           received += length;
+          if (length > 0) markStartupStage('first-media-byte');
           const now = Date.now();
           if (!quiet && now - lastUpdate > 250) {
             lastUpdate = now;
@@ -362,11 +372,20 @@ export function createPlayer({
     nativeStream = resolved.native || null;
     activeUrl = resolved.blob ? URL.createObjectURL(resolved.blob) : null;
     loading = true;
+    // The callback reports a frame submitted for presentation, unlike
+    // loadedmetadata/canplay which do not prove a picture was shown.
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      const frameToken = currentToken;
+      video.requestVideoFrameCallback(() => {
+        if (frameToken === token && !signal.aborted) markStartupStage('first-video-frame');
+      });
+    }
     video.src = activeUrl || resolved.url;
     video.playbackRate = Number(speedSelect.value) || 1;
     video.style.objectFit = fitSelect.value;
     video.load();
     await waitMetadata(signal);
+    markStartupStage('loadedmetadata');
     if (signal.aborted || currentToken !== token) return;
     const old = watchRecords(storage)[playbackKey(getSeries()?.seriesId, episode.vid)];
     const wanted = !old?.completed && old?.seconds > 0.5 ? old.seconds : 0;
@@ -472,6 +491,7 @@ export function createPlayer({
     const signal = (controller = new AbortController()).signal;
     const currentToken = ++token;
     loadStartedAt = performance.now();
+    startupStages = new Set();
     if (handoff) signal.addEventListener('abort', () => handoff.controller.abort(), { once: true });
     setStatus('載入中…');
     void run(episode, currentToken, signal, autoPlay, null, handoff);
@@ -481,6 +501,7 @@ export function createPlayer({
     const list = ordered(), index = list.findIndex(ep => ep.vid === current?.vid);
     if (list[index + direction]) open(list[index + direction]);
   }
+  video.addEventListener('canplay', () => markStartupStage('canplay'));
   video.addEventListener('timeupdate', () => {
     if (!current || !readyForHistory || !Number.isFinite(video.currentTime)) return;
     maybePrefetchNext();
