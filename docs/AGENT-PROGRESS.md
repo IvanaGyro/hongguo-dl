@@ -150,3 +150,12 @@
 - **診斷增補**：`a6c8a9d8` 為 reload 失敗分支新增 status、SourceInfo、currentTime、duration、buffered 時段、已儲存進度值、最近的 Range 起迄與匿名錯誤種類；不輸出 URL/key。下個 browser run 若失敗，請直接讀此一段診斷，不要猜測 progress/decoder/HTTP 哪個環節有問題。
 - **P3 快速失敗測試**：`46a201e4` 新增 HTTP 403/416/429 每次只請求一次、回應 body cancel，以及 AbortSignal 已取消時不讀媒體的單元測試（本提交的 CI 尚未確認結果）。
 - **P2 尚未完成**：Chromium remote seek 已有合成成功證據，reload 不通；Firefox remote seek 尚未驗證，真實 HEVC/Android 仍有 HTTP 403 存取限制。下一步優先修復 reload 實際失敗原因，再跑完兩種瀏覽器與 10/50/90% case；不要將整個 P2 標記 PASS。
+
+## 階段 12 — 2026-11-13 續播 race 與 Range-only retry 修補（main 已提交，瀏覽器回歸待確認）
+
+- **使用者要求**：停止卡在重複 Actions 狀態輪詢，釐清工作並繼續直接修改 main；不建立 PR。
+- **唯一有針對性的失敗診斷**：[browser #43247421856](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43247421856)（`a6c8a9d8`）**completed/failure**。先通過 Chromium/Firefox 15s 起播與 Chromium 70s 55 秒遠端 seek。Reload 後的匿名診斷顯示 savedPositions `55.765403 / 70.015999 / completed=false`，但播放器 `status=跳轉失敗：...串流未就緒`、`readyState=0`、`currentTime=0`，接著出現多個 **沒有 Range header** 的整檔備援要求而遭合成 server HTTP 416；失敗與進度記錄消失無關。
+- **核心修補 [135eeea](https://github.com/IvanaGyro/hongguo-dl/commit/135eeea03c48494427d7af8c79bebc5843490cdd)**：在 `src/player.js` 新增 `waitForCencResume`，僅 CENC 非零續播在 `restoreTime` 後仍維持 `loading`／停用遠端 `seeking` handler，直至目標時間真正落在 MSE buffered ranges、`readyState >= HAVE_CURRENT_DATA` 且 `currentTime` 已定位到目標，或以 timeout/abort/error 明確失敗。不再把 `loadedmetadata` 或單純 currentTime 指派當成可播成功。
+- **避免無界備援**：`retryIncrementalCenc` 對已進入 `cenc-remux` 的同一集、同一次 playback session 的後續重試維持增量串流；若重新建立失敗就明確傳回 CENC_UNAVAILABLE，**不再退回無 Range 的整檔媒體下載**。保留在新集數 `open()` 時重置此記錄與既有失敗次數限制。其他未採用 CENC remux 的下載／播放模式與 ZIP/MP4/畫質／下一集邏輯不變。
+- **驗收尚未通過**：這是針對診斷提出的競態修補，需以新 main 的 `tests/cenc-stream.browser.mjs` 驗收 Chromium 55 秒 seek、reload 續播、Firefox 55 秒 seek/續播與主 CI／Pages。不能將舊版通過結果當成修補後通過，也不能宣稱真實 HEVC 1080p／Android/ByteVC2 成功。
+- **下一步**：只在新 browser CI 完成且失敗時讀取 *失敗 job* 的診斷一次，優先修正新具體 failure。再增加不同 seek 比例與取消／長時壓測；避免大量真實 CDN 嘗試。CENC WASM 已按原計畫保留，勿重寫。
