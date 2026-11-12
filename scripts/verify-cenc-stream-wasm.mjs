@@ -21,7 +21,7 @@ const core = await createCore({
     assert(offset >= 0 && offset < encrypted.byteLength);
     assert(length > 0 && length <= 1024 * 1024);
     highestRequested = Math.max(highestRequested, offset + length);
-    if (offset > 256 * 1024) nonzeroMediaRange = true;
+    if (offset > 64 * 1024) nonzeroMediaRange = true;
     calls++;
     // Asynchronous to exercise C AVIO callbacks + Asyncify unwinding.
     await Promise.resolve();
