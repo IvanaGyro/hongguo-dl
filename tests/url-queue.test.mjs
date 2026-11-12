@@ -72,7 +72,7 @@ test('MP4 queue export of one staged file does not re-fetch or transcode', async
     saveMp4: async (bytes, filename) => { result = { bytes, filename }; }
   });
   assert.equal(report.completed, 1);
-  assert.equal(result.filename, '短劇_第001集.mp4');
+  assert.equal(result.filename, '短劇_第001集_h264.mp4');
   assert.deepEqual([...result.bytes], [1, 2, 3, 4]);
 });
 
