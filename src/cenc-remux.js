@@ -104,10 +104,19 @@ export async function openCencProgressiveStream({
     if (closed) return;
     // Do not show original URL or key in logs.
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
-    try {
-      if (ms.readyState === 'open' && !buffer?.updating)
-        ms.endOfStream('decode');
-    } catch { /* player handles video.onerror and retries */ }
+    const endWithError = () => {
+      if (closed) return;
+      if (buffer?.updating) {
+        buffer.addEventListener('updateend', endWithError, { once: true });
+        return;
+      }
+      try {
+        if (ms.readyState === 'open') ms.endOfStream('decode');
+      } catch { /* video.onerror and retries own the failure */ }
+    };
+    if (ms.readyState === 'open') endWithError();
+    else if (ms.readyState === 'closed')
+      ms.addEventListener('sourceopen', endWithError, { once: true });
   };
   const close = async () => {
     if (closed) return;
