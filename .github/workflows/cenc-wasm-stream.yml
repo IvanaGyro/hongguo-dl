@@ -66,6 +66,19 @@ jobs:
             -encryption_kid 11223344556677889900aabbccddeeff \
             -movflags +faststart -y tests/fixtures/cenc-hevc-aac-seek.mp4
           test -s tests/fixtures/cenc-hevc-aac-seek.mp4
+          # Browser regressions use the same 70s encrypted H264/AAC source.
+          # Exercise Librempeg AVIO at many later random access points without
+          # relying on third-party CDN signed URLs or private CENC keys.
+          ffmpeg -nostdin -hide_banner -v error \
+            -f lavfi -i testsrc=size=480x270:rate=24 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 70 -c:v libx264 -preset ultrafast -crf 18 -g 24 \
+            -pix_fmt yuv420p -c:a aac -b:a 128k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y tests/fixtures/cenc-h264-aac-70s.mp4
+          test $(stat -c %s tests/fixtures/cenc-h264-aac-70s.mp4) -gt 1048576
           # Match the real 1080p HEVC source dimensions in a self-generated
           # sample. This proves lossless remux/decode, not browser HEVC support.
           ffmpeg -nostdin -hide_banner -v error -threads 1 \
@@ -138,6 +151,41 @@ jobs:
             }
             console.log("PASS seek first output video PTS", first);
           '
+      - name: Strict video and AAC decode across 70s H264 CENC indexed seeks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for second in 7 35 55 63; do
+            output="/tmp/cenc-h264-aac-seek-${second}.mp4"
+            node scripts/verify-cenc-stream-wasm.mjs \
+              /tmp/hongguo-cenc-stream/dist/cenc-core.mjs \
+              /tmp/hongguo-cenc-stream/dist/cenc-core.wasm \
+              tests/fixtures/cenc-h264-aac-70s.mp4 "$output" "$second"
+            # -xerror makes an AAC decryption/decoder error fail the job
+            # rather than merely printing an ffmpeg diagnostic to stderr.
+            ffmpeg -nostdin -hide_banner -v error -xerror \
+              -i "$output" -map 0:v:0 -map 0:a:0 -t 3 -f null -
+            ffprobe -v error -show_entries stream=codec_name \
+              -of csv=p=0 "$output" | grep -Fxq h264
+            ffprobe -v error -show_entries stream=codec_name \
+              -of csv=p=0 "$output" | grep -Fxq aac
+            node --input-type=module -e '
+              import assert from "node:assert/strict";
+              import {execFileSync} from "node:child_process";
+              const second = Number(process.argv[1]);
+              const file = process.argv[2];
+              for (const type of ["v:0", "a:0"]) {
+                const pts = execFileSync("ffprobe", [
+                  "-v", "error", "-select_streams", type,
+                  "-show_entries", "packet=pts_time", "-of", "csv=p=0", file
+                ], {encoding:"utf8"}).trim().split(/\\s+/).map(Number).filter(Number.isFinite);
+                assert(pts.length > 0, "Missing " + type + " packets after seek");
+                assert(pts[0] >= second - 3 && pts[0] <= second + 1,
+                  "Incorrect " + type + " PTS after seek: " + pts[0]);
+              }
+              console.log("PASS H264/AAC pinned WASM seek strict decode:", second);
+            ' "$second" "$output"
+          done
       - name: Test box assembly and WASM manifest guards
         run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs
       - name: Publish verified JS/WASM pair directly to main
