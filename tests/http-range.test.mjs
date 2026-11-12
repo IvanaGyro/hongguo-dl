@@ -42,3 +42,27 @@ test('rejects invalid, unbounded AVIO requests before fetching', async () => {
     '/api/media', 0, 1024 * 1024, 2 * 1024 * 1024), /Invalid bounded/);
   assert.equal(calls, 0);
 });
+
+test('403, 416 and 429 CDN responses fail immediately without reading a media body', async () => {
+  for (const status of [403, 416, 429]) {
+    let canceled = false, calls = 0;
+    const failure = {
+      status, headers: new Headers(),
+      body: { cancel: async () => { canceled = true; } }
+    };
+    await assert.rejects(readVerifiedRange(async () => {
+      calls++;
+      return failure;
+    }, '/api/media', 10, 13, 100), new RegExp('status ' + status));
+    assert.equal(calls, 1, 'HTTP error should not be silently retried');
+    assert.equal(canceled, true, 'Rejected HTTP response must be canceled');
+  }
+});
+
+test('requesting a Range after AbortSignal cancellation does not consume media', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(readVerifiedRange(async () =>
+    okResponse(new Uint8Array(4)), '/api/media', 10, 13, 100, controller.signal),
+  /Canceled/);
+});
