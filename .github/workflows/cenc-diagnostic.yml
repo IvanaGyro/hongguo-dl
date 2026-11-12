@@ -1,7 +1,18 @@
 name: Isolated CENC demux diagnosis
 on:
   push:
-    branches: [investigate/cenc-demux-path]
+    branches: [main]
+    paths:
+      - '.github/workflows/cenc-diagnostic.yml'
+      - 'diagnostics/**'
+      - 'src/clear-key.js'
+      - 'src/player.js'
+  pull_request:
+    paths:
+      - '.github/workflows/cenc-diagnostic.yml'
+      - 'diagnostics/**'
+      - 'src/clear-key.js'
+      - 'src/player.js'
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,6 +47,7 @@ jobs:
           set -o pipefail
           CENC_BROWSER=chromium node diagnostics/cenc-matrix.cjs clear.mp4 clear-fragmented.mp4 ffmpeg-cenc.mp4 shaka-cenc.mp4 | tee /tmp/chromium.jsonl
           CENC_BROWSER=firefox node diagnostics/cenc-matrix.cjs clear.mp4 clear-fragmented.mp4 ffmpeg-cenc.mp4 shaka-cenc.mp4 | tee /tmp/firefox.jsonl
+          node diagnostics/assert-cenc-matrix.mjs /tmp/chromium.jsonl /tmp/firefox.jsonl
       - uses: actions/upload-artifact@v4
         if: always()
         with:
