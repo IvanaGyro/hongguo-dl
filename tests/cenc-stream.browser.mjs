@@ -49,7 +49,12 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   });
   if (u.pathname !== '/api/media') throw new Error('Unexpected API endpoint');
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
-  assert(range, 'Every media request must carry Range');
+  if (!range) {
+    mediaRequests.push({ unbounded: true, method: route.request().method(),
+      first: 0, last: input.length - 1, bytes: input.length });
+    return route.fulfill({ status: 416, contentType: 'text/plain',
+      body: 'Bounded synthetic fixture requires Range' });
+  }
   const first = Number(range[1]);
   const last = range[2] ? Math.min(Number(range[2]), input.length - 1) : input.length - 1;
   assert(first >= 0 && first <= last && last < input.length);
@@ -127,7 +132,8 @@ try {
     const frame = await page.evaluate(() => window.__cencFrame);
     assert(frame.lastByte < input.length - 1,
       'First presented frame occurred after HTTP EOF: ' + JSON.stringify(frame));
-    assert(frame.requests >= 2, 'Metadata and fragment HTTP ranges must both be used');
+    assert(frame.requests >= 2 && !mediaRequests.some(req => req.unbounded),
+      'Metadata and fragment HTTP ranges must both be used');
     assert.equal(frame.mediaKeys, false, 'Clear output should not need EME');
     assert(!errors.length, 'Unexpected browser errors: ' + errors.join('; '));
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
