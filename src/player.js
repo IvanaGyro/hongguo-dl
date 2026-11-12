@@ -8,7 +8,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { availableRenditions, renditionForAttempt, codecId } from './source-options.js';
+import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -35,6 +35,9 @@ export function createPlayer({
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
   let sourceAttempt = 0;
+  let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
+  const mimeSupport = mime => video.canPlayType(mime);
+  const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
   video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
@@ -54,6 +57,29 @@ export function createPlayer({
     } catch { /* storage might be disabled */ }
   }
   function setStatus(value) { status.textContent = value; }
+  function updateCodecOptions(variants) {
+    const available = availableRenditions(variants);
+    const atQuality = codecsAtQuality(variants, qualitySelect.value);
+    for (const option of codecSelect.options) {
+      if (option.value !== 'auto')
+        option.disabled = available.codecs.length > 0 &&
+          !(atQuality.length ? atQuality : available.codecs).includes(option.value);
+    }
+    if (codecSelect.value !== 'auto' && !atQuality.includes(codecSelect.value))
+      codecSelect.value = 'auto';
+    const auto = codecSelect.querySelector('option[value="auto"]');
+    if (auto) auto.textContent = atQuality.length === 1 && qualitySelect.value !== 'auto'
+      ? '自動（' + (CODEC_NAMES[atQuality[0]] || atQuality[0]) + '）' : '自動';
+    for (const option of qualitySelect.options) {
+      if (option.value !== 'auto') {
+        const candidates = (variants || []).filter(v => qualityId(v) === option.value);
+        option.disabled = available.qualities.length > 0 && !candidates.length;
+        option.textContent = option.value + (candidates.length &&
+          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey)
+            ? '（VVC，無法解密播放）' : '');
+      }
+    }
+  }
   function ordered() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
   }
@@ -142,32 +168,52 @@ export function createPlayer({
     const key = episodeCacheKey(series?.seriesId, episode.vid, quality, codec);
     const blob = attempt === 0 ? cache.get(key) : null;
     if (blob) return { blob, source: { codec, quality, source: 'cache' } };
-    // Ask the Worker for all available variants once. Filtering inside the
-    // player supports source-specific renditions (e.g. 540p/480p/360p) instead
-    // of claiming every episode has the same quality/codec options.
+    // Keep a short-lived source list to rotate through alternate CDNs on
+    // retry without another upstream API call. Refresh on the next cycle.
+    const sameList = lastVariantsVid === episode.vid && Date.now() - lastVariantsAt < 30000;
     const list = episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await sourceFor(series.seriesId, episode.vid, 'auto', 'auto');
+      : sameList && attempt > 0 && attempt < lastVariants.length
+        ? { variants: lastVariants }
+        : await sourceFor(series.seriesId, episode.vid, 'auto', 'auto');
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
-    const available = availableRenditions(variants);
-    for (const option of qualitySelect.options) {
-      if (option.value !== 'auto')
-        option.disabled = available.qualities.length > 0 &&
-          !available.qualities.includes(option.value);
+    lastVariants = variants;
+    lastVariantsVid = episode.vid;
+    lastVariantsAt = Date.now();
+    updateCodecOptions(variants);
+    // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
+    // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
+    const resolved = playbackRendition(variants,
+      { quality, codec }, mimeSupport, attempt);
+    const source = resolved.source;
+    if (!source?.url) {
+      const tiers = availableRenditions(variants);
+      const offered = tiers.qualities.map(q =>
+        q + '：' + codecsAtQuality(variants, q).map(c => CODEC_NAMES[c] || c).join('/')).join('、');
+      throw errorWith('PLAYBACK_UNSUPPORTED',
+        '所選 ' + (quality === 'auto' ? '自動畫質' : quality) +
+        ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
+        '。加密 VVC 無法由目前的 FFmpeg.wasm 解密封裝，HEVC 也需要瀏覽器支援。');
     }
-    for (const option of codecSelect.options) {
-      if (option.value !== 'auto')
-        option.disabled = available.codecs.length > 0 &&
-          !available.codecs.includes(option.value);
+    let fallbackNotice = '';
+    if (resolved.fallback) {
+      const original = quality;
+      const actual = qualityId(source);
+      const originalCodecs = codecsAtQuality(variants, original)
+        .map(id => CODEC_NAMES[id] || id).join('/');
+      fallbackNotice = original + ' 只有 ' + originalCodecs +
+        '，已改用 ' + actual + ' ' + (CODEC_NAMES[codecId(source.codec)] || source.codec);
+      if (actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
+        qualitySelect.value = actual;
+        codecSelect.value = 'auto';
+        updateCodecOptions(variants);
+        persistPrefs();
+      }
     }
-    // Rotate through the advertised CDNs on retry rather than repeatedly
-    // fetching a failing signed URL from one upstream edge.
-    const source = renditionForAttempt(variants, { quality, codec }, attempt);
-    if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE',
-      '此集沒有選擇的畫質／編碼，請改為自動或其他可用選項');
     const profile = source.source === 'app' ? 'app' : 'web';
     if (!isHlsUrl(source.url) && !source.contentKey)
-      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()), source };
+      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()), source, fallbackNotice };
     let bytes;
     if (isHlsUrl(source.url)) {
       setStatus('準備串流中…');
@@ -202,12 +248,13 @@ export function createPlayer({
     if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');
     const result = new Blob([bytes], { type: 'video/mp4' });
     cache.put(key, result);
-    return { blob: result, source };
+    return { blob: result, source, fallbackNotice };
   }
   async function load(episode, currentToken, signal, autoPlay) {
     const resolved = await sourceForEpisode(episode, signal, sourceAttempt++);
     if (signal.aborted || currentToken !== token) return;
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
+    if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
     const containerCodec = codecId(resolved.source?.codec);
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
@@ -231,7 +278,7 @@ export function createPlayer({
     readyForHistory = true;
     loading = false;
     recoveryStart = video.currentTime;
-    setStatus(wanted > 0 ? '已續播' : '');
+    setStatus(resolved.fallbackNotice || (wanted > 0 ? '已續播' : ''));
     onProgress?.();
     if (autoPlay) {
       try { await video.play(); }
@@ -248,6 +295,11 @@ export function createPlayer({
       catch (error) {
         const parsed = classifyError(error);
         if (signal.aborted || currentToken !== token || parsed.code === 'CANCELED') return;
+        if (parsed.code === 'PLAYBACK_UNSUPPORTED') {
+          loading = false;
+          setStatus('無法播放 · ' + parsed.message);
+          return;
+        }
         errors = recordFailure(errors, parsed, 5);
         failure = errors;
         setStatus(playbackFailureMessage(errors, parsed, 5));
@@ -266,6 +318,10 @@ export function createPlayer({
     current = episode;
     failure = null;
     sourceAttempt = 0;
+    if (lastVariantsVid !== episode.vid) {
+      lastVariants = null;
+      lastVariantsVid = null;
+    }
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';
@@ -321,12 +377,15 @@ export function createPlayer({
   settingsClose.addEventListener('click', () => showSettings(false));
   prevButton.addEventListener('click', () => step(-1));
   nextButton.addEventListener('click', () => step(1));
-  for (const selector of [qualitySelect, codecSelect]) {
-    selector.addEventListener('change', () => {
-      persistPrefs();
-      if (current) open(current, true, true);
-    });
-  }
+  qualitySelect.addEventListener('change', () => {
+    if (lastVariants) updateCodecOptions(lastVariants);
+    persistPrefs();
+    if (current) open(current, true, true);
+  });
+  codecSelect.addEventListener('change', () => {
+    persistPrefs();
+    if (current) open(current, true, true);
+  });
   speedSelect.addEventListener('change', () => { video.playbackRate = Number(speedSelect.value) || 1; persistPrefs(); });
   fitSelect.addEventListener('change', () => { video.style.objectFit = fitSelect.value; persistPrefs(); });
   autoNextInput.addEventListener('change', persistPrefs);
