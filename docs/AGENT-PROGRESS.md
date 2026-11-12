@@ -410,3 +410,12 @@
 - **PENDING**：[WASM proof #43290337070](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337070) 查詢時 `in_progress`；[Browser #43290337304](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337304) `pending`；不輪詢、不聲稱最新 E2E 已 PASS。
 - **NOT TESTED / 限制**：新增 init 的單元 fixture 是合成樣本。真實 Librempeg HEVC init 對應實際 browser MSE 支援、Android/Windows 真實來源與 ByteVC2 正例仍需獨立證據；MSE MIME 支援不代表硬體解碼。
 - **下一個工程動作**：長暫停／反覆切集與超時取消的具體 lifecycle 測試，確保 pending ACK/Range/Worker close 不殘留；有 CI 或 Browser 具體錯誤時優先處理。不觸及 C bridge 或 pinned WASM。
+
+
+## 階段 42 — 2026-11-13 HEVC Seek lifecycle / CENC Worker failure URL 清理
+
+- **目標及實際變更**：直接 main [9279172](https://github.com/IvanaGyro/hongguo-dl/commit/9279172b3ed0f38af62c56d832618aa3bdcf3c13)，修改 `src/cenc-remux.js`、`tests/cenc-startup.test.mjs`。先前 Worker runtime `error` 的 `fail()` 中止 Worker/Range，但未立即 revoke 已建立的 MediaSource Object URL（正常 close 才 revoke）；新增一次性 `revokeObjectUrl()`，錯誤終止與正常 close / constructor failure 共用，杜絕重複 revoke。若 sourceopen 尚未發生，仍交由現有 error/close 路徑處理；不記錄 signed URL/key。
+- **新增回歸**：同一 startup 單測檔加入 HEVC 連續 `seekTo(55→62→5→68)`，每次重建保留完整 `hvc1.2.4.L120.90, mp4a.40.2` 的 MSE MIME、正確 startSeconds、舊 Worker terminate 和舊 Object URL revoke；最後注入 Worker `onerror`，確認立即撤銷新 URL，接著 `close()` 也不重複撤銷。
+- **PENDING**：[CI #43290902235](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902235)、[Pages #43290902283](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902283) 首次查詢均 `in_progress`；[Browser #43290902255](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902255) `pending`；[WASM proof #43290902250](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290902250) `in_progress`。本階段新斷言尚未以 CI PASS 證明，勿把前階段成功錯誤套用。
+- **已知限制**：此 Node 回歸使用 fake Worker/MediaSource，未證明瀏覽器 MSE 在 runtime error 後的完整視覺恢復；沒有任何真實 HEVC/ByteVC2 正例驗收。前階段 [CI #43290337102](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337102) 和 [Pages #43290337124](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337124) 確證 PASS，不能當成階段 42 的驗收。
+- **下一個具體工程動作**：檢視 metadata HTTP 403/416 與 codec 不支援時的錯誤分類及未受限整檔下載備援，改善 fail-fast 和無敏感資訊的診斷；若本次 CI 失敗先看唯一具體錯誤並修。之後進行長時間 pause／快速切換壓測，不等待 Actions 長跑完成。
