@@ -19,6 +19,11 @@ let downloadEvents = 0;
 page.on('download', () => downloadEvents++);
 page.on('pageerror', err => errors.push(err.message));
 page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+// This regression covers browsers without the optional BVC2 bridge even when
+// the production bundle is deployed. A separate test probes the WASM path.
+page.route('**/bvc2/bvc2-core.wasm', route => route.fulfill({
+  status: 404, contentType: 'text/plain', body: 'not installed for this test'
+}));
 page.route(url => url.pathname.startsWith('/api/'), route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/series') {
