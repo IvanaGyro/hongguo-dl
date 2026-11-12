@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import { hevcCodecStringFromHvcc } from './hevc-codec.js';
+
 // Inspect MP4 sample descriptions structurally; never string-scan arbitrary
 // moov payload for "mp4a", which may appear inside unrelated metadata.
 const u32 = (d, p) => (d[p] * 0x1000000 + (d[p + 1] << 16) +
@@ -44,6 +46,30 @@ function formatForSample(data, entry) {
   const frma = sinf && child(data, sinf, 'frma');
   return frma && frma.payload + 4 <= frma.end
     ? fourcc(data, frma.payload) : null;
+}
+
+// Read the actual hvcC configuration from an HEVC sample entry instead of
+// guessing a generic "hvc1" codec. The C remuxer's output uses clear HEVC
+// samples (hvc1), regardless of whether the input encrypted entry was encv.
+export function hevcCodecStringFromMoov(moov) {
+  if (!(moov instanceof Uint8Array) || moov.length < 8 ||
+      u32(moov, 0) !== moov.length || fourcc(moov, 4) !== 'moov') return null;
+  for (const trak of boxes(moov, 8, moov.length).filter(box => box.type === 'trak')) {
+    const mdia = child(moov, trak, 'mdia'), minf = mdia && child(moov, mdia, 'minf'),
+      stbl = minf && child(moov, minf, 'stbl'),
+      stsd = stbl && child(moov, stbl, 'stsd');
+    for (const entry of sampleEntries(moov, stsd)) {
+      if (!['hvc1', 'hev1'].includes(formatForSample(moov, entry))) continue;
+      // VisualSampleEntry is 86 bytes including the MP4 box header.
+      if (entry.start + 86 > entry.end) continue;
+      const hvcc = boxes(moov, entry.start + 86, entry.end)
+        .find(box => box.type === 'hvcC');
+      if (!hvcc) continue;
+      const string = hevcCodecStringFromHvcc(moov.subarray(hvcc.payload, hvcc.end));
+      if (string) return string;
+    }
+  }
+  return null;
 }
 
 export function inspectMp4TrackFormats(moov) {
