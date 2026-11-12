@@ -10,6 +10,7 @@
 - **瀏覽器合成正例**：Linux Chromium/Firefox 以 H.264/AAC 加密 progressive MP4 真正顯示影格（HTTP EOF 前），55s 遠距 Seek、7→63→35→5→63s 往返、reload 續播及播放/下載模式切換 PASS。[Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)。
 - **合成 HEVC 1080p**：1920×1080 HEVC/AAC CENC progressive → pinned Librempeg WASM clear fMP4，FFmpeg 解碼成功，來源 EOF 前首 fragment，6s indexed RAP seek PTS PASS。[WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)。**不等於真實瀏覽器 HEVC 解碼成功**。
 - **30 分鐘完整播放**：[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)，合成 480×270 H.264/AAC 1800.021s、ended=true、videoError=null、104 HTTP Range、MSE span 最高 72s、ahead 43.56s；首影格時僅取得 6.6% 來源。Linux test harness + browser process-tree RSS first/peak/last 802.5/838.8/838.2 MiB，**不是 Android/GPU RAM**。
+- **暫停後 HTTP Range 背壓已 PASS**：[Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033)，含 `CENC_TEST_PAUSE=1`，實際 `PASS chromium paused CENC HTTP Range backpressure and playback resume`：pausedAt=1.5784s、3 秒觀察 Range **9→9**、resume 後完整播至 300s（同 run 1800s 也 PASS）。這是 Linux Chromium 合成 H.264/AAC，不是 Android/HEVC 長時間暫停驗證。
 - **修正完成**：先前 1800s 因 `moov >1MiB` 導致 KID 未取得、HTTP 416 整檔 fallback；現以有界 8MiB 元資料限制和超限非重試錯誤修復並在上述 1800s synthetic PASS。
 - **近期程式修補與回歸**：
   - ByteVC2 Worker startup cancellation / postMessage failure 及 7 單測：`b57923f`、`90603dd`、`8f9d4c7`，[CI #43284208866](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43284208866) PASS。
@@ -19,14 +20,14 @@
 
 ## 仍待驗證／不可誤報
 
-1. **暫停時網路背壓 E2E**：`tests/cenc-stream.browser.mjs` 已新增 `CENC_TEST_PAUSE=1`，並在 `7b46f19` 的 workflow 啟用 300s 合成案例。**須從含該 workflow 變更的 browser run 讀到實際 `PASS chromium paused CENC HTTP Range backpressure and playback resume` 才可標 PASS。** 已完成的 Browser #43285003886 屬更早一版（`b4d9440`），沒有啟用該旗標，不能當證據。[Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033) / [#43286523184](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523184) 為後續有旗標的候選 run，前次確認仍 in_progress / pending；**重新讀當次狀態後再更新**。
+1. **更長暫停與反覆切集仍待驗證**：3 秒觀察期的暫停節流已在 Browser #43285424033 正式 PASS，但數分鐘以上的暫停、反覆播放／下載切換、Android 背景凍結與實際 HEVC 尚無等價證據。
 2. **真實紅果 HEVC 1080p**：以前有限量探測的 CDN 曾回 HTTP 403；需合法有效 206 來源 + 有 HEVC MSE 解碼的裝置，才能實測 EOF 前起播、影音、seek/完整播畢。無法由 synthetic HEVC FFmpeg proof 推得 Windows/Android 支援。
 3. **Android Firefox／Windows HEVC 實機、真實 ByteVC2 正例**：目前無實機/有效授權來源，均 NOT TESTED。ByteVC2 decoder ABI + 普通 H264 負例 PASS 不等於真實影格；BVC2 仍是整檔 MEMFS → x264、有損、實驗性，不是即時無損串流。
 4. 記憶體：1800s MSE 有界可證，但 process-tree RSS 只是粗估；長時間暫停、反覆切集、系統 GPU RAM/Android 電耗尚缺實證。
 
 ## 下一個工程動作
 
-- 優先**僅查一次**含 `CENC_TEST_PAUSE=1` 的最新已完成 Browser run，讀該 job 的 PASS 或具體失敗行；若失敗，修最小 bug、補回歸、提交 main。不要被 Actions 查詢卡住。
-- 若已 PASS，將 `docs/CENC-TEST-MATRIX.md` 的 pause case、`AGENT-PROGRESS.md` 新 checkpoint 更新，並繼續處理來源 403 / HEVC 解碼路徑的錯誤分類、可授權樣本的最小實機驗收。
+- **短期 paused-backpressure E2E 已完成**。接下來針對更長暫停/反覆切集、來源 403 與 HEVC 裝置解碼能力的錯誤分類，以及可授權真實片源驗收；只有出現具體失敗才讀必要 Actions log。
+- 暫停 PASS 已同步到 [CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)；繼續合法真實 HEVC 及 ByteVC2 bitstream 正例驗收，無來源/裝置不得宣稱完成。
 - 避免更動 `scripts/cenc-stream-remux.c`、BVC2 C bridge 或 pinned WASM 二進位，除非能一同重建 manifest 並完整跑 WASM proof；不可以只提交 C 源碼卻沿用舊二進位。
 - 永遠使用最新 `main` SHA 和 path blob SHA 做寫入，不覆寫其他 agent 的同時提交；**文件 checkpoint 寫完不是停工條件**。
