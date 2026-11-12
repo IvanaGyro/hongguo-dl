@@ -231,20 +231,43 @@ try {
       // A decoded video frame does not prove an AAC track is audible.
       // The synthetic fixture includes an original 440 Hz sine track.
       // Capture real browser PCM via Web Audio (never a file, URL or key).
-      const audio = await page.locator('#player-video').evaluate(async video => {
-        if (!window.AudioContext) throw new Error('AudioContext unavailable');
-        const context = new AudioContext();
-        const source = context.createMediaElementSource(video);
-        const analyser = context.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
-        analyser.connect(context.destination);
+      // Firefox blocks Web Audio until a real user activation even when the
+      // media element itself is allowed to autoplay. Playwright's .click()
+      // supplies a trusted browser input; element.click() / page.evaluate()
+      // do not. Create and resume AudioContext synchronously in that handler.
+      await page.evaluate(() => {
+        const button = document.createElement('button');
+        button.id = 'cenc-activate-audio-test';
+        button.type = 'button';
+        button.textContent = 'Enable AAC PCM test';
+        Object.assign(button.style, {
+          position: 'fixed', top: '8px', left: '8px', zIndex: '2147483647'
+        });
+        button.addEventListener('click', () => {
+          const video = document.querySelector('#player-video');
+          const context = new AudioContext();
+          const source = context.createMediaElementSource(video);
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+          analyser.connect(context.destination);
+          window.__cencAudioProbe = { context, analyser };
+          void context.resume().catch(() => {
+            window.__cencAudioProbe.resumeFailed = true;
+          });
+        }, { once: true });
+        document.body.appendChild(button);
+      });
+      await page.locator('#cenc-activate-audio-test').click();
+      await page.waitForFunction(() =>
+        window.__cencAudioProbe?.context?.state === 'running' ||
+        window.__cencAudioProbe?.resumeFailed, null, { timeout: 6000 });
+      const audio = await page.evaluate(async () => {
+        const video = document.querySelector('#player-video');
+        const { context, analyser, resumeFailed } = window.__cencAudioProbe;
+        if (resumeFailed || context.state !== 'running')
+          throw new Error('AudioContext did not resume after trusted user activation');
         try {
-          await Promise.race([
-            context.resume(),
-            new Promise((_, reject) => setTimeout(() =>
-              reject(new Error('AudioContext resume timed out')), 3000))
-          ]);
           const pcm = new Float32Array(analyser.fftSize);
           let peakRms = 0, nonSilentWindows = 0;
           for (let i = 0; i < 25; i++) {
@@ -263,6 +286,8 @@ try {
           };
         } finally {
           await context.close();
+          document.querySelector('#cenc-activate-audio-test')?.remove();
+          delete window.__cencAudioProbe;
         }
       });
       assert.equal(audio.contextState, 'running',
