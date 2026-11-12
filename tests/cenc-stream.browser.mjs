@@ -348,6 +348,26 @@ try {
           !resumed.some(r => r.unbounded),
           '90% reload must resume with high-offset bounded HTTP Range');
         console.log('PASS ' + browserName + ' 90% CENC resume after cross-range seeking');
+        // Switching to download mode must dispose the CENC Worker, rather
+        // than leaving a hidden 40s remux task running in the background.
+        await page.locator('#mode-download').click();
+        await page.waitForFunction(() =>
+          !document.querySelector('#player-video')?.getAttribute('src'),
+          null, { timeout: 10000 });
+        await page.waitForTimeout(350);
+        const canceledAt = mediaRequests.length;
+        await page.waitForTimeout(800);
+        assert.equal(mediaRequests.length, canceledAt,
+          'Download mode must stop requesting CENC media in the background');
+        await page.locator('#mode-play').click();
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          return video?.videoWidth === 480 && video.readyState >= 2 &&
+            video.currentTime >= 62.5 && video.currentTime < 67;
+        }, null, { timeout: 40000 });
+        assert(!mediaRequests.some(r => r.unbounded),
+          'Resuming from download mode must still use bounded Range');
+        console.log('PASS ' + browserName + ' playback/download mode releases and resumes CENC');
       }
     }
     console.log('PASS ' + browserName + ' encrypted progressive MP4 remux first frame before HTTP EOF',
