@@ -169,3 +169,16 @@
 - **[afb38bf](https://github.com/IvanaGyro/hongguo-dl/commit/afb38bf98696df7bb2f4e4d1a05dc8c236197661)**：`tests/mse-eviction.test.mjs` 增加 60～300 秒、間斷 buffer 的 30 秒倒退視窗政策驗證。**僅純單元政策測試，不等於真實 300 秒播放或 RAM/GPU 壓測通過**。其 [main CI #43266659601](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266659601) 和 [Pages #43266659339](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266659339) 均 **in_progress（快照）**。
 - **本地環境**：容器具 Node v22，但 GitHub DNS 不可解析，無法 `git clone` 或在本地直接執行整套 Bun/Playwright；以已回傳的 GitHub CI 結論為準。新的真實 HEVC 1080p 仍受先前 CDN 403 限制，未做更多敏感來源請求；ByteVC2 尚未完成真實解碼驗證。
 - **接手下一步**：不輪詢。待已有的 browser job 自行完成後，僅一次確認結果；若 FAIL 只讀失敗 job 中 `CENC reload resume diagnostics`，針對確切錯誤修復，勿再重寫 CENC。接著對 Firefox unbuffered seek、10/50/90% Seek、長影片/取消作合成驗證。所有修改直接提交 main，不建立 PR。
+
+## 階段 14 — 2026-11-13 已完成瀏覽器 55 秒遠端 Seek / reload 驗收（已確認 PASS，下一階段繼續）
+
+- [Progressive CENC browser #43266588689](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266588689) 結果 **completed/success**；已閱讀 job `131351664945` 的實際測試行，並非只看 workflow 綠燈。合成加密 H.264/AAC 素材：
+  - Chromium 15s EOF 前首影格：PASS、`playbackSeconds=1.508026`。
+  - Firefox 15s EOF 前首影格：PASS、`playbackSeconds=1.535564`。
+  - Chromium 70s 55s unbuffered RAP seek：PASS、5 個新 Range、最高 `3904565` byte offset。
+  - Chromium 55s reload resume：PASS、6/7? run 輸出確切 `resumedRangeCount=7`。
+  - Firefox 70s 55s unbuffered RAP seek：PASS、5 個新 Range、最高 `3904565` byte offset。
+  - Firefox 55s reload resume：PASS、`resumedRangeCount=6`。
+- 同時 `main aecc9a4` 的 [CI #43266778814](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778814) **success**、[Pages #43266778629](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43266778629) **success**。
+- **判定**：P2 主要架構（RAP Range seek、MSE 重建、保存位置與重新開啟）之 55 秒案例 **合成 Chromium/Firefox 已通過**；尚未驗證多重 10/50/90%、切集時取消、長時間 RAM 以及真實 HEVC。下一階段先加多 seek + cancel/stress 的自動回歸；另需真實 HEVC 授權片源 HTTP 206 才能做 P1 最終驗收。
+- **重要工作節奏**：使用者明確要求「實作 → 測試 → 改文件 → 繼續下一階段」多輪工作，不要把進度文件視為 session 結束；不開 PR，直接 main，僅在需要解釋具體失敗時讀一次 Actions log。
