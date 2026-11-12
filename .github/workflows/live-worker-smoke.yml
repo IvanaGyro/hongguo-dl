@@ -1,10 +1,5 @@
 name: Live Worker source smoke (rate limited)
 on:
-  # Temporary one-time verification on workflow config change; removed next commit.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/live-worker-smoke.yml'
   # No push/PR trigger: a shared GitHub runner IP must not issue requests on
   # every commit. The weekly run checks one episode only.
   schedule:
