@@ -3,12 +3,13 @@
 // explicitly fetched by this app can be shared across the two modes.
 export class MediaCache {
   constructor(limit = 96 * 1024 * 1024) { this.limit = limit; this.items = new Map(); this.size = 0; }
-  get(key) {
+  getEntry(key) {
     const value = this.items.get(key);
     if (value) { this.items.delete(key); this.items.set(key, value); }
-    return value?.blob || null;
+    return value || null;
   }
-  put(key, blob) {
+  get(key) { return this.getEntry(key)?.blob || null; }
+  put(key, blob, source = null) {
     if (!(blob instanceof Blob) || blob.size <= 0 || blob.size > this.limit) return false;
     const old = this.items.get(key);
     if (old) { this.size -= old.blob.size; this.items.delete(key); }
@@ -18,7 +19,12 @@ export class MediaCache {
       this.size -= this.items.get(oldest).blob.size;
       this.items.delete(oldest);
     }
-    this.items.set(key, { blob }); this.size += blob.size;
+    // Keep only public rendition metadata; never cache signed URLs or keys.
+    const metadata = source ? {
+      codec: source.codec, quality: source.quality, width: source.width,
+      height: source.height, duration: source.duration, source: 'cache'
+    } : null;
+    this.items.set(key, { blob, source: metadata }); this.size += blob.size;
     return true;
   }
   clear() { this.items.clear(); this.size = 0; }
