@@ -329,6 +329,8 @@ try {
   await page.locator('#player-quality').selectOption('720p');
   await page.waitForFunction(() =>
     document.querySelector('#player-codec option[value="auto"]')?.textContent.includes('ByteVC2/VVC'));
+  await page.waitForFunction(() => document.querySelector('#player-codec option[value="hevc"]')?.disabled,
+    null, { timeout: 8000 });
   assert.equal(await page.locator('#player-codec option[value="hevc"]').isDisabled(), true,
     'HEVC must not be offered at VVC-only 720p');
   await page.waitForFunction(() =>
