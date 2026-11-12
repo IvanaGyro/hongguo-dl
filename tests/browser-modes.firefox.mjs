@@ -95,6 +95,12 @@ try {
   assert.deepEqual(await page.locator('#episodes button.play-episode > span:first-child').allTextContents(),
     ['1', '2']);
   await page.locator('#player-panel').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#player-video').evaluate(v => v.controls), false,
+    'Custom controls replace native video-only fullscreen');
+  assert.equal(await page.locator('#player-prev').isVisible(), true);
+  assert.equal(await page.locator('#player-play-pause').isVisible(), true);
+  assert.equal(await page.locator('#player-next').isVisible(), true);
+  assert.equal(await page.locator('#player-fullscreen').isVisible(), true);
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-settings').waitFor({ state: 'visible' });
@@ -119,9 +125,10 @@ try {
     const x = JSON.parse(localStorage.getItem('hongguo-dl-playback-history-v1') || '{}');
     return x['42:101']?.seconds >= 1.3;
   });
-  const partialBar = await page.locator('button[data-play-vid="101"] .watch-track > span')
-    .getAttribute('style');
-  assert.match(partialBar, /width:\s*[1-9]\d*%/);
+  const partialTile = await page.locator('button[data-play-vid="101"]').getAttribute('style');
+  assert.match(partialTile, /--watch-progress:\s*[1-9]\d*%/);
+  assert.equal(await page.locator('#episodes .watch-track').count(), 0,
+    'Watch progress should fill the tile background, not a bottom bar');
   await page.reload();
   await page.locator('button[data-linked-id="60"]').waitFor({ state: 'visible' });
   await page.locator('#mode-play').click();
@@ -129,8 +136,8 @@ try {
     document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.waitForFunction(() => document.querySelector('#player-video')?.currentTime >= 1.25,
     null, { timeout: 30000 });
-  assert((await page.locator('button[data-play-vid="101"] .watch-track > span')
-    .getAttribute('style'))?.includes('width:'));
+  assert((await page.locator('button[data-play-vid="101"]').getAttribute('style'))
+    ?.includes('--watch-progress:'));
   await page.locator('#player-video').evaluate(v => v.dispatchEvent(new Event('ended')));
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 2 集'));
   const played = await page.evaluate(() => JSON.parse(localStorage.getItem('hongguo-dl-playback-history-v1') || '{}'));

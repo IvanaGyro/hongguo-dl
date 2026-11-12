@@ -24,7 +24,9 @@ function printableSource(source) {
   ].filter(Boolean).join(' · ');
 }
 export function createPlayer({
-  video, status, label, prevButton, nextButton, qualitySelect, codecSelect,
+  video, status, label, prevButton, nextButton,
+  playPauseButton, seekInput, clock, fullscreenButton, playerStage,
+  qualitySelect, codecSelect,
   speedSelect, fitSelect, autoNextInput, settingsToggle, settingsMenu,
   settingsClose, pipButton, sourceInfo,
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress
@@ -34,6 +36,24 @@ export function createPlayer({
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
   let sourceAttempt = 0;
+  function formatClock(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const s = Math.floor(seconds), minutes = Math.floor(s / 60);
+    return minutes + ':' + String(s % 60).padStart(2, '0');
+  }
+  function syncPlaybackControls() {
+    const isPlaying = !video.paused && !video.ended;
+    playPauseButton.textContent = isPlaying ? '⏸' : '▶';
+    playPauseButton.setAttribute('aria-label', isPlaying ? '暫停' : '播放');
+    playPauseButton.title = isPlaying ? '暫停' : '播放';
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const position = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    seekInput.disabled = !duration;
+    seekInput.value = String(duration ? Math.round(Math.min(position / duration, 1) * 1000) : 0);
+    seekInput.style.setProperty('--seek-progress', duration ? Math.min(100, position / duration * 100) + '%' : '0%');
+    clock.textContent = formatClock(position) + ' / ' + formatClock(duration);
+  }
+  video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
     [qualitySelect, preferences.quality], [codecSelect, preferences.codec],
@@ -77,6 +97,7 @@ export function createPlayer({
     video.pause();
     video.removeAttribute('src');
     video.load();
+    syncPlaybackControls();
     if (activeUrl) { URL.revokeObjectURL(activeUrl); activeUrl = null; }
   }
   async function waitMetadata(signal) {
@@ -201,6 +222,7 @@ export function createPlayer({
     video.playbackRate = Number(speedSelect.value) || 1;
     video.style.objectFit = fitSelect.value;
     video.load();
+    syncPlaybackControls();
     await waitMetadata(signal);
     if (signal.aborted || currentToken !== token) return;
     const old = watchRecords(storage)[playbackKey(getSeries()?.seriesId, episode.vid)];
@@ -212,6 +234,7 @@ export function createPlayer({
     loading = false;
     recoveryStart = video.currentTime;
     setStatus(wanted > 0 ? '已續播' : '');
+    syncPlaybackControls();
     onProgress?.();
     if (autoPlay) {
       try { await video.play(); }
@@ -249,6 +272,7 @@ export function createPlayer({
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';
+    showSettings(false);
     const signal = (controller = new AbortController()).signal;
     const currentToken = ++token;
     setStatus('載入中…');
@@ -260,15 +284,26 @@ export function createPlayer({
     if (list[index + direction]) open(list[index + direction]);
   }
   video.addEventListener('timeupdate', () => {
+    syncPlaybackControls();
     if (!current || !readyForHistory || !Number.isFinite(video.currentTime)) return;
     const now = Date.now();
     if (failure && video.currentTime - recoveryStart > 5) failure = null;
     if (now - lastUiPaint > 950) { lastUiPaint = now; onProgress?.(); }
     if (now - lastSaved > 1800) { lastSaved = now; savePosition(); }
   });
-  video.addEventListener('seeked', () => { if (readyForHistory) savePosition(); });
-  video.addEventListener('pause', () => { if (readyForHistory && !video.ended) savePosition(); });
+  video.addEventListener('durationchange', syncPlaybackControls);
+  video.addEventListener('loadedmetadata', syncPlaybackControls);
+  video.addEventListener('play', syncPlaybackControls);
+  video.addEventListener('pause', () => {
+    syncPlaybackControls();
+    if (readyForHistory && !video.ended) savePosition();
+  });
+  video.addEventListener('seeked', () => {
+    syncPlaybackControls();
+    if (readyForHistory) savePosition();
+  });
   video.addEventListener('ended', () => {
+    syncPlaybackControls();
     if (!current || !readyForHistory) return;
     savePosition(true);
     const index = ordered().findIndex(ep => ep.vid === current.vid);
@@ -294,6 +329,33 @@ export function createPlayer({
   }
   settingsToggle.addEventListener('click', () => showSettings(settingsMenu.hidden));
   settingsClose.addEventListener('click', () => showSettings(false));
+  playPauseButton.addEventListener('click', () => {
+    if (video.paused || video.ended) {
+      video.play().catch(error => setStatus(error.message || '無法開始播放'));
+    } else video.pause();
+  });
+  seekInput.addEventListener('input', () => {
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      video.currentTime = Number(seekInput.value) / 1000 * video.duration;
+      syncPlaybackControls();
+    }
+  });
+  const fullscreenAvailable = typeof playerStage.requestFullscreen === 'function';
+  const nativeFullscreen = typeof video.webkitEnterFullscreen === 'function';
+  fullscreenButton.hidden = !fullscreenAvailable && !nativeFullscreen;
+  fullscreenButton.addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement === playerStage) await document.exitFullscreen();
+      else if (fullscreenAvailable) await playerStage.requestFullscreen();
+      else if (nativeFullscreen) video.webkitEnterFullscreen();
+    } catch (error) { setStatus(error.message || '無法切換全螢幕'); }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    const fullscreen = document.fullscreenElement === playerStage;
+    fullscreenButton.textContent = fullscreen ? '⛶' : '⛶';
+    fullscreenButton.setAttribute('aria-label', fullscreen ? '離開全螢幕' : '全螢幕');
+    fullscreenButton.title = fullscreen ? '離開全螢幕' : '全螢幕';
+  });
   prevButton.addEventListener('click', () => step(-1));
   nextButton.addEventListener('click', () => step(1));
   for (const selector of [qualitySelect, codecSelect]) {
@@ -315,6 +377,7 @@ export function createPlayer({
   window.addEventListener('pagehide', () => savePosition());
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePosition(); });
   refreshButtons();
+  syncPlaybackControls();
   return {
     open, current: () => current,
     resume() {

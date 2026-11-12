@@ -214,14 +214,11 @@ function renderEpisodes() {
         (watched ? 'watched ' : seconds > 0.5 ? 'in-progress ' : '') +
         (ep.vid === current ? 'current' : '') +
         '" data-play-vid="' + escapeHtml(ep.vid) + '" aria-label="' +
-        escapeHtml(label) + '"><span>' +
+        escapeHtml(label) + '" style="--watch-progress:' + percent + '%"><span>' +
         (series.kind === 'direct' ? '媒體直連' : ep.index) +
         '</span>' +
-        (watched ? '<span class="watched-check" aria-hidden="true">✓</span>'
-          : seconds > 0.5 ? '<small>' + formatTime(seconds) +
-            (duration > 0 ? ' / ' + formatTime(duration) : '') + '</small>' : '') +
-        '<span class="watch-track" aria-hidden="true"><span style="width:' + percent +
-        '%"></span></span></button>';
+        (watched ? '<span class="watched-check" aria-hidden="true">✓</span>' : '') +
+        '</button>';
     }
     const checked = selected.has(ep.vid);
     return '<label class="episode ' + (checked ? 'selected' : '') +
@@ -692,6 +689,9 @@ updateApiSettings();
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
+  playPauseButton: $('player-play-pause'), seekInput: $('player-seek'),
+  clock: $('player-clock'), fullscreenButton: $('player-fullscreen'),
+  playerStage: $('player-stage'),
   qualitySelect: $('player-quality'), codecSelect: $('player-codec'),
   speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),

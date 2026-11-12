@@ -63,13 +63,21 @@
         <section id="player-panel" hidden aria-label="影集播放器">
           <div class="player-header"><h2 id="player-episode">尚未播放</h2><span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span></div>
           <div id="player-stage" class="player-stage">
-            <video id="player-video" controls playsinline preload="metadata" aria-label="影集影片播放"></video>
-            <div class="player-overlay-top">
-              <div class="player-nav" aria-label="播放分集導航">
-                <button id="player-prev" type="button" aria-label="上一集" title="上一集">❮</button>
-                <button id="player-next" type="button" aria-label="下一集" title="下一集">❯</button>
+            <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
+            <div class="player-bottom-controls" aria-label="播放器控制項">
+              <input id="player-seek" class="player-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放進度" />
+              <div class="player-control-bar">
+                <div class="player-control-group">
+                  <button id="player-prev" type="button" aria-label="上一集" title="上一集">⏮</button>
+                  <button id="player-play-pause" type="button" aria-label="播放" title="播放">▶</button>
+                  <button id="player-next" type="button" aria-label="下一集" title="下一集">⏭</button>
+                  <span id="player-clock" class="player-clock" aria-label="目前播放時間">0:00 / 0:00</span>
+                </div>
+                <div class="player-control-group">
+                  <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定">⚙</button>
+                  <button id="player-fullscreen" type="button" aria-label="全螢幕" title="全螢幕">⛶</button>
+                </div>
               </div>
-              <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="影片播放設定" title="播放設定">⚙</button>
             </div>
             <div id="player-settings" class="player-settings-menu" hidden>
               <div class="player-settings-title">播放設定 <button type="button" id="player-settings-close" title="關閉">✕</button></div>
