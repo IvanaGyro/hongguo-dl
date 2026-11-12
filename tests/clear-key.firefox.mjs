@@ -84,6 +84,19 @@ try {
     console.log('SKIP browser native Clear Key: Firefox runner does not advertise EME/CENC for H.264');
   } else {
     const started = performance.now();
+    await page.evaluate(() => {
+      const video = document.querySelector('#player-video');
+      window.__emeVideoEvents = [];
+      for (const type of ['encrypted', 'waitingforkey', 'error', 'loadedmetadata',
+        'loadeddata', 'canplay', 'emptied', 'stalled', 'suspend', 'playing']) {
+        video.addEventListener(type, () => {
+          window.__emeVideoEvents.push({
+            type, mediaKeys: !!video.mediaKeys,
+            errorCode: video.error?.code || null, readyState: video.readyState
+          });
+        });
+      }
+    });
     await page.locator('#mode-play').click();
     await page.waitForFunction(() => document.querySelector('#player-source-info')
       ?.textContent.includes('原生串流解密'), null, { timeout: 30000 });
@@ -96,9 +109,11 @@ try {
         source: document.querySelector('#player-source-info')?.textContent };
     });
     assert(result.currentTime > 0.2, 'Native CENC must advance the video clock');
+    const nativeVideoEvents = await page.evaluate(() => window.__emeVideoEvents || []);
     assert(result.readyState >= 2 && result.mediaKeys,
       'Native media pipeline and CDM must be active: ' + JSON.stringify({
-        ...result, emeDiagnostics, metadataRequests: mediaRequests.slice(0, 5)
+        ...result, emeDiagnostics, metadataRequests: mediaRequests.slice(0, 5),
+        videoEvents: nativeVideoEvents.slice(0, 24)
       }));
     assert.equal(result.videoWidth, 480);
     assert(mediaRequests.length > 0);
