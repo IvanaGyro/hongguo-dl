@@ -138,3 +138,15 @@
 - **既有驗收**：前一版 [Seek WASM proof #43244358148](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43244358148) 已 **completed success**，證明合成 6 秒 RAP、輸出解碼及 PTS；原 JS/WASM manifest 與 Pages 已於 [#43244842438](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43244842438) 成功發布。該成功 **發生在後續 `b483f1fe` 正常起播修復之前**，不能證明新 bundle。
 - **CI 最新快照**：`b483f1fe` 的 [WASM proof #43245818741](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43245818741) **in_progress**；`b171ab13` [browser #43246111292](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246111292) **failure**，核對 failure step 在 `Verify published WASM ABI manifest and asset hashes`（C 原始碼變更後尚未發布新 JS/WASM），**不是影片 seek browser assertion 失敗**；`be166de5` [browser #43246276628](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246276628) **in_progress**、[CI #43246276886](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246276886) **in_progress**、[Pages #43246276843](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246276843) **in_progress**。
 - **下一步**：確認 b483 的 WASM proof 成功後，由 Actions 直接發布 JS/WASM/manifest 至 main；再透過 main commit 啟動新版瀏覽器 acceptance。若 70s seek / reload 測試失敗，必須先讀 failed job 的具體斷言再修復，禁止宣稱 P2 PASS。再完成 300 秒與 30–60 分鐘合成記憶體/取消壓測。真實 1080p HEVC 與 ByteVC2 仍 NOT TESTED／HTTP 403 導致無法驗收。
+
+## 階段 11 — 2026-11-12 Chromium 非緩衝 Seek 通過，reload 續播失敗待排除（已檢查失敗 CI）
+
+- **主分支基準**：`d603fdd5` 的 [CI #43246560794](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246560794) **success**、[Pages #43246560752](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246560752) **success**。僅代表程式測試與部署，非新版 seek 瀏覽器驗收。
+- **實際瀏覽器驗證 [#43246560754](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43246560754)**：**completed/failure**；已查閱該次唯一失敗 job。內部子項：
+  - PASS — Chromium 合成 15s H.264/AAC CENC：來源 EOF 前首影格、連續播放 >1.5 秒。
+  - PASS — Firefox 合成 15s H.264/AAC CENC：同上。
+  - PASS — **Chromium 合成 70s H.264/AAC CENC：55s unbuffered RAP seek**。測試確認 `duration=70`、新觸發 5 個媒體 Range、最高新起點 `3904565` bytes，較來源一半更後方，影格可繼續顯示。
+  - FAIL — **Chromium 55s 跳轉後重新整理頁面之續播**：在 `tests/cenc-stream.browser.mjs:206` 等待 `currentTime >54.5`、解碼 `videoWidth=480`、`readyState>=2` 時 90 秒逾時。該 job 在進到 Firefox 70s seek 測試之前停止；**Firefox 新 seek NOT TESTED**。
+- **診斷增補**：`a6c8a9d8` 為 reload 失敗分支新增 status、SourceInfo、currentTime、duration、buffered 時段、已儲存進度值、最近的 Range 起迄與匿名錯誤種類；不輸出 URL/key。下個 browser run 若失敗，請直接讀此一段診斷，不要猜測 progress/decoder/HTTP 哪個環節有問題。
+- **P3 快速失敗測試**：`46a201e4` 新增 HTTP 403/416/429 每次只請求一次、回應 body cancel，以及 AbortSignal 已取消時不讀媒體的單元測試（本提交的 CI 尚未確認結果）。
+- **P2 尚未完成**：Chromium remote seek 已有合成成功證據，reload 不通；Firefox remote seek 尚未驗證，真實 HEVC/Android 仍有 HTTP 403 存取限制。下一步優先修復 reload 實際失敗原因，再跑完兩種瀏覽器與 10/50/90% case；不要將整個 P2 標記 PASS。
