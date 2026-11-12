@@ -11,7 +11,11 @@ import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 
-const $ = id => document.getElementById(id);
+const $ = id => {
+  const element = document.getElementById(id);
+  if (!element) throw new Error('Missing required UI control #' + id);
+  return element;
+};
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
 const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
