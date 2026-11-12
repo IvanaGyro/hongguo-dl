@@ -149,6 +149,25 @@ try {
   await zipInspect(await archive.path(), 2, '第001集.mp4', '第002集.mp4');
   assert.equal(calls.length, beforeZip, 'Export must not fetch sources twice');
   assert.equal(downloadEvents, before + 2, 'Only manual save plus one ZIP');
+  // The same staged queue items must be muxed into one MP4 without another
+  // source request. Probe the output with system FFprobe to verify duration,
+  // original video codec and absence of inadvertently muxed subtitle streams.
+  const beforeMp4 = calls.length;
+  const mp4Event = page.waitForEvent('download', { timeout: 120000 });
+  await page.locator('#bulk-concat').click();
+  const joined = await mp4Event;
+  assert.match(joined.suggestedFilename(), /\.mp4$/);
+  const joinedPath = await joined.path();
+  assert(joinedPath && statSync(joinedPath).size > sample.length);
+  const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries',
+    'format=duration:stream=codec_name,codec_type', '-of', 'json', joinedPath], { encoding: 'utf8' });
+  assert.equal(probe.status, 0, probe.stderr || probe.error?.message);
+  const metadata = JSON.parse(probe.stdout);
+  assert(Number(metadata.format.duration) >= 7,
+    'Losslessly joined MP4 should contain at least 7 seconds from two 4-second inputs');
+  assert(metadata.streams.some(stream => stream.codec_name === 'h264'));
+  assert(metadata.streams.every(stream => stream.codec_type !== 'subtitle'));
+  assert.equal(calls.length, beforeMp4, 'Lossless concat must use staged files without re-fetching');
 
   await page.locator('button[data-linked-id="60"]').click();
   await page.locator('#queue-select-none').click();
