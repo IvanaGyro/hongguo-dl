@@ -25,22 +25,33 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
     const input = url.searchParams.get('input');
     const many = input === '60' || input === '99';
     const restricted = input === '99';
-    const count = many ? 60 : 2;
+    const vvc = input === 'vvc';
+    const count = vvc ? 1 : many ? 60 : 2;
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        kind: 'series', seriesId: restricted ? '99' : many ? '60' : '42',
-        title: restricted ? '受限測試' : many ? '六十集測試' : '播放測試短劇',
+        kind: 'series', seriesId: vvc ? 'vvc' : restricted ? '99' : many ? '60' : '42',
+        title: vvc ? 'VVC 編碼測試' : restricted ? '受限測試' : many ? '六十集測試' : '播放測試短劇',
         total: count, accessible: restricted ? 5 : count,
         episodes: Array.from({ length: count }, (_, i) => ({
-          vid: String((many ? 1000 : 101) + i), index: i + 1,
-          available: !restricted || i < 5
+          vid: vvc ? 'vvc30' : String((many ? 1000 : 101) + i),
+          index: vvc ? 30 : i + 1, available: !restricted || i < 5
         }))
       })
     });
   }
   if (url.pathname === '/api/source') {
     calls.push(url.searchParams.toString());
+    if (url.searchParams.get('vid') === 'vvc30') return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ variants: [
+        { url: 'https://cdn.fqnovelvod.com/hevc-1080.mp4', codec: 'hevc',
+          quality: '1080p', source: 'app', contentKey: '00112233445566778899aabbccddeeff' },
+        { url: 'https://cdn.fqnovelvod.com/vvc-720.mp4', codec: 'bytevc2',
+          quality: '720p', source: 'app', width: 1280, height: 720,
+          contentKey: '00112233445566778899aabbccddeeff' }
+      ] })
+    });
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ variants: [
@@ -54,6 +65,8 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
     });
   }
   if (url.pathname === '/api/media') {
+    if (url.searchParams.get('url')?.includes('vvc-720.mp4'))
+      throw new Error('Encrypted VVC must not be sent to FFmpeg.wasm');
     return route.fulfill({
       status: 200, contentType: 'video/mp4',
       headers: {
@@ -130,6 +143,27 @@ try {
     'Player must retrieve available variants before choosing local source');
   await page.locator('#player-settings-toggle').click();
   await page.waitForFunction(() => document.querySelector('#player-video').readyState >= 1);
+  // Exercise near-end automatic prefetch without waiting for a real episode to
+  // finish. The current 4-second mock video stays active while episode 2 is
+  // looked up. Overrides are removed immediately after dispatch.
+  const priorPrefetches = calls.filter(x => x.includes('vid=102')).length;
+  await page.locator('#player-video').evaluate(video => {
+    Object.defineProperties(video, {
+      duration: { configurable: true, get: () => 200 },
+      currentTime: { configurable: true, get: () => 190 },
+      paused: { configurable: true, get: () => false }
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    delete video.duration;
+    delete video.currentTime;
+    delete video.paused;
+  });
+  for (let i = 0; i < 50 && calls.filter(x => x.includes('vid=102')).length <= priorPrefetches; i++)
+    await page.waitForTimeout(50);
+  assert(calls.filter(x => x.includes('vid=102')).length > priorPrefetches,
+    'Next episode must be prefetched before the current episode ends');
+  assert.match(await page.locator('#player-episode').textContent(), /第 1 集/,
+    'Prefetch must not change the currently playing episode');
   assert.equal(await page.locator('#player-play-pause').isVisible(), true);
   assert.equal(await page.locator('#player-seek').isVisible(), true);
   assert.equal(await page.locator('#player-stage').evaluate(el =>
@@ -286,6 +320,20 @@ try {
   assert.equal(mobile.buttonsInside, true, 'All mobile controls should fit in the player');
   assert(mobile.controlsHeight < mobile.stageHeight * 0.5,
     'Controls should not obscure most of the video on mobile');
+  // The actual episode-30 source has encrypted HEVC at 1080p, and encrypted
+  // ByteVC2/VVC at 720p. It must fail clearly and BEFORE fetching 720p bytes.
+  await page.goto(base + '?id=vvc', { waitUntil: 'load' });
+  await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
+  await page.locator('#mode-play').click();
+  await page.locator('#player-settings-toggle').click();
+  await page.locator('#player-quality').selectOption('720p');
+  await page.waitForFunction(() =>
+    document.querySelector('#player-codec option[value="auto"]')?.textContent.includes('ByteVC2/VVC'));
+  assert.equal(await page.locator('#player-codec option[value="hevc"]').isDisabled(), true,
+    'HEVC must not be offered at VVC-only 720p');
+  await page.waitForFunction(() =>
+    document.querySelector('#player-status')?.textContent.includes('無法播放'));
+  assert.match(await page.locator('#player-status').textContent(), /720p.*ByteVC2\/VVC/);
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);
