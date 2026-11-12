@@ -74,6 +74,40 @@ test('find moov after mdat without downloading its payload', async () => {
   assert.deepEqual([...kid], [...KID]);
 });
 
+test('long MP4 moov above 1 MiB is fetched as one bounded metadata Range', async () => {
+  const largeMoov = box('moov', concat(
+    box('trak', box('schi', tenc)),
+    box('free', new Uint8Array(1250000))
+  ));
+  assert(largeMoov.length > 1024 * 1024);
+  const f = mockFetch(concat(ftyp, largeMoov, mdat));
+  const info = {};
+  const kid = await probeCencKid('https://example.com/long.mp4', null, f.fetchImpl, info);
+  assert.deepEqual([...kid], [...KID]);
+  assert.equal(info.fileSize, ftyp.length + largeMoov.length + mdat.length);
+  assert.equal(f.calls.length, 2, 'Only bounded header and complete moov Ranges');
+  assert(f.calls[0].end < 65536);
+  assert.equal(f.calls[1].end - f.calls[1].start + 1, largeMoov.length);
+});
+
+test('oversized MP4 moov is rejected without unbounded metadata downloads', async () => {
+  const header = new Uint8Array(65536);
+  header.set(ftyp, 0);
+  const offset = ftyp.length;
+  new DataView(header.buffer).setUint32(offset, 9 * 1024 * 1024);
+  header.set([0x6d, 0x6f, 0x6f, 0x76], offset + 4); // moov
+  let calls = 0;
+  const metadata = await probeCencKid('https://example.com/too-large.mp4', null,
+    async () => {
+      calls++;
+      return new Response(header, { status: 206, headers: {
+        'Content-Range': 'bytes 0-65535/10000000'
+      } });
+    });
+  assert.equal(metadata, null);
+  assert.equal(calls, 1, 'A giant index must not trigger extra Range or whole-file fetch');
+});
+
 test('reject HTTP 200 instead of buffering a full video', async () => {
   let cancelled = false;
   await assert.rejects(probeCencKid('https://example.com', null, async () =>
