@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inspectMp4TrackFormats } from '../src/mp4-track-formats.js';
+import { inspectMp4TrackFormats, movieDurationSeconds } from '../src/mp4-track-formats.js';
 
 const bytes = text => Uint8Array.from(text, c => c.charCodeAt(0));
 const join = (...parts) => {
@@ -39,4 +39,24 @@ test('malformed boxes cannot claim unsupported audio format as AAC', () => {
   assert.equal(inspectMp4TrackFormats(box('moov',
     box('trak', box('stsd', bytes('mp4a'))))).hasAac, false);
   assert.equal(inspectMp4TrackFormats(new Uint8Array(0)).videoCodec, null);
+});
+
+test('mvhd duration allows full seekable timeline without downloading video', () => {
+  const payload = new Uint8Array(100);
+  new DataView(payload.buffer).setUint32(12, 1000);
+  new DataView(payload.buffer).setUint32(16, 12000);
+  const moov = box('moov', box('mvhd', payload));
+  assert.equal(movieDurationSeconds(moov), 12);
+  new DataView(payload.buffer).setUint32(12, 0);
+  assert.equal(movieDurationSeconds(box('moov', box('mvhd', payload))), null);
+  assert.equal(movieDurationSeconds(box('moov', box('trak', bytes('mvhd')))), null);
+});
+test('version 1 mvhd duration supports 64-bit integer timescale safely', () => {
+  const payload = new Uint8Array(100);
+  payload[0] = 1;
+  const view = new DataView(payload.buffer);
+  view.setUint32(20, 1000);
+  view.setUint32(24, 0);
+  view.setUint32(28, 18000);
+  assert.equal(movieDurationSeconds(box('moov', box('mvhd', payload))), 18);
 });
