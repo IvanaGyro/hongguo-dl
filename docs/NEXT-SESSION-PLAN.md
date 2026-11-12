@@ -1,5 +1,7 @@
 # 下一個 Session 執行計畫：Hongguo DL 串流播放與穩定性
 
+> **2026-11-12 使用者最新指示（優先於本文件原先的分支／PR 步驟）：此專案之後由 agent 直接在 `main` 提交，不再建立 PR。** 確認 `main` HEAD 與 CI 再逐階段提交 `docs/AGENT-PROGRESS.md`。已開啟的 PR #5 已關閉（未透過 PR 合併），其 23 個提交已直接 fast-forward 到 main；勿重新開啟或建立替代 PR。
+
 更新日期：2026-11-12（Asia/Taipei）
 固定交接入口：docs/AGENT-PROGRESS.md。本文件是**下一階段的工作清單與驗收標準**，不是完成報告。
 原始評估基準 main：fdb2039e68819334946fbc1fb44c3cafea6d61d6。後續 agent 應重新確認 HEAD。
@@ -97,11 +99,11 @@
 
 ### P7 — 建置、發布、CI 與交接機制
 
-1. **立即修復** .github/workflows/cenc-wasm-stream.yml：目前 WASM 資產發布條件僅有 feature/cenc-avio-mse-stream，不會在 main 變動 C bridge 時更新 public/cenc。建議驗證、產物版本鎖定、同一組 JS/WASM 發布、binary SHA256/manifest 與 build artifact 審核；避免把隨意重建的未測版本直接推送 main。
+1. **已實作，仍須驗證新 main CI**：`.github/workflows/cenc-wasm-stream.yml` 的 main 發布，在合成 HEVC/AAC WASM 解碼成功後，才將 JS/WASM/manifest 一起以 GitHub Actions bot 提交 `main`，並以 `workflow_dispatch` 再部署 Pages。`scripts/cenc-wasm-bundle.mjs` 驗證 binary SHA256 及 pin source，部署前也必須通過版本清單驗證。若 push 先觸發的 CI/Pages 在 bot 更新前失敗，須以後續明確的 main workflow run 結論為準，不得掩蓋。
 2. CI 層級：快速 Bun 單元及 Vite build 每 PR；WASM 合成 HEVC/AAC 在有 C/build 變更時；Chromium/Firefox 合成 H.264 真正首影格與 EOF 檢查；長片 seek/記憶體壓測可使用週期性或夜間 CI。真實片源測試必須限量且不得輸出簽名 URL/key，不能變成每個 push 的大量 CDN 請求。
 3. 設定每個階段的停損門檻與可重現失敗用例，避免 agent 卡在輪詢 Actions。對剛觸發的 CI 最多檢查一次即記錄 queued/in_progress + URL；若已失敗再看必要的 job steps/log。不得把 queued 當成功。
-4. **每完成一階段，當下更新 docs/AGENT-PROGRESS.md 並 commit**：分支、commit、scope、測試及 run URL、PASS/FAIL/NOT TESTED、已知問題、下一步。若工作卡住或使用者中斷，本文件須足以讓另一 session 接著執行。
-5. 同步修正 README、docs/cenc-progressive-to-fmp4.md 的舊敘述，新增測試矩陣文檔。合併使用 PR 與明確的 CI 驗收，不覆蓋 main 上其他 agent 的進度。
+4. **每完成一階段，當下直接在 main 更新 docs/AGENT-PROGRESS.md 並 commit**：commit、scope、測試及 run URL、PASS/FAIL/NOT TESTED、已知問題、下一步。若工作卡住或使用者中斷，本文件須足以讓另一 session 接著執行。
+5. 同步修正 README、docs/cenc-progressive-to-fmp4.md 的舊敘述，新增測試矩陣文檔。**不建立 PR**，在 main 上確認最新 HEAD、順序提交並以 Actions 進行驗證；若其他 agent 已先提交，先重新讀取和協調變更，不覆蓋其他進度。
 
 **完成條件：** main 的 WASM 與 JS 核心對應、發布可重現、合成測試常態通過；文件不再宣稱未實作之功能，交接紀錄持續更新。
 
@@ -115,4 +117,4 @@
 
 ## 4. 新 session 的第一個可執行任務
 
-從 main 建立功能分支，先完成 P0 加 P7 的最小變更：核對兩項成功 CI；產出可重現的測試矩陣；修正 main 上 WASM build/publish 的版本一致性，並補一個防止 JS/WASM mismatch 的測試。提交工作與更新 docs/AGENT-PROGRESS.md 後，再開始 P1 的真實 HEVC 播放診斷。不要直接宣稱真實 HEVC 已完成，也不要回頭從零重寫 CENC 解密器。
+**此段原為歷史交接計畫，現改以 main 持續開發：** P0、P7 的版本 manifest／發布 gate、測試矩陣及 P3 初步穩定性修復已提交 main，後續先核對最新 main 的 CI／Pages 結論，再推進 P1 真實 HEVC、P2 任意 seek、P3 長影片壓測。**直接提交 main，不開 PR**。不得直接宣稱真實 HEVC 已完成，也不要重新實作 CENC 解密器。
