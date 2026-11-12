@@ -9,6 +9,7 @@ import { readFileSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { checkAvTimeline } from './bvc2-fixture-timing.mjs';
 
 const fixturePath = process.argv[2];
 assert(fixturePath, 'Usage: node scripts/verify-bvc2-fixture.mjs LOCAL_BVC2.mp4');
@@ -40,7 +41,7 @@ try {
   writeFileSync(localOutput, result);
   const info = JSON.parse(execFileSync('ffprobe', [
     '-v', 'error', '-count_frames',
-    '-show_entries', 'stream=codec_type,codec_name,width,height,nb_read_frames',
+    '-show_entries', 'stream=codec_type,codec_name,width,height,nb_read_frames,start_time,duration',
     '-of', 'json', localOutput
   ], { encoding: 'utf8', maxBuffer: 128 * 1024 }));
   const video = info.streams?.find(track => track.codec_type === 'video');
@@ -50,10 +51,14 @@ try {
     '-nostdin', '-v', 'error', '-i', localOutput, '-f', 'null', '-'
   ], { maxBuffer: 1024 * 1024 });
   const audio = info.streams?.find(track => track.codec_type === 'audio');
+  // A container-level start/end check catches large AAC drift or truncation.
+  // It does not prove frame-level lip synchronization or visual correctness.
+  const avTimeline = checkAvTimeline(video, audio);
   console.log('PASS locally authorized ByteVC2 decode → H.264', JSON.stringify({
     decodedFrames: Number(video.nb_read_frames),
     width: video.width, height: video.height,
     audioCodec: audio?.codec_name || 'none',
+    avTimeline,
     outputBytes: result.byteLength,
     transcodeSeconds: +((performance.now() - started) / 1000).toFixed(2),
     // process memory is an observation, not a guarantee for Android Firefox.
