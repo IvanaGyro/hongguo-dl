@@ -128,7 +128,9 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
     if (probe === 0 && boxes[0]?.type !== 'ftyp') return null;
     for (const box of boxes) {
       if (box.type !== 'moov') continue;
-      if (box.size > MAX_MOOV) return null;
+      if (box.size > MAX_MOOV)
+        throw errorWith('CENC_METADATA_LIMIT',
+          'MP4 索引超過 8 MiB 有界串流安全限制，不能改用整檔下載');
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
         : (await rangeFetch(mediaUrl, box.offset, box.size, signal, fetchImpl)).data;
@@ -336,7 +338,7 @@ export async function openClearKeyStream({
   let kid;
   try { kid = await probeCencKid(url, signal, fetchImpl, metadata); }
   catch (error) {
-    if (signal?.aborted) throw error;
+    if (signal?.aborted || error?.code === 'CENC_METADATA_LIMIT') throw error;
     return declined('mp4-range-or-kid-probe', error);
   }
   if (!kid) return declined('no-cenc-kid');
