@@ -25,16 +25,16 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
     const input = url.searchParams.get('input');
     const many = input === '60' || input === '99';
     const restricted = input === '99';
-    const vvc = input === 'vvc';
+    const vvc = input === '770';
     const count = vvc ? 1 : many ? 60 : 2;
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        kind: 'series', seriesId: vvc ? 'vvc' : restricted ? '99' : many ? '60' : '42',
+        kind: 'series', seriesId: vvc ? '770' : restricted ? '99' : many ? '60' : '42',
         title: vvc ? 'VVC 編碼測試' : restricted ? '受限測試' : many ? '六十集測試' : '播放測試短劇',
         total: count, accessible: restricted ? 5 : count,
         episodes: Array.from({ length: count }, (_, i) => ({
-          vid: vvc ? 'vvc30' : String((many ? 1000 : 101) + i),
+          vid: vvc ? '77030' : String((many ? 1000 : 101) + i),
           index: vvc ? 30 : i + 1, available: !restricted || i < 5
         }))
       })
@@ -42,7 +42,7 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
   }
   if (url.pathname === '/api/source') {
     calls.push(url.searchParams.toString());
-    if (url.searchParams.get('vid') === 'vvc30') return route.fulfill({
+    if (url.searchParams.get('vid') === '77030') return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ variants: [
         { url: 'https://cdn.fqnovelvod.com/hevc-1080.mp4', codec: 'hevc',
@@ -322,7 +322,7 @@ try {
     'Controls should not obscure most of the video on mobile');
   // The actual episode-30 source has encrypted HEVC at 1080p, and encrypted
   // ByteVC2/VVC at 720p. It must fail clearly and BEFORE fetching 720p bytes.
-  await page.goto(base + '?id=vvc', { waitUntil: 'load' });
+  await page.goto(base + '?id=770', { waitUntil: 'load' });
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
   await page.locator('#mode-play').click();
   await page.locator('#player-settings-toggle').click();
