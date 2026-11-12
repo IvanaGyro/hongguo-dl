@@ -93,9 +93,12 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  * before MSE opens; Worker output waits for sourceopen/SourceBuffer ACKs.
  */
 export async function openCencProgressiveStream({
-  video, url, fileSize, codec, hasAac, key, signal
+  video, url, fileSize, codec, hasAac, key, signal,
+  startSeconds = 0, durationSeconds = null
 }) {
   if (!/^[a-f0-9]{32}$/i.test(key || '')) return null;
+  if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
+    throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
   const videoCodec = codec === 'hevc' ? 'hvc1' :
     codec === 'h264' ? 'avc1.42E01E' : null;
   if (!videoCodec) return null;
@@ -192,6 +195,11 @@ export async function openCencProgressiveStream({
       if (data.type === 'init') {
         if (buffer) throw new Error('Duplicate MSE init');
         buffer = ms.addSourceBuffer(mime);
+        // An empty-moov mux cannot signal the complete episode duration.
+        // Set the original MP4 mvhd timeline to make distant seeks possible
+        // before those media segments have been downloaded.
+        if (Number.isFinite(durationSeconds) && durationSeconds > 0)
+          ms.duration = durationSeconds;
       }
       if (!buffer) throw new Error('Missing MSE initialization');
       await append(new Uint8Array(data.bytes));
@@ -199,7 +207,17 @@ export async function openCencProgressiveStream({
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(() => fail('source-buffer'));
   };
-  worker.postMessage({ type: 'start', url, fileSize, key });
+  worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });
+  const seekTo = async seconds => {
+    if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+    await close();
+    const replacement = await openCencProgressiveStream({
+      video, url, fileSize, codec, hasAac, key, signal,
+      startSeconds: seconds, durationSeconds
+    });
+    if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
+    return replacement;
+  };
   return { url: objectUrl, kind: 'cenc-remux',
-    close, mime, finished: () => finished };
+    close, seekTo, mime, durationSeconds, finished: () => finished };
 }
