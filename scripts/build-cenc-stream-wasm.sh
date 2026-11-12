@@ -35,7 +35,7 @@ emcc "$ROOT/scripts/cenc-stream-remux.c" \
   -s ASYNCIFY=1 -s ASYNCIFY_STACK_SIZE=65536 \
   -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=33554432 \
   -s MAXIMUM_MEMORY=536870912 \
-  -s "EXPORTED_FUNCTIONS=['_cenc_stream_remux','_cenc_remux_available','_cenc_remux_error']" \
+  -s "EXPORTED_FUNCTIONS=['_cenc_stream_remux','_cenc_stream_remux_at','_cenc_remux_available','_cenc_remux_error']" \
   -s "EXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString']" \
   -o "$OUTPUT/dist/cenc-core.mjs" > "$OUTPUT/link.log" 2>&1 || {
     tail -120 "$OUTPUT/link.log"; exit 1;
