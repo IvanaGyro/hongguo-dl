@@ -72,9 +72,8 @@ try {
     const mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
     return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime);
   });
-  if (!available) {
-    console.log('SKIP: ' + browserName + ' does not support synthetic H264/AAC fMP4');
-  } else {
+  assert(available, browserName + ' runner must support H264/AAC MSE for this acceptance test');
+  {
     await page.evaluate(() => {
       const video = document.querySelector('#player-video');
       window.__cencFrame = null;
