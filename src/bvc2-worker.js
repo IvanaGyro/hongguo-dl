@@ -1,19 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Single-job worker: canceling playback terminates the entire WASM instance.
 import { readLimitedAsset } from './cenc-bundle.js';
+import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
 self.onmessage = async ({ data }) => {
   let core = null;
   try {
     const base = new URL(import.meta.env.BASE_URL + 'bvc2/', self.location.href);
     const moduleUrl = new URL('bvc2-core.mjs', base);
     const wasmUrl = new URL('bvc2-core.wasm', base);
-    const [{ default: createModule }, response] = await Promise.all([
-      import(/* @vite-ignore */ moduleUrl.href),
+    const manifestResponse = await fetch(new URL('manifest.json', base),
+      { cache: 'no-store' });
+    const manifest = JSON.parse(new TextDecoder().decode(
+      await readLimitedAsset(manifestResponse, 4096)));
+    if (typeof manifest?.files?.['bvc2-core.mjs'] !== 'string' ||
+        typeof manifest?.files?.['bvc2-core.wasm'] !== 'string')
+      throw new Error('BVC2 release manifest missing core filenames');
+    // Cache-busted filenames and hashes prevent JS from being loaded from
+    // one Pages revision while WASM is loaded from another.
+    moduleUrl.searchParams.set('v', manifest.files['bvc2-core.mjs']);
+    wasmUrl.searchParams.set('v', manifest.files['bvc2-core.wasm']);
+    const [moduleResponse, wasmResponse] = await Promise.all([
+      fetch(moduleUrl, { cache: 'force-cache' }),
       fetch(wasmUrl, { cache: 'force-cache' })
     ]);
-    // CDN/Pages can omit or lie about Content-Length. Never allocate an
-    // unbounded WASM body from response.arrayBuffer() in an experiment.
-    const wasmBinary = await readLimitedAsset(response, 32 * 1024 * 1024);
+    const [moduleBytes, wasmBinary] = await Promise.all([
+      readLimitedAsset(moduleResponse, 1024 * 1024),
+      readLimitedAsset(wasmResponse, 32 * 1024 * 1024)
+    ]);
+    await verifyBvc2RuntimeBundle(manifest, moduleBytes, wasmBinary);
+    const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
     core = await createModule({ wasmBinary });
     if (core._bvc2_decoder_available() !== 1)
       throw new Error('WASM 未包含 BVC2 解碼器與 x264 編碼器');
