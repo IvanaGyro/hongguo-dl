@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 65）
+# Hongguo DL — 目前狀態（2026-11-13，階段 66）
 
 > **執行規則**：只在 `main` 直接提交，不建立 PR。每個獨立階段先程式／測試，再更新 `docs/AGENT-PROGRESS.md` 與本短版並繼續。GitHub Actions 狀態只作有限度單次查詢；不可把 pending 寫成 PASS。不得記錄 signed media URL、CENC key、私有影片／使用者識別碼。
 
 ## 最新工作及 CI 證據
+
+- **階段 66 Firefox headless PCM CI 音效後端**：[e79ecf0](https://github.com/IvanaGyro/hongguo-dl/commit/e79ecf0b185498b545a8224ea748f15a5d0528b3) 設 Firefox 測試專用 `media.autoplay.block-webaudio=false` 並記錄 trustedClick、AudioContext state、video paused/muted/error（只含匿名布林/狀態）；[0de621e](https://github.com/IvanaGyro/hongguo-dl/commit/0de621efa13ea2b6ac0e61cbe80986f39424b086) 在 **fast suite** 明確啟動 PulseAudio + null sink，消除 Linux GitHub runner 無實體音效卡的潛在卡住因素，**仍要求 Web Audio PCM 真正非靜音**。此版 [Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) 首查 pending；不寫成功。較早 e79 [Browser #43301202933](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301202933) 被 concurrency 取消，**不是測試 FAIL/PASS**。
 
 - **階段 65 復原後 AAC 實際 PCM 驗收**：[23bef1e](https://github.com/IvanaGyro/hongguo-dl/commit/23bef1edd0c003fac3b2d0b5c834f4269ab445f5)：將 Web Audio PCM 檢驗整理成同一函式，既測 initial startup，也測 Chromium／Firefox 合成 70s CENC **5 次 unbuffered Seek + 90% reload + 3 次播放/下載切換後**，要求真正有聲音輸出，非僅 currentTime 增加。新版 Browser E2E **PENDING**。
 - **階段 64 點擊修復未過 Firefox**：[Browser #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) fast job 131470285731 **FAIL**：Chromium 440 Hz sine AAC PCM 再次 PASS（RMS 0.08855、25/25 非靜音）；Firefox 即使使用 Playwright 點擊仍 `waitForFunction(context.state === running)` 6s timeout。原因可能是 Firefox Web Audio autoplay 或 headless audio backend，尚未證明 Firefox 沒有 AAC 解碼能力。
@@ -17,7 +19,7 @@
 
 既有 **Librempeg Asyncify AVIO WASM** 解密 progressive CENC MP4 並無損 remux 為 clear fMP4，透過 MSE 播放；`hvc1/hev1` codec tag 依 pinned WASM 實際輸出 init 決定。CENC 來源 403／429／無效 206 不得 fallback 成整檔下載。BVC2 獨立實驗性整檔 WASM 解碼＋x264 路徑，沒有真實 ByteVC2 正例。
 
-**下一個工程動作**：針對 Firefox Trusted click 後 AudioContext 仍 suspended（新 failure）做 Firefox Web Audio autoplay pref／OS backend 診斷並修正；保持 startup 與遠距 Seek/切換後 AAC PCM 必須兩瀏覽器真 PASS，並更精確歸因 Chromium 9 個 MOV demux 訊息。必要時修正 tests 與 Worker 取消競態，保留強制合成 E2E。僅在具體失敗時讀相關 Actions log，不連續輪詢。
+**下一個工程動作**：取得階段 66 Browser fast 的真實 Firefox WebAudio PCM 結論（PulseAudio/null sink + 明確允許 Web Audio）；若 still fails 只讀實際 job log 的匿名 browser state 診斷並修。startup 和 5 次遠距 Seek/3 次模式切換後都須有真正 AAC PCM 正例；另持續歸因 Chromium 9 個 MOV demux 警訊。必要時修正 tests 與 Worker 取消競態，保留強制合成 E2E。僅在具體失敗時讀相關 Actions log，不連續輪詢。
 
 **外部未驗（NOT TESTED）**：具合法 HTTP 206 的真實紅果 HEVC CENC（先前 CDN 403）、Windows/Android HEVC MSE 實機首影格與 AAC／完整播放、真正 ByteVC2 bitstream frame decode/性能。合成證據不能取代真實裝置。
 
