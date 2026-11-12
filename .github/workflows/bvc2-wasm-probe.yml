@@ -41,4 +41,5 @@ jobs:
             /tmp/hongguo-bvc2-transcode/*-configure.log
             /tmp/hongguo-bvc2-transcode/*-build.log
             /tmp/hongguo-bvc2-transcode/build-manifest.txt
+            /tmp/hongguo-bvc2-transcode/librempeg-config-debug.log
           if-no-files-found: warn

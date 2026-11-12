@@ -53,7 +53,8 @@ emconfigure ./configure \
     tail -60 "$OUTPUT/librempeg-configure.log"
     echo '---- pkg-config / compiler probe diagnostics ----'
     if [[ -f ffbuild/config.log ]]; then
-      grep -A30 -B8 -E 'x264_encoder_encode|libx264|ERROR: x264' ffbuild/config.log | tail -180 || true
+      grep -F -A35 -B12 'x264_encoder_encode' ffbuild/config.log | tail -110 || true
+      grep -F -A15 -B5 'check_pkg_config libx264' ffbuild/config.log | tail -60 || true
       cp ffbuild/config.log "$OUTPUT/librempeg-config-debug.log"
     fi
     exit 1
