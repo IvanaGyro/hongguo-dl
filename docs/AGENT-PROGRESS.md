@@ -195,3 +195,12 @@
 - **[1015fc6](https://github.com/IvanaGyro/hongguo-dl/commit/1015fc6500b533586f6088694f8a92ca2089c4b9)**：`tests/cenc-stream.browser.mjs` 新增 `CENC_TEST_STRESS=1`，使用影片元素 8x 速實際播放到 300 秒 EOF，逐次記錄 `buffered` 區間總秒數、ahead 時長、採樣數、影片 error/ended，要求播放結束、沒有整檔無 Range 下載、`maxBufferedSpan < 120s`、`maxBufferedAhead < 90s`。這驗證 MSE window 回收，不等於已測 OS/GPU RSS。
 - **[9cbca45](https://github.com/IvanaGyro/hongguo-dl/commit/9cbca45910dc2fcc79b96e779ac59c70e1d6c456)**：Browser workflow 自產 300 秒 480x270、12fps、H.264/AAC CENC progressive 合成 fixture；執行 Chromium 300 秒影片實播與上面有界 MSE 測試。保留既有 Chromium/Firefox 15s EOF 前首影格、70s 55秒/10%/50%/90% RAP seek 和 reload。首次長片測試以 Chromium 進行，Firefox 300 秒及硬體 RAM 仍未驗證。
 - **狀態**：以上新 10/50/90% 與 300 秒測試尚未讀取 completed browser run；不得預先標記 PASS。優先繼續強化取消與錯誤恢復，後續若 workflow failed 只讀失敗 step/log 修復，避免輪詢造成工作停滯。
+
+## 階段 17 — 2026-11-13 P1 1080p synthetic proof、metadata abort 與離開播放模式關閉串流（已提交，回歸待確認）
+
+- **metadata HTTP Range cancellation**：`a1533b7` 調整 `src/clear-key.js` metadata/KID Range：abort 時立即 `reader.cancel()`、清理 listener/lock，response 到達但已取消時立即取消，不會等下一個 chunk。`e0fa710` 補上 mock 永遠不送資料的 206 stream，在切集 abort 後應立即 reject 與 cancel 的測試。新測試待 CI 驗證。
+- **真正 1080p HEVC CENC 合成 proof（非真實來源）**：`758c524` 擴充 WASM proof workflow：生成 1920×1080 HEVC/AAC CENC encrypted MP4，經 pinned Librempeg WASM 做 stream copy，核對 FFmpeg 輸出可解碼以及 FFprobe video codec/1920×1080、AAC。此為測試新輸出尺寸，**目前尚未取得 CI PASS；不代表任何瀏覽器能解碼 HEVC 或真實 CDN 206**。
+- **版本化驗收矩陣**：`0b613d6` 更新 `docs/CENC-TEST-MATRIX.md`，刪掉已過時的 PR / feature 分支工作流程與不正確的 NOT TESTED 舊狀態，記錄 Chromium/Firefox 合成 55 秒 Seek + reload 的成功證據，保留 10/50/90% 和 300 秒為待驗證。
+- **離開播放頁釋放串流**：`30537f3` 在 `src/player.js` 新增 `deactivate()`，切換至下載模式時 abort 目前 Episode Worker/Range、停止來源、清除 prefetch 並保存進度；返回播放時重新從 progress 以 Range 建立串流但不強制 autoplay。 `65b539c` 的 `src/main.js` 模式切換改為使用 deactivate 而非純 pause。注意普通播放器內的 pause 仍維持緩衝／backpressure，不會關閉串流。
+- **模式切換 E2E**：`0151b15` 在 70s synthetic Chromium/Firefox 回歸後加入從 90% 續播切到 download，斷言 video src 清除且 800ms 不再發出新媒體請求，再切回播放要求成功恢復原位置與 bounded Range。 `0554a29` 增加 main/mode/Range 修改對 `cenc-browser.yml` 的 path trigger。**尚未得到該新增測試的成功結論**。
+- **後續**：優先檢查已完成的新增 CI 一次，若失敗只讀失敗 job；修正至通過後再完成 P3 長片 RAM 而非純 buffer 秒數、真實 HEVC 可用端點 / Windows or Android 測試與 ByteVC2；每階段更新文件而不是停工。所有提交直接 main，無 PR。
