@@ -224,3 +224,11 @@
 - **P1 1080p proof 一次失敗並已修復**：[WASM #43278673487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43278673487) 在產生 1080p 合成樣本時因測試 key 輸入 17 bytes（`Invalid encryption key len 17 expected 16`）fail，而非 HEVC decoder fail。已提交 [4099507](https://github.com/IvanaGyro/hongguo-dl/commit/40995072764b86f7a13d7304d462b60daa95b43f) 改為正確 16-byte key。修復後 [WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089) 最後 snapshot **in_progress**，不可事先標記 PASS。
 - **BVC2 驗證**：[workflow #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447) 最後 snapshot **in_progress**；包含 C decoder 無 frame 拒絕邏輯及 genuine H264 negative fixture。**不是有效 ByteVC2 positive video，仍不得聲稱可用**。
 - **後續立即繼續**：更新 `docs/CENC-TEST-MATRIX.md` 的完成欄位，執行 1080p WASM proof 修復驗收、BVC2 negative tests、擴充取消時 Worker 零殘留／Firefox 長片測試或必要硬體檢查；不因本文件完成而停止。所有修改直接 main，無 PR。
+
+## 階段 20 — 2026-11-13 P1 合成 1080p HEVC/AAC 無損 CENC remux PASS（繼續完成後續驗收）
+
+- [Progressive CENC WASM proof #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)，job `131396947932`，**completed/success**；已讀實際 PASS 行：合成 `1920×1080 HEVC/AAC CENC progressive MP4` → Librempeg WASM remux clear fMP4，FFmpeg 可解碼，FFprobe 確認 `codec_name=hevc`、`1920×1080`、AAC，`PASS synthetic 1080p HEVC/AAC lossless CENC stream copy`。合成來源首個 moof 前未讀到 HTTP EOF。
+- 同 run 的 HEVC 6 秒 seek PTS 驗收 **PASS first output video PTS 6**；Node 測試 **12 pass / 0 fail**。已成功生成、校驗並發布對應 JS/WASM/manifest。
+- 此成功已修復前一 run 的**測試夾具加密 key 寫成 17 bytes** 錯誤（[4099507](https://github.com/IvanaGyro/hongguo-dl/commit/40995072764b86f7a13d7304d462b60daa95b43f)），不是 HEVC 修補。
+- **嚴格的完成邊界**：**P1 合成 1080p HEVC 無損轉封裝已通過**，但真實紅果 HEVC HTTP 206、Windows 瀏覽器硬體 decoder、Android Firefox、真實音畫/EOF 前起播/完整播畢 **NOT TESTED**；不能把合成 FFmpeg 可解碼誤稱瀏覽器 HEVC 已驗證。
+- 下一步繼續：記錄於 CENC test matrix；BVC2 native+x264 false positive/zero-frame 測試仍待單次確認；加強真實設備驗收與產物一致性。
