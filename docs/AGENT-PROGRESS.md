@@ -356,3 +356,11 @@
 - 後續 [Browser #43285424033](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285424033)（含 CENC_TEST_PAUSE=1 的較早最新版）當次查詢仍 **in_progress**；[Browser #43286523184](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523184)（採用最新 CENC asset retry 程式）當次 **pending**。只確認各一次，不等待或重複輪詢；任何 run 完成後只有讀到實際 `PASS chromium paused CENC HTTP Range backpressure and playback resume` 才能改標 PASS。
 - 其他外部阻礙與 stage 34 相同：真實紅果 HEVC 206 來源、Windows／Android MSE HEVC 解碼與 ByteVC2 正例仍無獨立證據。不要拿 Chromium 合成的 1800s H.264 PASS 替代真實測試。
 - 下一步：修正仍殘留的原始碼／文件陳舊說明，持續稽核 CENC Range/Worker 失敗處理；有具體例外可寫回歸才改程式；定期留下 checkpoint 而不讓 GitHub 查詢卡住工作。
+
+## 階段 36 — 2026-11-13 更新交接總覽／技術研究中的 1800s 狀態，避免下一輪重做
+
+- [15af1aa](https://github.com/IvanaGyro/hongguo-dl/commit/15af1aab320e861d0ce149053db12e406703f412) 同步更新 `docs/NEXT-SESSION-PLAN.md`：**30 分鐘 synthetic Chromium 1800s = PASS**，由 Browser #43283216947 驗證；不再誤列待驗。同時繼續區分 pending `CENC_TEST_PAUSE=1` 與真實 HEVC／Android／ByteVC2。
+- [d6fbdd8](https://github.com/IvanaGyro/hongguo-dl/commit/d6fbdd82c7124ae887b889a437ae7fb175785dfe) 同步 `docs/cenc-progressive-to-fmp4.md`，將原先「8MiB moov 修補待驗」明確改成已完成 1800s Chromium 16× stream + bounded MSE；保留 Linux RSS 精確性限制與尚缺的 pause / 真實來源證據。
+- 目前重點程式 HEAD（不含後續文件提交）`205dc024c8d190df8162995e26d7191be1e11071`：BVC2/CENC optional WASM availability probe 已改為 transient fail 可重試；相應 [CI #43286523179](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43286523179) **completed/success**。
+- **仍待**：Browser #43285424033 的 `CENC_TEST_PAUSE=1` 具體 PASS；另一個排隊的新版 browser #43286523184；真的 1080p HEVC MSE／Android／ByteVC2 正例及其音畫／效能。若讀到 Browser 成功，但沒有 `paused CENC` PASS 日誌，不得標為暫停驗收。
+- 交接改善：因 AGENT-PROGRESS 已很長，下一步新增一份精簡「目前狀態」入口，讓被中斷的 agent 用少量 GitHub 操作即可取得最新待辦；日誌仍保留完整階段歷史。
