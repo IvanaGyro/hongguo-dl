@@ -60,4 +60,23 @@ test('CENC startup releases object URLs on Worker constructor and postMessage fa
   assert.deepEqual(revoked, minted, 'Failed postMessage left an object URL active');
   assert.equal(terminated, 1, 'Failed startup must terminate Worker');
   assert.equal(minted.length, 2);
+
+  // Some browsers reject a bare "hvc1" declaration but accept a full
+  // profile/compatibility/tier/level codec string on an MSE SourceBuffer.
+  // canPlayType('hvc1') must not veto that precise MSE capability.
+  let selectedMime = null;
+  globalThis.MediaSource.isTypeSupported = mime => {
+    selectedMime = mime;
+    return mime === 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"';
+  };
+  globalThis.Worker = class {
+    constructor() { throw new Error('synthetic Worker construction failure'); }
+  };
+  await assert.rejects(openCencProgressiveStream({
+    ...base, codec: 'hevc', videoCodecString: 'hvc1.2.4.L120.90',
+    video: { canPlayType: () => '' }
+  }), /Worker 無法建立/);
+  assert.equal(selectedMime, 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"');
+  assert.deepEqual(revoked, minted);
 });
+
