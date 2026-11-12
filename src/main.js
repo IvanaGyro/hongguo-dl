@@ -31,6 +31,7 @@ import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 import { renditionForAttempt, codecId } from './source-options.js';
+import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
 const $ = id => {
   const element = document.getElementById(id);
@@ -713,6 +714,33 @@ async function startBulk(type) {
     renderQueue();
   }
 }
+let latestCodecDiagnostics = '';
+$('codec-diag-run').addEventListener('click', async () => {
+  const button = $('codec-diag-run');
+  button.disabled = true;
+  $('codec-diag-results').textContent = '正在查詢本機瀏覽器的媒體能力…';
+  $('codec-diag-copy').hidden = true;
+  latestCodecDiagnostics = '';
+  try {
+    const report = await inspectCodecCapabilities();
+    latestCodecDiagnostics = JSON.stringify(report, null, 2);
+    $('codec-diag-results').textContent = latestCodecDiagnostics;
+    $('codec-diag-copy').hidden = false;
+  } catch {
+    $('codec-diag-results').textContent = '無法讀取此瀏覽器的媒體能力宣告。';
+  } finally {
+    button.disabled = false;
+  }
+});
+$('codec-diag-copy').addEventListener('click', async () => {
+  if (!latestCodecDiagnostics) return;
+  try {
+    await navigator.clipboard.writeText(latestCodecDiagnostics);
+    $('codec-diag-copy').textContent = '✓ 已複製';
+  } catch {
+    $('codec-diag-copy').textContent = '無法複製；請手動選取';
+  }
+});
 $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
