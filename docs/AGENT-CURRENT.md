@@ -37,3 +37,9 @@
 - main 程式修復：[`618bbab`](https://github.com/IvanaGyro/hongguo-dl/commit/618bbab523513ff01ce60143752616c75cc90bf5) 修正 HEVC 單測括號；[CI #43289090142](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289090142) **completed/success**，包含 Bun 全測試、雙 WASM verify、Vite Pages build、Wrangler dry-run 與 Worker cold-start；本地 Node `--check` PASS。
 - [Pages #43289089908](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289089908) 查詢時 **in_progress**，不是 PASS；後續 docs 或 code push 可能取消早一個 deploy。
 - **立即恢復點**：審查 `src/player.js` 對 HEVC 使用泛用 `hvc1` `canPlayType` 的 guard，與 `src/cenc-remux.js` 精確 `hvc1.<profile>...` MSE 判斷的語意，補回歸測試並直接 main 提交。不得用 HEVC MIME 宣告成功推論實際解碼或真實素材驗證。
+
+## 最新工程 checkpoint（階段 40，2026-11-13）
+
+- 新程式碼 main [`08258a8`](https://github.com/IvanaGyro/hongguo-dl/commit/08258a841183b67311c53672a37ac3315cfe960d)：修正 HEVC 在來源選擇時被泛用 `hvc1` `canPlayType` 否決的問題。採用 Main/Main10 **完整 MSE MIME 暫定探測**，實際接受仍以有界 moov hvcC + 精確 MSE 為準；不推論硬體解碼。新增三個 `tests/hevc-rendition.test.mjs` 回歸，本地等價 Node 測試 3/3 PASS。
+- 新 [CI #43289873073](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873073)、[Pages #43289873079](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873079)、[Browser #43289873014](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873014) 首次查詢均 **in_progress**；不得冒稱 PASS。上一程式修補的 [CI #43289090142](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289090142) 確實 PASS。
+- **立即恢復點**：檢查 clear fMP4 init HEVC hvcC/sample entry 與建立的 SourceBuffer MIME 一致性，驗證 Seek 帶入同一完整 codec；有具體錯誤才修。真實紅果 HEVC / Android / ByteVC2 正例仍 NOT TESTED。
