@@ -22,16 +22,19 @@ page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text());
 page.route(url => url.pathname.startsWith('/api/'), route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/series') {
-    const many = url.searchParams.get('input') === '60';
+    const input = url.searchParams.get('input');
+    const many = input === '60' || input === '99';
+    const restricted = input === '99';
     const count = many ? 60 : 2;
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        kind: 'series', seriesId: many ? '60' : '42',
-        title: many ? '六十集測試' : '播放測試短劇',
-        total: count, accessible: count,
+        kind: 'series', seriesId: restricted ? '99' : many ? '60' : '42',
+        title: restricted ? '受限測試' : many ? '六十集測試' : '播放測試短劇',
+        total: count, accessible: restricted ? 5 : count,
         episodes: Array.from({ length: count }, (_, i) => ({
-          vid: String((many ? 1000 : 101) + i), index: i + 1, available: true
+          vid: String((many ? 1000 : 101) + i), index: i + 1,
+          available: !restricted || i < 5
         }))
       })
     });
@@ -86,8 +89,11 @@ try {
   await page.goto(base + '?id=42&id=60', { waitUntil: 'load' });
   await page.locator('button[data-linked-id="60"]').waitFor({ state: 'visible', timeout: 30000 });
   assert.equal(await page.locator('#series-title').textContent(), '播放測試短劇');
+  assert.deepEqual(await page.locator('#episodes label > span').allTextContents(), ['1', '2']);
   assert.equal(await page.locator('button[data-linked-id]').count(), 2);
   await page.locator('#mode-play').click();
+  assert.deepEqual(await page.locator('#episodes button.play-episode > span:first-child').allTextContents(),
+    ['1', '2']);
   await page.locator('#player-panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
@@ -138,6 +144,14 @@ try {
   assert.equal(await page.locator('#queue [data-action="save"]').count(), 2);
   assert.equal(await page.locator('#queue .job-filename').count(), 0,
     'Download queue must not display output filenames');
+  assert.deepEqual(await page.locator('#queue .job-topline b').allTextContents(),
+    ['播放測試短劇 · 第 1 集', '播放測試短劇 · 第 2 集']);
+  assert.deepEqual(await page.locator('#queue .status.s-completed').allTextContents(),
+    ['可匯出', '可匯出']);
+  assert.equal(await page.locator('#queue .job-meta').count(), 0,
+    'Completed default-quality jobs should not repeat status or storage details');
+  assert.equal(await page.locator('.export-hint').count(), 0);
+  assert.equal(await page.locator('footer').count(), 0);
   const localDownload = page.waitForEvent('download', { timeout: 30000 });
   await page.locator('#queue button[data-action="save"]').first().click();
   const individual = await localDownload;
@@ -175,6 +189,12 @@ try {
   await page.locator('#queue-select-none').click();
   await page.locator('#add-queue').click();
   await waitCompleted(62, 180000);
+  const titles = await page.locator('#queue .job-topline b').allTextContents();
+  const sixty = titles.filter(x => x.startsWith('六十集測試 · '));
+  assert.equal(sixty.length, 60);
+  assert.equal(sixty[0], '六十集測試 · 第 1 集');
+  assert.equal(sixty[59], '六十集測試 · 第 60 集');
+  assert(!titles.some(x => /第 00\d 集/.test(x)), 'Queue must not display filename zero-padding');
   const selected = await page.locator('#queue input[data-export-id]:checked').count();
   assert.equal(selected, 60, 'Only newly queued 60 episodes selected for export');
   const beforeFullZip = downloadEvents;
@@ -184,6 +204,13 @@ try {
   assert.equal(downloadEvents, beforeFullZip + 1);
   const fullPath = await fullZip.path();
   await zipInspect(fullPath, 60, '六十集測試.E01.mp4', '六十集測試.E60.mp4');
+  await page.goto(base + '?id=99', { waitUntil: 'load' });
+  await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === '受限測試');
+  assert.match(await page.locator('#series-count').textContent(), /55 集可能受限制/);
+  assert.equal(await page.locator('#episodes small').count(), 0);
+  assert.equal(await page.locator('#episodes label').nth(5).textContent(), '6');
+  assert.match(await page.locator('#episodes label').nth(5).locator('input').getAttribute('aria-label'),
+    /可能受限制/);
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);
