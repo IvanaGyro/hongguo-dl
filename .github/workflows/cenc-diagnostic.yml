@@ -1,0 +1,43 @@
+name: Isolated CENC demux diagnosis
+on:
+  push:
+    branches: [investigate/cenc-demux-path]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --prefix /tmp/cenc-runtime playwright@1.58.0
+      - run: /tmp/cenc-runtime/node_modules/.bin/playwright install --with-deps chromium firefox
+      - name: Build clear, progressive CENC, fragmented CENC fixtures
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
+          mkdir /tmp/cenc-fixtures
+          ffmpeg -v error -f lavfi -i testsrc=size=480x270:rate=24 -t 8 -c:v libx264 -preset ultrafast -crf 15 -pix_fmt yuv420p -g 24 -movflags +faststart -y /tmp/cenc-fixtures/clear.mp4
+          ffmpeg -v error -i /tmp/cenc-fixtures/clear.mp4 -c copy -encryption_scheme cenc-aes-ctr -encryption_key 00112233445566778899aabbccddeeff -encryption_kid 11223344556677889900aabbccddeeff -movflags +faststart -y /tmp/cenc-fixtures/ffmpeg-cenc.mp4
+          curl -fLsS --retry 2 https://github.com/shaka-project/shaka-packager/releases/download/v3.9.3/packager-linux-x64 -o /tmp/packager
+          echo '7a3cf35ad146fd7810b4ededab363c8a3e6121d1b2c8391f53863126186f9ee6  /tmp/packager' | sha256sum -c
+          chmod +x /tmp/packager
+          /tmp/packager in=/tmp/cenc-fixtures/clear.mp4,stream=video,output=/tmp/cenc-fixtures/shaka-cenc.mp4 --enable_raw_key_encryption --keys label=:key_id=11223344556677889900aabbccddeeff:key=00112233445566778899aabbccddeeff --protection_scheme cenc --clear_lead 0
+          ffmpeg -v error -i /tmp/cenc-fixtures/clear.mp4 -c copy -movflags +frag_keyframe+empty_moov+default_base_moof -y /tmp/cenc-fixtures/clear-fragmented.mp4
+      - name: Compare direct URL versus MSE without app or fallback
+        env:
+          NODE_PATH: /tmp/cenc-runtime/node_modules
+          CENC_FIXTURE_DIR: /tmp/cenc-fixtures
+        run: |
+          set -o pipefail
+          CENC_BROWSER=chromium node diagnostics/cenc-matrix.cjs clear.mp4 clear-fragmented.mp4 ffmpeg-cenc.mp4 shaka-cenc.mp4 | tee /tmp/chromium.jsonl
+          CENC_BROWSER=firefox node diagnostics/cenc-matrix.cjs clear.mp4 clear-fragmented.mp4 ffmpeg-cenc.mp4 shaka-cenc.mp4 | tee /tmp/firefox.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cenc-matrix
+          path: /tmp/*.jsonl
