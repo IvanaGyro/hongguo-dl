@@ -92,7 +92,11 @@ try {
         video.requestVideoFrameCallback(record);
       else video.addEventListener('timeupdate', record, { once: true });
     });
+    await page.waitForFunction(() =>
+      document.querySelector('#series-title')?.textContent?.includes('CENC streaming fixture'),
+      null, { timeout: 30000 });
     await page.locator('#mode-play').click();
+    await page.locator('#episodes button.play-episode').first().click();
     try {
       await page.waitForFunction(() => document.querySelector('#player-source-info')
         ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 20000 });
