@@ -428,3 +428,12 @@
 - **WASM proof 補強**：`scripts/verify-cenc-stream-wasm.mjs` 已在現有 synthetic HEVC/AAC、1080p 和 Seek proof 中直接解析 pinned Librempeg 輸出 `ftyp+moov` 及原始 encrypted moov `hvcC`，執行 `assertHevcInitCodecMatches()` 並輸出 `PASS pinned Librempeg HEVC init MIME compatibility`，避免再以原生 FFmpeg 猜測產物 tag。HEVC 真實瀏覽器解碼仍未驗。
 - **PENDING**：[CI #43291965366](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965366) 首次查詢 `in_progress`；[Pages #43291965210](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965210) `queued`；[WASM #43291965388](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965388) `in_progress`；[Browser #43291965317](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965317) `pending`。不可宣稱最新 proof 或瀏覽器 PASS。
 - **限制與下一個具體工程動作**：對 pinned WASM 的 `hev1`／`hvc1` 真實輸出仍待新 proof 確證；修正單測需由最新 CI 驗收。優先對此改動做一次失敗定位（如果 CI FAIL），補 MSE fake SourceBuffer 接受/拒絕實際 `hev1` 的單元回歸，然後繼續長暫停與切集資源管理。全程不記錄 signed URL/key，不改 WASM 二進位。
+
+
+## 階段 44 — 2026-11-13 補 HEVC 實際 hev1 輸出經 MSE 的正負例與前置選片探測
+
+- **目標／改動**：階段 43 將 fMP4 的 **實際** clear sample entry 當成 MSE MIME 權威；本階段補齊先前 `HEVC_MSE_PROBES` 只列 `hvc1`、導致只有 `hev1` MSE 能力時仍被播放來源篩選排除的遺漏。[63c19b9](https://github.com/IvanaGyro/hongguo-dl/commit/63c19b9c5e6902a69412deda3957acf1aea49bc1) 直接 main 修改 `src/source-options.js`、`tests/hevc-rendition.test.mjs`，包含 Main/Main10 的 `hev1` 及 `hvc1` 有界暫定能力 probe；未加密來源仍不得僅憑 MSE 宣告當作 native MP4 支援。
+- **新增 runtime MSE 回歸**：[971dbc8](https://github.com/IvanaGyro/hongguo-dl/commit/971dbc88a128513cffbfccc8d73171b9c44c3bfa) 修改 `tests/cenc-startup.test.mjs`，利用 fake MediaSource/Worker 在 `init` 階段送入自行構造 `hev1` fMP4，驗證 SourceBuffer 用真實 `hev1` MIME（不是來源 hvc1）；若只有 `hvc1` 能力則在 append 前中止、terminate worker、revoke Object URL 且分類 decode。未改 Librempeg demux/mux，僅 JS 控制層驗證。
+- **PENDING**：[CI #43292269071](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269071) 於 HEAD `63c19b9` 初查 `in_progress`；[Pages #43292269068](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269068) `in_progress`。不可宣稱新 fake MSE 測試 PASS。
+- **獨立 WASM proof**：階段 43 的 [WASM #43291965388](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965388) 預期在 synthetic HEVC/AAC fixture 上輸出 `PASS pinned Librempeg HEVC init MIME compatibility`，目前未確證通過；**原生 FFmpeg 7.1.5 輸出 hev1 只是一組對照，不等於 pinned Librempeg 結論**。
+- **未驗證限制及下一步**：針對上述 CI 若失敗則依斷言/測試 log 修復；實際 HEVC MSE browser/Android/Windows 裝置 + 合法紅果 206 來源、真實 ByteVC2 bitstream 仍 NOT TESTED。下一個工程動作是加強 403/416/429 HTTP metadata 探測錯誤分類，避免來源拒絕誤標為 HEVC 解碼失敗，並延續取消/模式切換壓測。
