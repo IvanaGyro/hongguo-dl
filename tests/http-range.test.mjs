@@ -62,7 +62,28 @@ test('403, 416 and 429 CDN responses fail immediately without reading a media bo
 test('requesting a Range after AbortSignal cancellation does not consume media', async () => {
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(readVerifiedRange(async () =>
-    okResponse(new Uint8Array(4)), '/api/media', 10, 13, 100, controller.signal),
-  /Canceled/);
+  let calls = 0;
+  await assert.rejects(readVerifiedRange(async () => {
+    calls++;
+    return okResponse(new Uint8Array(4));
+  }, '/api/media', 10, 13, 100, controller.signal), /Canceled/);
+  assert.equal(calls, 0, 'A canceled Range must never call the transport');
+});
+
+test('canceling during an outstanding Range body read releases the stream promptly', async () => {
+  const controller = new AbortController();
+  let canceled = 0;
+  let opened;
+  const stream = new ReadableStream({
+    start() { opened = true; },
+    cancel() { canceled++; }
+  });
+  const pending = readVerifiedRange(async () => {
+    assert.equal(opened, true);
+    return okResponse(stream);
+  }, '/api/media', 10, 13, 100, controller.signal);
+  await Promise.resolve();
+  controller.abort();
+  await assert.rejects(pending, /Canceled/);
+  assert.equal(canceled, 1);
 });
