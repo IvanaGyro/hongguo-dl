@@ -4,7 +4,7 @@
 
 **首選：精簡 Librempeg/Libavformat WASM，經 HTTP Range 增量讀取，CENC 解密後保持 HEVC/AAC 壓縮封包不變，以 MSE 需要的 fMP4 逐段輸出。**
 
-原生 FFmpeg 已實測成功。**瀏覽器 WASM 的非同步讀取與片段輸出尚未實作；本研究不宣稱真實 1080p 已經低延遲播放。**
+原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**紅果實際 1080p HEVC、Android Firefox、任意 seek 和長影片 RAM 尚未驗證**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
 
 ### 已有證據
 
@@ -60,11 +60,12 @@
 5. **seek、續播與清理**：第一版可重新建立 Worker/MediaSource，以最近前一個 IDR/RAP 重新開始，播放進度等 metadata 就緒後恢復；離開播放、切集、中止時立即 abort Range、清空 SourceBuffer、釋放資源。
 6. **錯誤與保密**：區分來源 HTTP 錯誤、CENC 解密錯誤、mux 封裝錯誤、MSE 不支援、HEVC 解碼失敗。不可在控制台記錄 URL 的 signed token、金鑰或實際影片資料。現有整檔 FFmpeg.wasm 保留為備援。
 
-## 下一個驗證門檻
+## 最新驗證狀態與下一步（2026-11-12）
 
-- **已完成**：原生 FFmpeg 對合成 HEVC+Aac CENC progressive 檔成功在來源未讀完前產生可解碼 fMP4。
-- **待做 1：WASM**：編譯僅包含 mov demux / mp4 mux / 必要 CENC crypto 的 Librempeg；在 headless Chromium + Firefox 測試，合成 progressive CENC 輸入尚未 EOF 時真的呈現影格（requestVideoFrameCallback），不得以 loadedmetadata 或整檔 Blob 冒充。
-- **待做 2：HEVC**：在具備 HEVC 解碼能力的設備使用真實 1080p HEVC 測試首影格、影音同步、完整播放、seek、續播。
-- **待做 3：長影片**：300 秒以上，測試 RAM/SourceBuffer 佔用、來源節流、Range 失敗、切集、取消、重試和補抓 keyframe。
+- **已完成**：原生 FFmpeg 合成 HEVC/AAC CENC → clear fMP4，來源 EOF 前產生 moof。
+- **已完成**：[Main WASM proof #9](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230424222) 合成 HEVC/AAC 的 Asyncify 讀取、無損封裝、輸出解碼測試成功。
+- **已完成**：[Main browser acceptance #13](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230870775) 合成 H.264/AAC CENC 的 Chromium/Firefox 真正 MSE 播放，在 HTTP EOF 前呈現首影格並超過 1.5 秒。
+- **未完成**：實際紅果 HEVC 1080p 的可見影格與聲音、Android Firefox 解碼支援、unbuffered seek、續播準確性、長片記憶體與完整錯誤取消處理。
+- **未完成**：main 版 CENC WASM 原始碼與已部署 public/cenc 資產的安全重建／發佈流程；現有 workflow 仍只向 feature 分支發布。
 
-**限制**：MSE 低延遲路徑不可直接沿用現有整集 MEMFS → 輸出 Blob 的 WASM ABI；必須新增增量輸入／輸出的工作執行緒介面。
+以上屬研究背景文件；下一個 session 的工作順序、優先級、程式碼風險與各階段驗收標準請參考 [NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md)。
