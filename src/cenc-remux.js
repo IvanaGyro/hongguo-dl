@@ -107,10 +107,16 @@ export async function openCencProgressiveStream({
       videoCodecString || '') ? videoCodecString : null) :
     codec === 'h264' ? 'avc1.42E01E' : null;
   if (!videoCodec) return null;
-  const mime = 'video/mp4; codecs="' + videoCodec +
+  const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
     (hasAac ? ', mp4a.40.2' : '') + '"';
+  let mime = toMime(videoCodec);
+  // At this point the encrypted source's hvcC is known, but the Librempeg
+  // MOV muxer has not emitted its clear hvc1/hev1 sample entry yet. Permit
+  // either preflight declaration, and require the *actual* init MIME at append.
+  const alternateMime = codec === 'hevc' ? toMime('hev1' + videoCodec.slice(4)) : null;
   if (typeof MediaSource === 'undefined' ||
-      !MediaSource.isTypeSupported?.(mime) ||
+      !(MediaSource.isTypeSupported?.(mime) ||
+        (alternateMime && MediaSource.isTypeSupported?.(alternateMime))) ||
       (codec !== 'hevc' && !video.canPlayType(mime)) ||
       !await cencRemuxAvailable()) return null;
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -216,8 +222,14 @@ export async function openCencProgressiveStream({
       if (closed || failed) return;
       if (data.type === 'init') {
         if (buffer) throw new Error('Duplicate MSE init');
-        if (codec === 'hevc')
-          assertHevcInitCodecMatches(new Uint8Array(data.bytes), videoCodec);
+        if (codec === 'hevc') {
+          const actualCodec = assertHevcInitCodecMatches(
+            new Uint8Array(data.bytes), videoCodec);
+          mime = toMime(actualCodec);
+          if (!MediaSource.isTypeSupported?.(mime))
+            throw Object.assign(new Error('HEVC output MIME unsupported'),
+              { code: 'HEVC_INIT_UNSUPPORTED' });
+        }
         buffer = ms.addSourceBuffer(mime);
         // An empty-moov mux cannot signal the complete episode duration.
         // Set the original MP4 mvhd timeline to make distant seeks possible
@@ -230,7 +242,8 @@ export async function openCencProgressiveStream({
       await waitBufferHeadroom(video, buffer, internal.signal);
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(error => fail(error?.code === 'HEVC_INIT_MISMATCH'
-      ? 'hevc-init-mismatch' : 'source-buffer'));
+      ? 'hevc-init-mismatch' : error?.code === 'HEVC_INIT_UNSUPPORTED'
+        ? 'hevc-init-unsupported' : 'source-buffer'));
   };
   try {
     worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });
@@ -251,5 +264,6 @@ export async function openCencProgressiveStream({
     return replacement;
   };
   return { url: objectUrl, kind: 'cenc-remux',
-    close, seekTo, mime, durationSeconds, finished: () => finished };
+    close, seekTo, get mime() { return mime; },
+    durationSeconds, finished: () => finished };
 }

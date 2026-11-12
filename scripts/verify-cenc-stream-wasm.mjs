@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { hevcCodecStringFromMoov } from '../src/mp4-track-formats.js';
+import { assertHevcInitCodecMatches } from '../src/cenc-init-codec.js';
 
 const [modulePath, wasmPath, fixturePath, outputPath, seekSecondsText = '0'] = process.argv.slice(2);
 const seekSeconds = Number(seekSecondsText);
@@ -58,6 +60,29 @@ for (const tag of ['ftyp', 'moov', 'mvex', 'moof', 'mdat'])
   assert(output.includes(tag), 'missing ' + tag);
 assert(!output.includes('tenc'), 'output still contains encrypted sample entry');
 assert(!output.includes('senc'), 'output still contains sample encryption info');
+// Inspect the actual pinned Librempeg output, not a native FFmpeg guess.
+const topLevelBox = (data, type) => {
+  for (let pos = 0; pos + 8 <= data.length;) {
+    const size = data.readUInt32BE(pos);
+    if (size < 8 || size > data.length - pos) break;
+    if (data.toString('ascii', pos + 4, pos + 8) === type)
+      return data.subarray(pos, pos + size);
+    pos += size;
+  }
+  return null;
+};
+const encryptedMoov = topLevelBox(encrypted, 'moov');
+const expectedHevc = encryptedMoov &&
+  hevcCodecStringFromMoov(new Uint8Array(encryptedMoov));
+if (expectedHevc) {
+  const ftyp = topLevelBox(output, 'ftyp');
+  const clearMoov = topLevelBox(output, 'moov');
+  assert(ftyp && clearMoov, 'HEVC clear fMP4 init not found');
+  const actual = assertHevcInitCodecMatches(
+    new Uint8Array(Buffer.concat([ftyp, clearMoov])), expectedHevc);
+  console.log('PASS pinned Librempeg HEVC init MIME compatibility:',
+    JSON.stringify({ source: expectedHevc, output: actual }));
+}
 if (outputPath) writeFileSync(outputPath, output);
 console.log('PASS progressive CENC -> streaming clear fMP4 WASM:', JSON.stringify({
   inputBytes: encrypted.byteLength, outputBytes: output.length,

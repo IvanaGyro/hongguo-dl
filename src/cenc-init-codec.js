@@ -25,7 +25,13 @@ export function assertHevcInitCodecMatches(bytes, expectedCodec) {
     else throw mismatch();
     pos += size;
   }
-  if (pos !== bytes.length || !ftyp || !moov ||
-      hevcCodecStringFromClearMoov(moov) !== expectedCodec) throw mismatch();
-  return true;
+  if (pos !== bytes.length || !ftyp || !moov) throw mismatch();
+  const actual = hevcCodecStringFromClearMoov(moov);
+  // Librempeg/FFmpeg may write hev1 or hvc1, depending on the MOV muxer.
+  // The output sample entry—not the encrypted input's nominal entry—is the
+  // authority for the SourceBuffer MIME. Profile/level still must match hvcC.
+  const fullCodec = /^(?:hvc1|hev1)\.[A-C]?\d{1,2}\.[A-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[A-F0-9]{2}){0,6}$/;
+  if (!fullCodec.test(actual || '') || !fullCodec.test(expectedCodec) ||
+      actual.slice(4) !== expectedCodec.slice(4)) throw mismatch();
+  return actual;
 }

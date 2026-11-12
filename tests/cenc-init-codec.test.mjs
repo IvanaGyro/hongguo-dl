@@ -35,14 +35,18 @@ const init = (tag = 'hvc1', data = hvcc()) => {
 test('clear HEVC Main10 init matches exact MSE MIME description', () => {
   const data = init();
   assert.equal(hevcCodecStringFromClearMoov(data.moov), 'hvc1.2.4.L120.90');
-  assert.equal(assertHevcInitCodecMatches(data.bytes, 'hvc1.2.4.L120.90'), true);
+  assert.equal(assertHevcInitCodecMatches(data.bytes, 'hvc1.2.4.L120.90'),
+    'hvc1.2.4.L120.90');
 });
 test('hev1 output sample entry must not be relabeled as hvc1', () => {
   const data = init('hev1');
   assert.equal(hevcCodecStringFromClearMoov(data.moov), 'hev1.2.4.L120.90');
-  assert.throws(() => assertHevcInitCodecMatches(data.bytes, 'hvc1.2.4.L120.90'),
-    { code: 'HEVC_INIT_MISMATCH' });
-  assert.equal(assertHevcInitCodecMatches(data.bytes, 'hev1.2.4.L120.90'), true);
+  // The source metadata reports hvc1, but the remuxer may legally emit hev1.
+  // The consumer must use the returned actual tag when creating SourceBuffer.
+  assert.equal(assertHevcInitCodecMatches(data.bytes, 'hvc1.2.4.L120.90'),
+    'hev1.2.4.L120.90');
+  assert.equal(assertHevcInitCodecMatches(data.bytes, 'hev1.2.4.L120.90'),
+    'hev1.2.4.L120.90');
 });
 test('wrong profile and missing hvcC fail before MSE append', () => {
   assert.throws(() => assertHevcInitCodecMatches(init().bytes,
