@@ -185,6 +185,22 @@ jobs:
               }
               console.log("PASS H264/AAC pinned WASM seek strict decode:", second);
             ' "$second" "$output"
+            # Repeat against the production Worker-like 256 KiB window/cache
+            # instead of direct arbitrary-offset Buffer slices.
+            cached="/tmp/cenc-h264-aac-window-${second}.mp4"
+            CENC_VERIFY_WORKER_WINDOW=1 node scripts/verify-cenc-stream-wasm.mjs \
+              /tmp/hongguo-cenc-stream/dist/cenc-core.mjs \
+              /tmp/hongguo-cenc-stream/dist/cenc-core.wasm \
+              tests/fixtures/cenc-h264-aac-70s.mp4 "$cached" "$second"
+            ffmpeg -nostdin -hide_banner -v error -xerror \
+              -i "$cached" -map 0:v:0 -map 0:a:0 -t 3 -f null -
+            node --input-type=module -e '
+              import assert from "node:assert/strict";
+              import {readFileSync} from "node:fs";
+              assert.deepEqual(readFileSync(process.argv[1]), readFileSync(process.argv[2]),
+                "Worker window cache changed the lossless fMP4 bytes");
+              console.log("PASS pinned Worker-window AVIO fMP4 exact output:", process.argv[3]);
+            ' "$output" "$cached" "$second"
           done
       - name: Test box assembly and WASM manifest guards
         run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs

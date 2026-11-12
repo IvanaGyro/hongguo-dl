@@ -17,6 +17,8 @@ const chunks = [];
 const key = '00112233445566778899aabbccddeeff';
 let highestRequested = 0, firstMoofAt = null, calls = 0, outputLength = 0;
 let firstMoofHadNonzeroRange = false, nonzeroMediaRange = false;
+const workerWindow = process.env.CENC_VERIFY_WORKER_WINDOW === '1';
+let cacheStart = -1, cacheBytes = new Uint8Array(0), transportWindows = 0;
 const core = await createCore({
   wasmBinary: readFileSync(wasmPath),
   readRange: async (offset, length) => {
@@ -27,7 +29,21 @@ const core = await createCore({
     calls++;
     // Asynchronous to exercise C AVIO callbacks + Asyncify unwinding.
     await Promise.resolve();
-    return new Uint8Array(encrypted.subarray(offset, Math.min(encrypted.length, offset + length)));
+    if (!workerWindow)
+      return new Uint8Array(encrypted.subarray(offset,
+        Math.min(encrypted.length, offset + length)));
+    // Mirror the production Worker's 256 KiB AVIO HTTP window cache, including
+    // short final windows. Do not substitute native ffmpeg for pinned WASM.
+    if (offset >= cacheStart &&
+        offset + length <= cacheStart + cacheBytes.byteLength)
+      return cacheBytes.subarray(offset - cacheStart,
+        offset - cacheStart + length);
+    const last = Math.min(encrypted.length, offset + Math.max(length, 256 * 1024));
+    cacheStart = offset;
+    cacheBytes = new Uint8Array(encrypted.subarray(offset, last));
+    transportWindows++;
+    highestRequested = Math.max(highestRequested, last);
+    return cacheBytes.subarray(0, length);
   },
   writeChunk: async data => {
     chunks.push(data);
@@ -88,5 +104,6 @@ console.log('PASS progressive CENC -> streaming clear fMP4 WASM:', JSON.stringif
   inputBytes: encrypted.byteLength, outputBytes: output.length,
   firstFragmentReadBytes: firstMoofAt, sourceEofAtFirstFragment: false,
   seekSeconds, firstMoofHadNonzeroRange,
-  calls, moofCount: output.toString('latin1').match(/moof/g)?.length || 0
+  calls, transportMode: workerWindow ? 'worker-256KiB-window' : 'direct-memory',
+  transportWindows, moofCount: output.toString('latin1').match(/moof/g)?.length || 0
 }));
