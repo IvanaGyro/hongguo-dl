@@ -2,11 +2,35 @@
 // Network input is synthetic, locally generated, served as bounded Range requests.
 // Requires the verified cenc-core assets in public/cenc; no Hongguo API calls.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
 
 const input = readFileSync(process.argv[2]);
 const browserName = process.env.CENC_BROWSER === 'firefox' ? 'firefox' : 'chromium';
+function browserProcessTreeRssBytes(rootPid) {
+  if (!Number.isInteger(rootPid)) return null;
+  try {
+    const rows = execFileSync('ps', ['-eo', 'pid=,ppid=,rss='], {
+      encoding: 'utf8', timeout: 2000
+    }).trim().split(/\n/).map(line => line.trim().split(/\s+/).map(Number))
+      .filter(row => row.length === 3 && row.every(Number.isFinite));
+    const descendants = new Set([rootPid]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [pid, ppid] of rows) {
+        if (descendants.has(ppid) && !descendants.has(pid)) {
+          descendants.add(pid);
+          changed = true;
+        }
+      }
+    }
+    return rows.filter(([pid]) => descendants.has(pid))
+      .reduce((sum, [, , rssKiB]) => sum + rssKiB * 1024, 0);
+  } catch { return null; }
+}
+
 const KID = '11223344556677889900aabbccddeeff';
 const KEY = '00112233445566778899aabbccddeeff';
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
@@ -193,10 +217,26 @@ try {
         video.addEventListener('progress', sample);
         sample();
       });
-      await page.waitForFunction(() => {
-        const video = document.querySelector('#player-video');
-        return video?.ended && video.currentTime >= 297 && video.duration >= 299;
-      }, null, { timeout: 180000 });
+      // Linux ps RSS is observational only: subprocess memory includes shared
+      // pages, and cannot establish GPU driver allocations. It does account
+      // for the headless browser process tree that runs remux and MSE.
+      const rssSamples = [];
+      const pid = browser.process()?.pid;
+      const measure = () => {
+        const rss = browserProcessTreeRssBytes(pid);
+        if (rss !== null) rssSamples.push(rss);
+      };
+      measure();
+      const rssTimer = setInterval(measure, 2000);
+      try {
+        await page.waitForFunction(() => {
+          const video = document.querySelector('#player-video');
+          return video?.ended && video.currentTime >= 297 && video.duration >= 299;
+        }, null, { timeout: 180000 });
+      } finally {
+        clearInterval(rssTimer);
+        measure();
+      }
       const stats = await page.evaluate(() => ({
         ...window.__cencStress,
         ended: document.querySelector('#player-video')?.ended,
@@ -210,7 +250,15 @@ try {
       assert(!mediaRequests.some(r => r.unbounded) && !errors.length,
         '300-second playback unexpectedly used whole-file fetch or emitted browser errors');
       console.log('PASS ' + browserName + ' 300-second CENC playback and bounded MSE window',
-        JSON.stringify({ ...stats, rangeRequests: mediaRequests.length }));
+        JSON.stringify({
+          ...stats, rangeRequests: mediaRequests.length,
+          processTreeRssMiB: rssSamples.length ? {
+            first: +(rssSamples[0] / 1048576).toFixed(1),
+            peak: +(Math.max(...rssSamples) / 1048576).toFixed(1),
+            last: +(rssSamples.at(-1) / 1048576).toFixed(1),
+            samples: rssSamples.length
+          } : null
+        }));
     }
     if (process.env.CENC_TEST_SEEK === '1') {
       // 70s fixture; the worker should stop fetching after ~40s ahead.
