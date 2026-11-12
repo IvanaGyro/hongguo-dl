@@ -490,3 +490,11 @@
 - **PENDING（階段 50）**：新修改目前只完成 literal patch invariants 與成功推進 main；尚未獲得該 HEAD 的 CI／Firefox E2E 結論，絕不寫成 PASS。
 - **另項已確認**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) **completed/success**，對應 120 秒暫停 Chromium 合成驗收；不是 Android/HEVC 證據。
 - **下一步**：針對三輪模式切換後 `tests/cenc-stream.browser.mjs:529` 的 `[mov] subsample size exceeds the packet size left` 及 `partial file`，辨別是否取消中的 WASM stderr、或真正播放中解碼損壞；必要時增強載入/取消時序與 Browser assertions。隨後確認階段 50 的 Firefox 測試結果。真實紅果 HEVC/Android/Windows/BVC2 尚缺外部素材。
+
+
+## 階段 51 — 2026-11-13 Firefox 切換畫質後播放速度恢復預設值
+
+- **具體失敗**：階段 50 [CI #43295263795](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263795) **completed/success**；[Pages #43295263833](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263833) **success**，但 [Firefox #43295263899](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263899) **failure**。job `131451756098` 顯示 FFmpeg.wasm remux 本身 PASS，後續 `tests/browser-modes.firefox.mjs:142` 等待切換畫質、編碼後維持 1.25× 速度達 30 秒逾時；播放器停在「播放完成」。這不是先前 720p codec 選項的失敗。
+- **已直接修改 main**：[404a6d7741c7db1b56b932c611fe0533e458b9eb](https://github.com/IvanaGyro/hongguo-dl/commit/404a6d7741c7db1b56b932c611fe0533e458b9eb)，僅修改 `src/player.js`。過去於 `video.load()` 前設 `playbackRate`，HTMLMediaElement 重新載入來源可能恢復 default rate；現在同時設 `defaultPlaybackRate` 並在 `load()` 後再次設定 `playbackRate`，選項 change 時亦同步兩者。適用速度變更、重選畫質／編碼、換集、重新載入。
+- **現有回歸**：`tests/browser-modes.firefox.mjs:142` 的 `playbackRate===1.25`、畫質變更後 codec 選單及 720p VVC negative case，無需取消既有驗收。此版新 Firefox E2E **PENDING**，不宣稱修復已經瀏覽器驗收成功。
+- **下一步**：優先修另一 [CENC Browser #43295263804](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263804) 三輪模式切換測試末尾 `tests/cenc-stream.browser.mjs:529` 的 MOV demux stderr/partial-file 診斷；保留真正 JS、MSE 與影片解碼錯誤的斷言，避免以隱藏錯誤假裝通過。再以一次對應 HEAD 的 Firefox CI/Browser E2E 檢查。

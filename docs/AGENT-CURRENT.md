@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 50）
+# Hongguo DL — 目前狀態（2026-11-13，階段 51）
 
 > **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
 
 ## 最新完成與證據
+
+- **階段 51 速度修正**：[404a6d7](https://github.com/IvanaGyro/hongguo-dl/commit/404a6d7741c7db1b56b932c611fe0533e458b9eb)：在 `video.load()` 前設定 `defaultPlaybackRate`，載入後再設定 `playbackRate`，切換速度時同步更新兩者；避免 Firefox 切換畫質/來源後重設 1.25×。新的 Firefox E2E **PENDING**。階段 50 的主 [CI #43295263795](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263795) 與 [Pages #43295263833](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263833) **success**，但 [Firefox #43295263899](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263899) **failure**，具體在 `tests/browser-modes.firefox.mjs:142` 等待 `playbackRate===1.25` 超時，非前版 720p codec 選項斷言。
 
 - **階段 50 程式**：[005ad1a](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)：`src/source-options.js` 不再將使用者選定且存在的 720p ByteVC2-only 無法播放來源自動換成 1080p HEVC；`src/player.js` 編碼選單嚴格依當前畫質，增加 Node 與 Firefox 瀏覽器 regression。**新提交 CI/Browser 結果 PENDING**；不要把代碼提交當測試通過。
 - **階段 49 程式**：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)：metadata fetch/reader 斷線的 `CENC_RANGE_HTTP`、固定無私密資料錯誤訊息，禁止錯誤回退整檔；階段 48 [45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a) 比對 HTTP 206 range/length/body。**已確認**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811) **success**、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) **success**、[pinned Librempeg HEVC WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) **success**。這些是合成/建置驗證，不是實際紅果 HEVC 解碼。
