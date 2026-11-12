@@ -134,7 +134,8 @@ function renderQueue() {
   $('bulk-zip').disabled = !selectedJobs.length || !!bulkController;
   $('bulk-concat').disabled = !selectedJobs.length || !!bulkController;
   $('retry-failed').disabled = !failed;
-  $('clear-finished').disabled = !jobs.some(job => ['completed', 'canceled'].includes(job.status));
+  $('clear-finished').disabled = !!bulkController ||
+    !jobs.some(job => ['completed', 'canceled'].includes(job.status));
   $('queue-select-all').disabled = !jobs.length;
   $('queue-select-none').disabled = !selectedJobs.length;
   if (!jobs.length) {
@@ -462,7 +463,8 @@ async function saveOne(job) {
   if (job.status !== 'completed') return;
   const file = await readQueuedFile(job.id);
   if (!file?.blob) {
-    update(job, { error: '瀏覽器暫存已失效；請重新下載此集', errorCode: 'STORAGE_MISSING' });
+    update(job, { status: 'failed', stored: false,
+      error: '瀏覽器暫存已失效；請按「重試」重新下載此集', errorCode: 'STORAGE_MISSING' });
     return;
   }
   triggerSave(file.blob, file.filename || job.fileName || episodeFileName(job));
