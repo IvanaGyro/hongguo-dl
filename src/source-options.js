@@ -65,9 +65,11 @@ export function codecsAtQuality(variants, quality = 'auto') {
     quality === 'auto' || qualityId(v) === quality)).codecs;
 }
 
-export function browserCanPlayVariant(variant, canPlayType) {
+export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = false) {
   const codec = codecId(variant?.codec);
-  if (codec === 'bytevc2' && variant?.contentKey) return false;
+  // ByteVC2 is not interchangeable with ISO VVC. A native vvc1 capability
+  // says nothing about this proprietary bitstream.
+  if (codec === 'bytevc2') return !!canTranscodeBvc2;
   if (!codec) return !variant?.contentKey;
   const codecs = {
     h264: 'video/mp4; codecs="avc1.42E01E"',
@@ -80,10 +82,10 @@ export function browserCanPlayVariant(variant, canPlayType) {
 // Return exactly the selected tier if playable; allow a clearly announced
 // substitute only when the user has chosen automatic codec selection.
 // Explicit codec selection never silently changes to another codec.
-export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0) {
+export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0, canTranscodeBvc2 = false) {
   const requestedQuality = preferences.quality || 'auto';
   const requestedCodec = preferences.codec || 'auto';
-  const playable = source => browserCanPlayVariant(source, canPlayType);
+  const playable = source => browserCanPlayVariant(source, canPlayType, canTranscodeBvc2);
   const exact = candidateRenditions(variants, { quality: requestedQuality, codec: requestedCodec })
     .filter(playable);
   if (exact.length) return { source: exact[Math.max(0, attempt) % exact.length], fallback: false };
