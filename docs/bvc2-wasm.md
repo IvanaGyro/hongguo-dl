@@ -32,11 +32,12 @@ profiling shows a meaningful CPU bottleneck. The native EME/Clear Key
 streaming path intentionally uses the browser's built-in decryptor rather than
 performing AES in JavaScript or Rust.
 
-For browser-supported encrypted H.264/HEVC, `src/clear-key.js` reads bounded
-MP4 header ranges and asks the browser CDM to decrypt the media in streaming
-mode. It falls back to the existing FFmpeg.wasm implementation on unsupported
-browsers. The Firefox workflow generates a synthetic CENC test clip and
-verifies actual playback and its observed startup cost.
+For encrypted H.264/HEVC, `src/clear-key.js` reads **bounded (up to 8 MiB moov)**
+MP4 metadata. The current *progressive unfragmented* path uses pinned Librempeg
+Asyncify AVIO/WASM to decrypt and stream-copy into clear fMP4, then appends it
+to MSE, if the browser supports the output codec. Conditional native EME and
+bounded FFmpeg.wasm fallback paths remain distinct. Synthetic H.264/AAC browser
+acceptance does not establish real HEVC or Android Firefox capability.
 
 ## 實驗實測（2026-11-12）
 
@@ -52,7 +53,7 @@ verifies actual playback and its observed startup cost.
   1,987 ms，FFmpeg.wasm 1,229 ms。這個極短小樣本反而是 FFmpeg
   較快，且先後測量有冷／暖快取差異；不能用來推論較大影片的
   上線收益。原生 EME 的核心優勢仍是 **不等待整集下載**。
-- 對於是否使用 Rust：目前 JS 只讀取最多 1 MiB 的 MP4 metadata，
+- 對於是否使用 Rust：目前 JS 的 MP4 metadata moov 有界上限為 **8 MiB**（30 分鐘合成片的 sample table 可能超過舊有 1 MiB），
   網路與 CDM 的系統呼叫遠大於這部分運算。應先量測耗時與
   WASM 初始化／資料複製成本，再評估是否移植 Rust；BVC2 核心
   則已是可編譯到 WASM 的 C，不需要重新實作演算法。
@@ -83,6 +84,6 @@ node scripts/verify-bvc2-fixture.mjs /path/to/authorized-bvc2.mp4
 # 若需要 AES-CTR CENC 金鑰，從本機環境變數讀取，不要把金鑰寫在命令紀錄/CI
 ```
 
-腳本會呼叫同一版公開的 BVC2→H.264 WASM，確認解碼後影片真實有可解碼畫格、FFmpeg 完整解碼、列出 codec、解析度、audio track、轉碼秒數和 Node RSS；清除暫存明文。程式碼不會網路下載來源，也不會記錄 signed URL/金鑰。
+腳本會呼叫同一版公開的 BVC2→H.264 WASM，確認解碼後影片真實有可解碼畫格、FFmpeg 完整解碼、列出 codec、解析度、audio track、轉碼秒數和 Node RSS；**若輸出含 AAC，另檢查 ffprobe 的影音 start_time/duration（起點與終點時間差均須 ≤1.5 秒），缺少時間資訊或嚴重偏差會拒絕 PASS**。這只是容器時間軸的基本檢查，不能證明每個畫格的音畫同步、正確色彩或真實 ByteVC2 一定能解。清除暫存明文；不會網路下載來源，也不會記錄 signed URL/金鑰。
 
 **剩餘硬性 PASS 條件**：取得授權真實 ByteVC2 bitstream 後，在 Node native/WASM 和 Android Firefox/Windows 實際播放端驗證首影格、A/V 同步、速度和 RAM 高水位，再決定是否將 whole-file MEMFS 路徑替換為 AVIO streaming / H.264 fMP4 輸出。**目前禁止宣稱實驗性 BVC2 已達正式播放要求。**
