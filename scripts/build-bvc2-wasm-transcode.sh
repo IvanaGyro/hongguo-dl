@@ -36,7 +36,7 @@ emconfigure ./configure \
   --disable-ffplay --disable-ffprobe --disable-asm --disable-x86asm \
   --disable-inline-asm --disable-stripping --disable-pthreads --disable-network \
   --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avutil \
-  --enable-avfilter --enable-swscale --enable-swresample \
+  --enable-avfilter --enable-swscale \
   --enable-decoder=bvc2,vvc,aac \
   --enable-parser=aac --enable-encoder=libx264,aac \
   --enable-muxer=mp4,null --enable-demuxer=mov \
