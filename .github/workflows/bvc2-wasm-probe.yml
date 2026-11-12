@@ -1,0 +1,32 @@
+name: BVC2 Librempeg WASM feasibility (experimental)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bvc2-wasm-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  decoder-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container:
+      image: emscripten/emsdk:3.1.74
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Emscripten toolchain
+        run: |
+          emcc --version | head -n 1
+          node --version
+      - name: Compile pinned Librempeg BVC2 decoder to WebAssembly
+        run: bash scripts/build-bvc2-wasm-probe.sh /tmp/hongguo-bvc2-wasm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bvc2-wasm-probe
+          path: |
+            /tmp/hongguo-bvc2-wasm/dist
+            /tmp/hongguo-bvc2-wasm/configure.log
+            /tmp/hongguo-bvc2-wasm/build.log
+          if-no-files-found: warn
