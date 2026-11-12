@@ -2,15 +2,19 @@ import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
-import { recentSeries, rememberSeries, forgetSeries, watchRecords, playbackKey } from './library.js';
+import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
-import { runBulk } from './bulk.js';
+import { exportQueue } from './queue-export.js';
+import { readDownload, storeDownload, removeDownload } from './download-store.js';
+import { episodeFileName, originalExtension } from './naming.js';
+import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 
 const $ = id => document.getElementById(id);
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
+const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
 const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.VITE_API_ORIGIN || '');
 let workerOrigin = defaultWorkerOrigin;
 try { workerOrigin = chooseWorkerOrigin(localStorage.getItem(API_STORE), defaultWorkerOrigin); }
@@ -59,16 +63,25 @@ let lastPersisted = 0;
 let currentMode = 'download';
 let player = null;
 let bulkController = null;
+let loadingDeepLinks = false;
+let lookupSequence = 0;
+let exportSelected = new Set();
+try { exportSelected = new Set(JSON.parse(localStorage.getItem(EXPORT_STORE) || '[]')); }
+catch { /* browser restrictions */ }
 const mediaCache = new MediaCache();
+function persistExportSelection() {
+  try { localStorage.setItem(EXPORT_STORE, JSON.stringify([...exportSelected])); }
+  catch { /* no persistent selection */ }
+}
 const retryTimers = new Map();
 
 function restoreJobs() {
   try {
     return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 300).map(item => ({
       ...item, directUrl: null, progress: null, segment: null, controller: null,
-      status: ['queued', 'resolving', 'downloading', 'processing'].includes(item.status) ? 'failed' : item.status,
-      errorCode: ['queued', 'resolving', 'downloading', 'processing'].includes(item.status) ? 'INTERRUPTED' : item.errorCode,
-      error: ['queued', 'resolving', 'downloading', 'processing'].includes(item.status) ?
+      status: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'failed' : item.status,
+      errorCode: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'INTERRUPTED' : item.errorCode,
+      error: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ?
         '頁面已重新開啟；瀏覽器無法繼續未完成的串流，請重試本集' : item.error
     }));
   } catch { return []; }
@@ -78,9 +91,11 @@ function saveJobs() {
   try {
     localStorage.setItem(STORE, JSON.stringify(jobs.map(({ id, seriesId, vid, index, title,
       quality, codec, mode, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
-      lastErrorKey, errorStreak, failureAttempts }) => ({
+      lastErrorKey, errorStreak, failureAttempts, fileName, seriesTitle,
+      sourceWidth, sourceHeight, stored, onDisk }) => ({
       id, seriesId, vid, index, title, quality, codec, mode, status, bytes, totalBytes, error, errorCode,
-      attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts
+      attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts,
+      fileName, seriesTitle, sourceWidth, sourceHeight, stored, onDisk
     }))));
   } catch { /* Browser storage may be disabled. */ }
 }
@@ -302,15 +317,7 @@ function pump() {
   }
 }
 function outputFileName(job, source, processed) {
-  const title = safeName(job.title);
-  let extension = '.mp4';
-  if (!processed) {
-    try {
-      const ext = /\.(mp4|m4v|mov|mkv|ts|webm)(?:$|\?)/i.exec(new URL(source.url).pathname);
-      if (ext) extension = '.' + ext[1].toLowerCase();
-    } catch { /* filename defaults to mp4 */ }
-  }
-  return title + '_' + job.id.slice(0, 8) + extension;
+  return episodeFileName(job, processed ? '.mp4' : originalExtension(source.url));
 }
 function triggerSave(bytes, name) {
   const blob = bytes instanceof Blob ? bytes :
@@ -321,16 +328,59 @@ function triggerSave(bytes, name) {
   document.body.append(anchor); anchor.click(); anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-async function saveProcessed(bytes, name) {
+async function saveProcessed(bytes, name, job = null, source = null) {
+  const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: 'video/mp4' });
+  if (!directory && blob.size > MAX_BROWSER_BLOB)
+    throw errorWith('MEMORY_LIMIT', '單集超過 300 MiB，請改用支援資料夾儲存的瀏覽器');
   if (directory) {
     const file = await directory.getFileHandle(name, { create: true });
     const stream = await file.createWritable();
-    try { await stream.write(bytes); await stream.close(); }
+    try { await stream.write(blob); await stream.close(); }
     catch (error) { await stream.abort().catch(() => {}); throw error; }
+  } else if (!job) {
+    // Explicit export action: one user gesture produces one Save dialog.
+    triggerSave(blob, name);
   } else {
-    if (bytes.length > MAX_BROWSER_BLOB) throw errorWith('MEMORY_LIMIT', '沒有選取資料夾，檔案超過 300 MiB Blob 保存限制');
-    triggerSave(bytes, name);
+    // Ordinary queued download: *no* dialog. Firefox stores completed
+    // episodes in IndexedDB until the user chooses Save or ZIP/MP4 export.
+    try {
+      await storeDownload(job.id, name, blob, {
+        codec: source?.codec || job.sourceCodec,
+        width: source?.width, height: source?.height, seriesId: job.seriesId
+      });
+    } catch (error) {
+      throw errorWith('STORAGE_QUOTA', '瀏覽器儲存空間不足或不可用：' +
+        (error.message || '請清除舊佇列，或選擇儲存資料夾'));
+    }
   }
+  if (job) update(job, {
+    fileName: name, stored: !directory, onDisk: !!directory,
+    sourceCodec: source?.codec || job.sourceCodec,
+    sourceWidth: source?.width || null, sourceHeight: source?.height || null
+  });
+}
+async function readQueuedFile(jobId) {
+  const entry = await readDownload(jobId).catch(() => null);
+  if (entry?.blob) return entry;
+  const job = jobs.find(j => j.id === jobId);
+  if (directory && job?.onDisk && job.fileName) {
+    try {
+      const handle = await directory.getFileHandle(job.fileName);
+      const blob = await handle.getFile();
+      return { id: job.id, filename: job.fileName, blob,
+        codec: job.sourceCodec, width: job.sourceWidth, height: job.sourceHeight };
+    } catch { /* directory permission was revoked */ }
+  }
+  return null;
+}
+async function saveOne(job) {
+  if (job.status !== 'completed') return;
+  const file = await readQueuedFile(job.id);
+  if (!file?.blob) {
+    update(job, { error: '瀏覽器暫存已失效；請重新下載此集', errorCode: 'STORAGE_MISSING' });
+    return;
+  }
+  triggerSave(file.blob, file.filename || job.fileName || episodeFileName(job));
 }
 function assertOk(response) {
   if (!response.ok) return response.json().catch(() => null).then(data => {
