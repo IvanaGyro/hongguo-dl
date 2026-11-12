@@ -32,7 +32,10 @@ echo "x264 pkg-config version: $(pkg-config --modversion x264)"
 echo "x264 linker flags: $(pkg-config --libs --static x264)"
 test -s "$OUTPUT/prefix/lib/libx264.a"
 cd "$OUTPUT/src/librempeg-$COMMIT"
-emconfigure ./configure \
+# emconfigure overrides PKG_CONFIG_PATH with its sysroot; the explicit
+# Emscripten toolchain flags below already configure the cross compiler.
+# Invoke configure directly to keep our pinned x264.pc visible.
+./configure \
   --target-os=none --arch=x86_32 --enable-cross-compile \
   --cc=emcc --cxx=em++ --ar=emar --ranlib=emranlib --nm=emnm \
   --disable-everything --disable-autodetect --disable-doc --disable-debug \
