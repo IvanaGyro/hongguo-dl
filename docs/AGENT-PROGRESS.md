@@ -282,3 +282,11 @@
 - **發現可具體處理的競態**：`transcodeBvc2()` 在初始 `signal.aborted` 檢查與 Worker 建立／註冊 abort listener 之間有時間窗；`worker.postMessage()` 同步 throw 時也可能留下未終止 Worker。下一步補原始碼防護與測試；尚未提交程式碼、尚未跑相關測試。
 - **必須同步修正的過時交接**：`docs/NEXT-SESSION-PLAN.md` 的 P2 仍寫「Worker 尚無 seek 路徑」、P3 仍寫「無 MSE eviction」，均已被目前程式碼及合成 CI 推翻；`docs/cenc-progressive-to-fmp4.md` 仍寫 1MiB moov、長片/seek 未測及 WASM 發布未完成。修正時保留歷史脈絡，明確區分 synthetic PASS 與真實裝置 NOT TESTED。
 - **使用者作業規則**：所有成果直接提交 `main`，不建立 PR。GitHub 操作可能卡在讀/寫/查詢本身，不僅 Actions；單次獨立讀→修改→提交，避免反覆重試或連續輪詢。**每完成一段程式與驗證就立即再寫下一個 checkpoint，寫完文件還要繼續修復。**
+
+## 階段 27 — 2026-11-13 BVC2 Worker 啟動／取消競態已修補，已提交 7 個回歸案例
+
+- [b57923f](https://github.com/IvanaGyro/hongguo-dl/commit/b57923f1ae69389a1d7ea3d209f2f5ddd1c498d0)：新增 `src/bvc2-job.js`，抽出單次 ByteVC2 Worker 的啟動、傳輸、abort、完成與資源清理，方便 Node 單測。初始化時若 AbortSignal 已在 Worker 建立過程取消，**不會 postMessage**；postMessage 同步拋錯時，會 terminate Worker 並移除 abort listener。驗證 Worker 回傳的影片 buffer 必須為非空 ArrayBuffer。
+- [90603dd](https://github.com/IvanaGyro/hongguo-dl/commit/90603dd4ecb9ef74a7c2963d84449fded3e40ee1)：`src/bvc2.js` 改用上述 helper，播放與下載兩路均共用，保留 260MiB 上限、key 驗證及工作專屬 buffer 的可轉移語意；subarray 或 SharedArrayBuffer 改為複製選中範圍再傳，避免無關 bytes 或 DataCloneError。
+- [8f9d4c7](https://github.com/IvanaGyro/hongguo-dl/commit/8f9d4c73a5228991a1db7b19a26a080f014d412f)：新增 `tests/bvc2-job.test.mjs` 共 **7** 個測試：正常返回、subarray、建 Worker 期間取消、post 後取消、同步 postMessage throw、空回應、建 Worker throw。
+- **驗收狀態**：原始碼與測試已提交 main，測試**尚未取得執行結果**；下一步只核對一次適用 CI 結論，若失敗針對具體錯誤修補。這些是 Worker lifecycle 回歸，**不是 ByteVC2 真實 bitstream 正例解碼成功**。
+- **立即繼續**：更新過期的 NEXT-SESSION-PLAN 和 CENC 技術文件，使完成／未完成明確，並把 1800 秒壓測視為獨立的 pending acceptance；文件更新後仍繼續程式與驗收。
