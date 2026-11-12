@@ -13,3 +13,5 @@
 原檔案保留了對 N3urda/hongguoTV、ch6vip/fqapp、tsukiyo-zero/hongguoTV 等專案的歸屬與授權註記。新寫的 UI、Worker 路由與測試也採 GPL-3.0-only 授權。
 
 FFmpeg.wasm 由建置時 npm 安裝：`@ffmpeg/ffmpeg@0.12.15` 為 MIT 授權，`@ffmpeg/core@0.12.10` 為 GPL-2.0-or-later。發佈打包後的核心時應遵守對應原始碼提供義務。詳見 [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm)。本儲存庫不包含影片內容。
+
+Video.js 10 播放器 UI 使用 [`@videojs/html@10.3.0`](https://github.com/videojs/video.js)（Apache-2.0 授權），包含播放器狀態、播放／暫停、時間軸、靜音、手勢及全螢幕 Web Components。其相依套件以 `bun.lock` 記錄。請參考 [Video.js 授權](https://github.com/videojs/video.js/blob/main/LICENSE) 與 [Video.js 文件](https://videojs.org/docs/guides/installation/html)。

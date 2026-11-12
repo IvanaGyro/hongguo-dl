@@ -108,6 +108,13 @@ try {
   assert.equal(await page.locator('#player-next').isVisible(), true);
   assert.equal(await page.locator('#player-mute').isVisible(), true);
   assert.equal(await page.locator('#player-fullscreen').isVisible(), true);
+  const initiallyMuted = await page.locator('#player-video').evaluate(v => v.muted);
+  await page.locator('#player-mute').click();
+  await page.waitForFunction(original =>
+    document.querySelector('#player-video').muted !== original, initiallyMuted);
+  await page.locator('#player-mute').click();
+  await page.waitForFunction(original =>
+    document.querySelector('#player-video').muted === original, initiallyMuted);
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-settings').waitFor({ state: 'visible' });
