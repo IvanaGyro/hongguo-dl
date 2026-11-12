@@ -240,3 +240,13 @@
 - **新增可由 Windows／Android 使用者自行執行的無個資能力診斷**：`d0cd9a4` 新增 `src/codec-diagnostics.js`，查詢 `video.canPlayType`、`MediaSource.isTypeSupported`、1080p `MediaCapabilities.decodingInfo`，對 H.264、HEVC、HEVC Main10、標準 VVC 分別回報；不收 UA、影片 URL、DRM key、裝置 ID，且在報告文字明確標明 declarations 不等於 decode。
 - **UI 與測試**：`b994680` 在 index.html 加入「此裝置影片編碼支援檢測」展開區／複製診斷結果；`69d6d76` 補樣式；`cb6bc1e` 在 src/main.js 接本地 UI；`7df7b65` 加 Node mocking tests；`8e64c50` 在 Chromium/Firefox 播放整合測試中驗證報告可生成且不含測試 CENC key。**新 UI browser CI 尚未取得 completed/success，不提前標 PASS**。
 - 下一階段繼續實際檢查 UI build / browser 回歸並修正；具真實 HEVC MSE 裝置時可由使用者複製報告做平台解碼能力辨別。此面板不能自動證明真實 1080p HEVC 已可播。
+
+## 階段 22 — 2026-11-13 HEVC 裝置能力診斷已通過 Browser CI；BVC2 JS/WASM 鎖版防護（發布中）
+
+- **裝置診斷 UI 已驗證**：[Chromium/Firefox browser #43280440977](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280440977) **completed/success**，測試腳本實際點開本機編碼支援檢測，核對 schema/HEVC/MSE 項目與不含測試金鑰。 [main CI #43280440942](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280440942) **success**，不是實際裝置解碼測試。
+- **BVC2 manifest 工具 [38c3237](https://github.com/IvanaGyro/hongguo-dl/commit/38c3237151d4ebcbc8dd401064b543544fc6d6f5)**：新 `scripts/bvc2-wasm-bundle.mjs` 產出 / 檢查 bvc2-core.mjs / wasm SHA256、C source/build shell 指紋、Librempeg/x264 commits、Emscripten pin。
+- **BVC2 runtime [5573c8e](https://github.com/IvanaGyro/hongguo-dl/commit/5573c8ec38aa25f2c534a7a27920ae134ce8cac7) / [24b7c93](https://github.com/IvanaGyro/hongguo-dl/commit/24b7c93020e6706a0e226a232f055d91e9703467)**：Worker 使用 manifest no-store、content-addressed JS/WASM URL、大小有界的 bytes 讀取和 SHA256 驗證，**核驗後才 import/instantiate**。
+- **BVC2 發布 [7f362ee](https://github.com/IvanaGyro/hongguo-dl/commit/7f362ee81316b4a9b92db11286bb484ec9a4909a)**：Workflow 在負例通過後將 JS/WASM/manifest 一起提交 main，rebase 後再次驗證指紋防止 stale build，並 dispatch Pages；新增 concurrency cancel-in-progress。此輪 [BVC2 WASM run #43280846374](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280846374) 最後快照 **in_progress**，未聲稱已成功發布。
+- **BVC2 版本回歸 [82d8689](https://github.com/IvanaGyro/hongguo-dl/commit/82d8689edec716146532e014ae350c7dcd258b7a)**：本地 make/verify manifest、不匹配 WASM、修改 C 指紋、runtime JS/WASM 交換、錯版 x264 都有測試；[main CI #43280916523](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280916523) **success**（是工具測試，不代表已發布 release）。
+- **BVC2 optional availability [4e4826f](https://github.com/IvanaGyro/hongguo-dl/commit/4e4826fb29d178e9bfcbee5619ee70bade0da8f1)**：部署的 manifest 若不存在或錯 MIME，不會假裝 ByteVC2 WASM 已可使用；避免 HTTP 200 的 Pages SPA 回應被誤判。仍缺真實 ByteVC2 bitstream 正例、CPU/RAM、首影格與 A/V。
+- **下一步繼續**：待 BVC2 workflow 產物一起寫回 main，驗證 manifest 與部署，再增加 CI/Pages 發布守門；對 P1 真實 HEVC 仍須使用可回 206 的授權片源及 Windows/Android decoder，不能用能力宣告取代成功播放。
