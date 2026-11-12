@@ -53,6 +53,11 @@ const fetchImpl = async (url, options) => {
     signal: AbortSignal.timeout(20000), cache: 'no-store'
   });
   if (res.status === 429) throw new Error('CDN rate-limited; stopped immediately');
+  if (res.status !== 206) {
+    console.log('Live CENC metadata Range request returned HTTP ' + res.status +
+      ' (no media bytes read)');
+    await res.body?.cancel();
+  }
   return res;
 };
 const mediaUrl = new URL('/api/media', ORIGIN);
