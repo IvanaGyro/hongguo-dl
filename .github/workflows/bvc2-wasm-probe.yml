@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/bvc2-wasm-probe.yml'
+      - 'scripts/build-bvc2-wasm-transcode.sh'
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,6 +22,8 @@ jobs:
           node --version
       - name: Compile pinned Librempeg BVC2 decoder to WebAssembly
         run: bash scripts/build-bvc2-wasm-probe.sh /tmp/hongguo-bvc2-wasm
+      - name: Try linking native BVC2 decode plus x264 encoder as browser WASM
+        run: bash scripts/build-bvc2-wasm-transcode.sh /tmp/hongguo-bvc2-transcode
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -29,4 +32,8 @@ jobs:
             /tmp/hongguo-bvc2-wasm/dist
             /tmp/hongguo-bvc2-wasm/configure.log
             /tmp/hongguo-bvc2-wasm/build.log
+            /tmp/hongguo-bvc2-transcode/dist
+            /tmp/hongguo-bvc2-transcode/*-configure.log
+            /tmp/hongguo-bvc2-transcode/*-build.log
+            /tmp/hongguo-bvc2-transcode/build-manifest.txt
           if-no-files-found: warn
