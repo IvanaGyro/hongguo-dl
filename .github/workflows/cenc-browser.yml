@@ -9,6 +9,9 @@ on:
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
       - 'src/player.js'
+      - 'src/main.js'
+      - 'src/cenc-seek.js'
+      - 'src/http-range.js'
       - 'tests/cenc-stream.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
