@@ -291,7 +291,7 @@ function setMode(mode) {
   $('player-panel').hidden = currentMode !== 'play' || !series;
   if (series) renderEpisodes();
   if (currentMode === 'play' && series) player?.activate();
-  else player?.pause();
+  else player?.deactivate();
 }
 async function apiJson(route, signal) {
   const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' }, signal });
