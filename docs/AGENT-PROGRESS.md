@@ -70,3 +70,6 @@
 - 已核對 **Main browser acceptance #13 成功**，更新上方原本 in_progress 的過時資訊；Main WASM proof #9 亦成功。
 - **程式碼尚未解決**：真實 HEVC 1080p 端對端尚未驗證；無未緩衝位置的 Range seek；MSE 舊範圍沒有 eviction；錯誤時 Worker/ACK 未保證立即清理；Main WASM publishing 在 workflow 只針對 feature 分支；ByteVC2 沒有真實影格驗證，仍是整檔轉碼。
 - 下一個 session 先執行 [NEXT-SESSION-PLAN.md 第 4 節](NEXT-SESSION-PLAN.md)：建立新功能分支，確認合成 CI 基線與 main 資產發布的一致性，更新進度檔，再開始真實 HEVC 測試；勿直接認定 CI 意味真實紅果 HEVC 可播。
+
+- 已同步修正過時的 [CENC 技術研究文件](cenc-progressive-to-fmp4.md)，不再把已實作的瀏覽器 WASM/MSE 標記為「尚未實作」；修正提交 [44d96e1](https://github.com/IvanaGyro/hongguo-dl/commit/44d96e165d9a3d13373430c95aa755a5768cbc5d)。
+- 本輪工作僅盤點、寫入驗收計畫及更新文件，**未修改核心播放器程式碼、未執行真實 HEVC 播放測試**。下個 session 請以最新 main 為準。
