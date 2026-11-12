@@ -17,11 +17,14 @@ const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
 });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
-const mediaRequests = [], errors = [];
+const mediaRequests = [], errors = [], diagnosticMessages = [];
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
-  if (message.type() === 'error' && !message.text().includes('favicon'))
-    errors.push(message.text().slice(0, 180));
+  const text = message.text();
+  if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
+    diagnosticMessages.push(text.slice(0, 200));
+  if (message.type() === 'error' && !text.includes('favicon'))
+    errors.push(text.slice(0, 180));
 });
 await page.exposeFunction('recordCencFirstFrame', () => {
   const lastByte = mediaRequests.reduce((max, item) => Math.max(max, item.last), -1);
@@ -90,8 +93,31 @@ try {
       else video.addEventListener('timeupdate', record, { once: true });
     });
     await page.locator('#mode-play').click();
-    await page.waitForFunction(() => document.querySelector('#player-source-info')
-      ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 60000 });
+    try {
+      await page.waitForFunction(() => document.querySelector('#player-source-info')
+        ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 20000 });
+    } catch (error) {
+      const state = await page.evaluate(async () => {
+        const video = document.querySelector('#player-video');
+        const mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        const wasm = await fetch('/hongguo-dl/cenc/cenc-core.wasm',
+          { method: 'HEAD' }).catch(() => null);
+        return {
+          status: document.querySelector('#player-status')?.textContent,
+          source: document.querySelector('#player-source-info')?.textContent,
+          videoReady: video?.readyState, videoError: video?.error?.message,
+          videoCanPlay: video?.canPlayType(mime),
+          mseSupports: MediaSource.isTypeSupported(mime),
+          wasmStatus: wasm?.status, wasmType: wasm?.headers.get('content-type'),
+          wasmLength: wasm?.headers.get('content-length')
+        };
+      });
+      console.error('CENC browser diagnostics:', JSON.stringify({
+        browserName, ...state, mediaRequests: mediaRequests.slice(0, 8),
+        diagnosticMessages: diagnosticMessages.slice(-15), errors: errors.slice(-8)
+      }));
+      throw error;
+    }
     await page.waitForFunction(() => window.__cencFrame?.videoWidth === 480,
       null, { timeout: 90000 });
     const frame = await page.evaluate(() => window.__cencFrame);
