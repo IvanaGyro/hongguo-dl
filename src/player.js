@@ -262,7 +262,7 @@ export function createPlayer({
       }
     }
   }
-  function open(episode, autoPlay = true) {
+  function open(episode, autoPlay = true, keepSettings = false) {
     if (!episode) return;
     savePosition();
     disposeSource();
@@ -272,7 +272,7 @@ export function createPlayer({
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';
-    showSettings(false);
+    if (!keepSettings) showSettings(false);
     const signal = (controller = new AbortController()).signal;
     const currentToken = ++token;
     setStatus('載入中…');
@@ -361,7 +361,7 @@ export function createPlayer({
   for (const selector of [qualitySelect, codecSelect]) {
     selector.addEventListener('change', () => {
       persistPrefs();
-      if (current) open(current);
+      if (current) open(current, true, true);
     });
   }
   speedSelect.addEventListener('change', () => { video.playbackRate = Number(speedSelect.value) || 1; persistPrefs(); });
