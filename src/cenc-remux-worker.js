@@ -21,7 +21,7 @@ async function run({ url, key, fileSize }) {
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
     throw new Error('Invalid source byte count');
   if (!/^[a-f0-9]{32}$/i.test(key || '')) throw new Error('Invalid CENC key');
-  const mediaUrl = new URL(url);
+  const mediaUrl = new URL(url, self.location.origin);
   if (!['http:', 'https:'].includes(mediaUrl.protocol) ||
       !mediaUrl.pathname.endsWith('/api/media'))
     throw new Error('Invalid media proxy endpoint');
