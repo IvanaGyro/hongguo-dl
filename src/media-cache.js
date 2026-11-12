@@ -22,8 +22,8 @@ export class MediaCache {
     // Keep only public rendition metadata; never cache signed URLs or keys.
     const metadata = source ? {
       codec: source.codec, quality: source.quality, width: source.width,
-      height: source.height, duration: source.duration,
-      outputCodec: source.outputCodec || null, source: 'cache'
+      height: source.height, duration: source.duration, source: 'cache',
+      ...(source.outputCodec ? { outputCodec: source.outputCodec } : {})
     } : null;
     this.items.set(key, { blob, source: metadata }); this.size += blob.size;
     return true;
