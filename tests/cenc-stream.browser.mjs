@@ -522,7 +522,7 @@ try {
         });
         console.error('CENC remote seek playback diagnostics:', JSON.stringify({
           browserName, ...state, newRangeCount: mediaRequests.length - firstSeekRequest,
-          browserErrors: errors.slice(-5),
+          browserErrorCount: errors.length,
           movWarningPhases: rapidDiagnosticPhases.slice(-8)
         }));
         throw error;
