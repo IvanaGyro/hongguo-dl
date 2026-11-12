@@ -144,9 +144,12 @@ test('episode 30 720p is VVC, not HEVC; codec options follow exact quality', () 
   const allSupported = () => 'probably';
   assert.equal(browserCanPlayVariant(variants[1], allSupported), false,
     'Encrypted VVC cannot be decrypted/remuxed by the shipped FFmpeg.wasm');
-  const fallback = playbackRendition(variants, { quality: '720p', codec: 'auto' }, allSupported);
-  assert.equal(fallback.source, variants[0]);
-  assert.equal(fallback.fallback, true);
+  const selected = playbackRendition(variants, { quality: '720p', codec: 'auto' }, allSupported);
+  assert.equal(selected.source, null, 'Known VVC-only 720p must not switch to HEVC 1080p');
+  assert.equal(selected.fallback, false);
+  const missingTier = playbackRendition(variants, { quality: '480p', codec: 'auto' }, allSupported);
+  assert.equal(missingTier.source, variants[0], 'An unadvertised tier may use an announced fallback');
+  assert.equal(missingTier.fallback, true);
   const noFallback = playbackRendition(variants,
     { quality: '720p', codec: 'auto' }, () => '');
   assert.equal(noFallback.source, null, 'No fake playable 720p should be reported');

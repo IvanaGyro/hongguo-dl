@@ -366,6 +366,8 @@ try {
     null, { timeout: 8000 });
   assert.equal(await page.locator('#player-codec option[value="hevc"]').evaluate(el => el.disabled), true,
     'HEVC must not be offered at VVC-only 720p');
+  assert.equal(await page.locator('#player-quality').inputValue(), '720p',
+    'Unsupported known tier must remain selected, not silently become 1080p');
   await page.waitForFunction(() =>
     document.querySelector('#player-status')?.textContent.includes('無法播放'));
   assert.match(await page.locator('#player-status').textContent(), /720p.*ByteVC2\/VVC/);

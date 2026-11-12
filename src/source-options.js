@@ -94,9 +94,10 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
     Boolean(variant?.contentKey && isMseTypeSupported?.(mime)));
 }
 
-// Return exactly the selected tier if playable; allow a clearly announced
-// substitute only when the user has chosen automatic codec selection.
-// Explicit codec selection never silently changes to another codec.
+// Preserve an explicitly selected, advertised quality tier, even when its
+// only codec is unsupported (e.g. 720p encrypted ByteVC2). Do not silently
+// switch to another resolution; the UI must report the unavailable codec.
+// A fallback remains possible only when the requested tier does not exist.
 export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0,
   canTranscodeBvc2 = false, isMseTypeSupported = null) {
   const requestedQuality = preferences.quality || 'auto';
@@ -106,7 +107,8 @@ export function playbackRendition(variants, preferences = {}, canPlayType, attem
   const exact = candidateRenditions(variants, { quality: requestedQuality, codec: requestedCodec })
     .filter(playable);
   if (exact.length) return { source: exact[Math.max(0, attempt) % exact.length], fallback: false };
-  if (requestedQuality === 'auto' || requestedCodec !== 'auto')
+  if (requestedQuality === 'auto' || requestedCodec !== 'auto' ||
+      (variants || []).some(variant => qualityId(variant) === requestedQuality))
     return { source: null, fallback: false };
   const requestedHeight = parseInt(requestedQuality, 10);
   const alternatives = candidateRenditions(variants, { quality: 'auto', codec: 'auto' })

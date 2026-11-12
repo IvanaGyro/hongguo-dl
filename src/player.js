@@ -85,7 +85,7 @@ export function createPlayer({
     for (const option of codecSelect.options) {
       if (option.value !== 'auto')
         option.disabled = available.codecs.length > 0 &&
-          !(atQuality.length ? atQuality : available.codecs).includes(option.value);
+          !(qualitySelect.value === 'auto' ? available.codecs : atQuality).includes(option.value);
     }
     if (codecSelect.value !== 'auto' && !atQuality.includes(codecSelect.value))
       codecSelect.value = 'auto';

@@ -24,11 +24,11 @@ test('720p with a WASM BVC2 backend uses the actual 720p source', () => {
   assert.equal(selected.fallback, false);
 });
 
-test('without a WASM backend, a 720p auto preference clearly reports fallback', () => {
+test('without a WASM backend, known 720p ByteVC2 refuses cross-quality fallback', () => {
   const fallback = playbackRendition(variants, { quality: '720p', codec: 'auto' },
     browser, 0, false);
-  assert.equal(fallback.source.codec, 'hevc');
-  assert.equal(fallback.fallback, true);
+  assert.equal(fallback.source, null);
+  assert.equal(fallback.fallback, false);
   const explicit = playbackRendition(variants, { quality: '720p', codec: 'bytevc2' },
     browser, 0, false);
   assert.equal(explicit.source, null);
