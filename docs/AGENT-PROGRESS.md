@@ -73,3 +73,17 @@
 
 - 已同步修正過時的 [CENC 技術研究文件](cenc-progressive-to-fmp4.md)，不再把已實作的瀏覽器 WASM/MSE 標記為「尚未實作」；修正提交 [44d96e1](https://github.com/IvanaGyro/hongguo-dl/commit/44d96e165d9a3d13373430c95aa755a5768cbc5d)。
 - 本輪工作僅盤點、寫入驗收計畫及更新文件，**未修改核心播放器程式碼、未執行真實 HEVC 播放測試**。下個 session 請以最新 main 為準。
+
+## 階段 5 — 2026-11-12 新 session：P0/P7 發布一致性，P3 有界讀取與取消（已提交，CI 未確認）
+
+- **基準 HEAD：** `main 19cba39a68e3462f01015bf3ff32958efd52e6b9`；新分支 `fix/cenc-wasm-publish-and-stream-stability`，不直接改 main。
+- **確認歷史基準**：Main WASM proof [#9](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230424222) 與合成 Chromium/Firefox browser [#13](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230870775) 結論均 success，僅代表**既有 main 合成素材**，不是本分支新功能驗收。
+- **P7 已實作（待驗證）**：`scripts/cenc-wasm-bundle.mjs` 發布後同時產生兩份二進位及 `public/cenc/manifest.json` SHA-256 憑證，包含 C bridge、build shell 的指紋、Librempeg 與 Emscripten pin；main/PR CI 與 Pages 部署前要求來源與資產匹配，main proof 額外重建並 byte compare。WASM workflow 僅在 CENC 功能分支驗證通過後寫回**該功能分支**，必須經 PR 合併 main，不再自動直接發布 main；保留原始架構，不重新造 CENC demux。
+- **P7 關鍵提交**：`440a3fb`（發布腳本）、`c0ff04f`（manifest mismatch 測試）、`742f821`（WASM workflow）、`f4e9bc7`（PR CI gate）、`841d93d`（Pages gate）、`61dc05b`（browser acceptance gate）。
+- **P3 已實作（待驗證）**：`src/http-range.js` 使用 bounded streaming reader 而不是 `response.arrayBuffer()`，檢查 206、Content-Range、Content-Length、超量／截斷；`src/cenc-bundle.js` 與 Worker 以 SHA-256 比對發佈的 mjs/wasm 並使用 content-addressed URL；`src/cenc-remux.js` 對等待 sourceopen / SourceBuffer 更新增加 abort，失敗立即終止 Worker 並嘗試 MSE decode error，append 前移除舊區間，QuotaExceeded 最多再嘗試一次。
+- **P3 關鍵提交**：`4f23d3b`、`6d1f67b`、`8c89244`、`c44c851`、`cf36375`、`f9dd343`、`750381a`、`e1bd2ee`、`2b33ca9`；配套測試 `tests/http-range.test.mjs`、`tests/cenc-bundle.test.mjs`、`tests/mse-eviction.test.mjs`。
+- **P0 證據矩陣**：`docs/CENC-TEST-MATRIX.md`（`30deccf`），明確區分合成／真實／瀏覽器裝置，附完整可重現指令和有界實測要求。
+- **測試狀態**：本回合 GitHub 原始碼已寫入，但新分支的 `bun test`、Vite build、WASM rebuild、Chromium／Firefox acceptance 與 Pages **尚未得到本分支成功結論**。本地容器沒有 GitHub DNS／Bun，無法直接 clone、`bun ci`；以 PR 的 Actions 為正式驗收；不得把先前成功的 main CI 記為新分支成功。
+- **真實 HEVC／ByteVC2**：尚未執行片源下載或播放；無 URL、KID、key、影片內容寫入 repo；不以 Ubuntu 轉封裝的成功推斷 Windows/Android 硬體解碼。
+- **已知未完成**：Worker C 端沒有按時間 `avformat_seek_file` 跳到 RAP，unbuffered seek 仍屬 P2 未完成；真實 1080p HEVC EOF 前首影格、完整音畫、300s+ 記憶體壓測、ByteVC2 真實解碼仍未通過驗證。MSE eviction/abort 是初版修補，須通過自動及瀏覽器壓測。
+- **下一步**：建立 PR 並確認 CI URL 與初次 status；不要輪詢未完的工作；若檢查失敗只讀取失敗步驟。WASM workflow 若完成驗證將 JS、WASM、manifest 一起提交到 feature branch；其 `GITHUB_TOKEN` 提交不會觸發後續 CI，必須再以人工／agent commit 觸發 PR checks。CI 成功後合併 PR，之後對真實片源做有限探測、實際 HEVC 測試與 P2 seek。
