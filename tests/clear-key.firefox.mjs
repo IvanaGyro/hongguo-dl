@@ -91,7 +91,8 @@ try {
         source: document.querySelector('#player-source-info')?.textContent };
     });
     assert(result.currentTime > 0.2, 'Native CENC must advance the video clock');
-    assert(result.readyState >= 2 && result.mediaKeys, 'Native media pipeline and CDM must be active');
+    assert(result.readyState >= 2 && result.mediaKeys,
+      'Native media pipeline and CDM must be active: ' + JSON.stringify(result));
     assert.equal(result.videoWidth, 480);
     assert(mediaRequests.length > 0);
     assert(mediaRequests.some(r => r.status === 206 && r.first === 0 && r.last <= 65535),
