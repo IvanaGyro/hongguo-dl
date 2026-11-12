@@ -217,11 +217,13 @@ try {
         video.addEventListener('progress', sample);
         sample();
       });
-      // Linux ps RSS is observational only: subprocess memory includes shared
-      // pages, and cannot establish GPU driver allocations. It does account
-      // for the headless browser process tree that runs remux and MSE.
+      // Linux ps RSS is observational only: includes the Node test harness,
+      // child browser processes and shared pages, but not GPU allocations.
+      // Use relative trend, never report this as exact browser-only RSS.
       const rssSamples = [];
-      const pid = browser.process()?.pid;
+      // Playwright's Browser (unlike Puppeteer) does not expose process().
+      // The Node test runner is the parent of the browser subprocess tree.
+      const pid = process.pid;
       const measure = () => {
         const rss = browserProcessTreeRssBytes(pid);
         if (rss !== null) rssSamples.push(rss);
