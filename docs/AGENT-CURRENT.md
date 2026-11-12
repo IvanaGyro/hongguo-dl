@@ -1,51 +1,23 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 63）
+# Hongguo DL — 目前狀態（2026-11-13，階段 64）
 
-> **強制規則**：直接提交 `main`、不開 PR。每完成可獨立驗證的工程階段，立即更新 `docs/AGENT-PROGRESS.md` 與本短版，再自動繼續下一階段。GitHub 讀／寫／Actions 不無限重試、也不連續輪詢；寫前核對 main HEAD / blob SHA。不得記錄 signed URL、CENC key 或私有媒體。
+> **執行規則**：只在 `main` 直接提交，不建立 PR。每個獨立階段先程式／測試，再更新 `docs/AGENT-PROGRESS.md` 與本短版並繼續。GitHub Actions 狀態只作有限度單次查詢；不可把 pending 寫成 PASS。不得記錄 signed media URL、CENC key、私有影片／使用者識別碼。
 
-## 最新完成與證據
+## 最新工作及 CI 證據
 
-- **階段 63 Chromium／Firefox Web Audio AAC PCM 實測門檻**：[927dd13](https://github.com/IvanaGyro/hongguo-dl/commit/927dd132078dfcfdb976cb53095f8fdb2098d8c9)：`tests/cenc-stream.browser.mjs` 新增 opt-in `CENC_TEST_AUDIO=1`，在 15s 自產 440Hz AAC CENC via MSE 起播 >1.5s 後建立 `AudioContext → MediaElementAudioSource → AnalyserNode`，取 25×80ms time-domain PCM RMS；要求 `context.state=running`、無 media error、peakRMS>0.01、至少 4 窗 >0.005。Browser fast Chromium/Firefox 第一項都開啟此測試；**新 Browser fast 結論 PENDING**。不假設有影像就一定有 AAC。新測試針對**初次起播**，仍不是 rapid Seek 中 AAC glitch 的結論。
+- **階段 64 Firefox Web Audio 使用者操作修復**：[f1ce714](https://github.com/IvanaGyro/hongguo-dl/commit/f1ce714bdc9f726289e5345b7a86ab21d1358135)。Firefox 的 `AudioContext.resume()` 在未經可信點擊下超時；改由 Playwright 真實點擊、於事件處理器建立／啟動 AudioContext。PCM RMS 門檻不放寬。**本版 Browser fast/long PENDING**：[run #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) 首查 pending。請先看 fast job 結果，有 FAIL 讀確切 log。
+- **階段 63 原始 PCM 驗收**：[Browser #43299574104](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43299574104) fast job `131466810901` **FAIL**：Chromium **PCM PASS**，peakRms=`0.0884986`、25/25 視窗非靜音、`videoError=null`；後續 Firefox AudioContext 3s resume timeout，不能將其判定為解碼失敗或 PCM PASS。
+- **上版 CENC Browser 全套已驗**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) **fast/long 雙 job completed/success**：兩瀏覽器 synthetic H264/AAC EOF 前首影格、遠距 seek 7→63→35→5→63、reload、三輪播放／下載模式切換（5 個 MSE URL 建立/4 撤銷，播放時鐘繼續前進）。Chromium 切換階段仍有 **9 筆 MOV/AAC demux 診斷**（subsample、corrupt packet、partial file），Firefox 0。long Chromium 120000ms pause Range 9→9、300s played with bounded MSE、1800s ended (104 Range)。
+- **pinned Librempeg 正例**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) **completed/success**：合成 70s H264/AAC CENC 的 7、35、55、63s 各獨立 indexed seek；direct AVIO vs Worker-style 256KiB Range window 的 clear fMP4 **逐 byte 相同**，`ffmpeg -xerror` AAC/H264 解碼 PASS。合成 1080p HEVC/AAC remux/FFmpeg decode 也已 PASS，但未證明裝置 HEVC MSE。
+- **Firefox 播放器產品驗收**：[Firefox #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **success**：720p ByteVC2-only 不擅自回退到 1080p HEVC、播放器 1.25× 切換保留等測試。
 
-- **階段 62 pinned Worker-window cache parity 逐位元組 PASS**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) `completed/success`，job 131463360446 明確列 `PASS pinned Worker-window AVIO fMP4 exact output: 7, 35, 55, 63` 各一行，並在每次 `ffmpeg -xerror` 嚴格 H264/AAC 解碼後才比對輸出；此證據排除 **256 KiB cache 自身改變 clear fMP4 bytes** 的假說（上述四個獨立合成 Seek），但不排除 Chromium **快速取消/Worker 競態時**的 9 個 MOV demux 警訊。當版 [CI #43298585704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585704) 與 [Pages #43298585569](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585569) 亦 success。
+## 架構與剩餘風險
 
-- **階段 61 全新 CENC Browser fast/long E2E 全部完成成功**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) `completed/success`；fast job 131460511145 參見階段 58；long job **131460510236** 另實際列印 Chromium 120000ms 暫停 Range **9→9**，300.021s 播畢（32 Range、MSE span 最大 **76.021s**、ahead **41.881s**，process-tree RSS first/peak/last **727.7/765.6/765.6 MiB**），1800.021s 播畢（104 Range、MSE span **72s**、ahead **43.078s**，RSS **800.9/837.3/834.7 MiB**）。長片均 videoError=null，合成素材非真實 HEVC/Android、非 GPU RAM；快測 Chromium 9 個 MOV 警訊仍待 AAC 可聽性定量。
+既有 **Librempeg Asyncify AVIO WASM** 解密 progressive CENC MP4 並無損 remux 為 clear fMP4，透過 MSE 播放；`hvc1/hev1` codec tag 依 pinned WASM 實際輸出 init 決定。CENC 來源 403／429／無效 206 不得 fallback 成整檔下載。BVC2 獨立實驗性整檔 WASM 解碼＋x264 路徑，沒有真實 ByteVC2 正例。
 
-- **階段 60 技術文件與現行程式對齊**：[72f05e0](https://github.com/IvanaGyro/hongguo-dl/commit/72f05e087b147b83dabf5a560a51d3349c194871)：README 修正 ByteVC2 720p 明確選定不跨畫質 fallback、CENC 來源 403/429/錯誤 206 不整檔 fallback；`docs/cenc-progressive-to-fmp4.md` 修正 mux flags 為實際 `frag_keyframe+empty_moov+default_base_moof`，120s pause [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 已 PASS。此階段僅是已核實現況文件修正，無新程式或 CI 正例宣稱。
+**下一個工程動作**：讀階段 64 browser fast 真正結論；Web Audio PCM 初次起播通過後，加入遠距 Seek／模式切換後的**瀏覽器 AAC PCM 正例**，並更精確歸因 Chromium 9 個 MOV demux 訊息；不能簡單忽略 active stream 的 AAC 失敗。必要時修正 tests 與 Worker 取消競態，保留強制合成 E2E。僅在具體失敗時讀相關 Actions log，不連續輪詢。
 
-- **階段 59 WASM 對照 Worker 256 KiB 快取（已 PASS）**：[913418b](https://github.com/IvanaGyro/hongguo-dl/commit/913418bb36c82dd189b61da426ad26f3b9135c15)：`scripts/verify-cenc-stream-wasm.mjs` 新增 opt-in `CENC_VERIFY_WORKER_WINDOW=1` 模擬 Worker 256 KiB 範圍快取／命中／最後短窗；WASM proof 對 70s H264/AAC 的 7、35、55、63s 進行 direct-memory vs Worker-window 各自解密 remux，`ffmpeg -xerror` 解碼並**逐 byte 比對兩份 clear fMP4**。[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) **completed/success**，四個 seek 都有 bytes 完全相等證據。
+**外部未驗（NOT TESTED）**：具合法 HTTP 206 的真實紅果 HEVC CENC（先前 CDN 403）、Windows/Android HEVC MSE 實機首影格與 AAC／完整播放、真正 ByteVC2 bitstream frame decode/性能。合成證據不能取代真實裝置。
 
-- **階段 58 Browser fast 兩瀏覽器全部 PASS（但 Chromium 有 MOV 警訊）**：[Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488)，fast job 131460511145 `completed/success`，日誌實際有 Chromium+Firefox CENC EOF 前首影格、55s RAP seek/reload、7→63→35→5→63s 多次跳轉、90% 重整續播、**三輪播放／下載模式切換**且 Worker/Range 停止、5 個 MSE URL 建立/4 個撤銷、剩餘僅當前 1 個、切回後 **video 時間軸真的前進**。Chromium warning 仍有 9 個 MOV subsample/corrupt-packet/partial-file；Firefox 0。**不聲稱 AAC 可聽性或無 glitch 已被證明**。long job 131460510236 查詢時仍 `in_progress`，120s/1800s 此版本尚待結果。
+詳盡追蹤：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)、[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)、[NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md)。
 
-- **階段 57 實證更新**：[WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) 已確認 `PASS H264/AAC pinned WASM seek strict decode: 7 / 35 / 55 / 63` 四行（`ffmpeg -xerror` 同時解碼影音）；同一 HEAD [CI #43297467112](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467112) 與 [Pages #43297467101](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467101) success。**只證明獨立 WASM seek**，不等於快速取消之音訊無 glitch。階段 56 Browser matrix 尚待兩 job 真正結論。
-
-- **階段 56 CENC CI fast/long 分流**：[b5211a6](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3)：`.github/workflows/cenc-browser.yml` 改為 `Browser fast`（Chromium+Firefox 合成首影格、遠距 RAP Seek/reload、三輪切換）與 `Browser long`（Chromium 300s + 120 秒實時暫停、1800s 播畢）**平行** matrix，合成素材只生成各自需要部分、`fail-fast:false` 保留兩組結論、concurrency 保留既有工作不取消。**新 workflow 行為 PENDING**，沒有刪掉任何驗收案例。
-
-- **階段 55 pinned Librempeg H264/AAC 70s 多 Seek 嚴格解碼驗收（已 PASS）**：[feadf0b](https://github.com/IvanaGyro/hongguo-dl/commit/feadf0b015acde866887d225c2f4bab2ba79bac3)／[fc18bc7](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb)：`.github/workflows/cenc-wasm-stream.yml` 新生成與 Browser 同條件 70s H.264/AAC CENC 合成片，WASM 在 7、35、55、63s indexed seek 後，`ffmpeg -xerror` 嚴格解碼音訊與視訊，ffprobe 分別確認 AVC/AAC 與近目標 PTS。[WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) **completed/success**，job 131459529845 的四個獨立 PASS 明確列出 7、35、55、63 秒；這是 pinned WASM + FFmpeg `-xerror` 的 H264/AAC 解碼正例，針對先前 MOV subsample/partial-file 診斷提供獨立實驗證據，不可聲稱已經治癒 AAC 警訊。
-
-- **階段 54 MSE stalled ACK / sourceopen 防卡死**：[0fab93e](https://github.com/IvanaGyro/hongguo-dl/commit/0fab93e5f0a084b5fc110c47b15768315b705015)：`src/cenc-remux.js` 若 MediaSource 已 `ended` 則不再無限等 `sourceopen`；`tests/cenc-startup.test.mjs` 模擬 SourceBuffer `appendBuffer` 永不 `updateend`、MediaSource 仍 `closed`、或已 `ended`，驗證中止 Worker、不得 ACK、Object URL 恰撤銷一次。**新單元 CI PENDING**。
-
-- **階段 53 CENC Range/Worker 無私密資料錯誤**：[3939d30](https://github.com/IvanaGyro/hongguo-dl/commit/3939d30751907dc7abd357367fef6f7bd58ade35)：`src/http-range.js` 的 fetch/read throw 改為固定字串、abort 保留 `Canceled`，`src/cenc-remux-worker.js` 不再傳回 arbitrary `error.message`（可能含 proxy signed URL/key），`tests/http-range.test.mjs` 增加 fetch、body reader、abort 回歸。**新 CI PENDING**；stage52 CENC [Browser #43296135487](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43296135487) 查詢時 `in_progress`，不得寫 PASS。
-
-- **階段 52 CENC Browser 驗收增強**：[a4a30d0](https://github.com/IvanaGyro/hongguo-dl/commit/a4a30d0f519f03dab374bbe121681ef27db9ed22)（前導 [ac42226](https://github.com/IvanaGyro/hongguo-dl/commit/ac422262e90541ad8af6da3141a2b222eb0e281a)）：`tests/cenc-stream.browser.mjs` 針對多次 Seek/模式切換的已知 MOV demux stderr（subsample/packet corrupt/partial file）與 JS pageerror/其他 console error 分流，**保留實際 MediaSource URL、Range、media error 檢查，新增三輪切換後前向播放時鐘必須 >0.35s**，並列印特殊警訊數目，不直接刪除。**階段 52 Browser E2E 尚待證明 PASS**，MOV 音訊警訊不能聲稱已修復；本機對相同 FFmpeg CENC 合成片在 0、5、7、35、55、63s 解密 Seek 沒有重現 stderr，尚不能排除瀏覽器 Asyncify AVIO 競態。
-
-- **階段 51 速度修正（Firefox E2E 已通過）**：[404a6d7](https://github.com/IvanaGyro/hongguo-dl/commit/404a6d7741c7db1b56b932c611fe0533e458b9eb)：在 `video.load()` 前設定 `defaultPlaybackRate`，載入後再設定 `playbackRate`，切換速度時同步更新兩者；避免 Firefox 切換畫質/來源後重設 1.25×。[Firefox #43295729590](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729590) **completed/success**、[CI #43295729082](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295729082) **success**、[Pages #43295728699](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295728699) **success**，涵蓋既有 720p VVC-only 與 1.25× 播放控制回歸。階段 50 的主 [CI #43295263795](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263795) 與 [Pages #43295263833](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263833) **success**，但 [Firefox #43295263899](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43295263899) **failure**，具體在 `tests/browser-modes.firefox.mjs:142` 等待 `playbackRate===1.25` 超時，非前版 720p codec 選項斷言。
-
-- **階段 50 程式**：[005ad1a](https://github.com/IvanaGyro/hongguo-dl/commit/005ad1adf7fd326fe4c3079cefcba40299dbd1a9)：`src/source-options.js` 不再將使用者選定且存在的 720p ByteVC2-only 無法播放來源自動換成 1080p HEVC；`src/player.js` 編碼選單嚴格依當前畫質，增加 Node 與 Firefox 瀏覽器 regression。**新提交 CI/Browser 結果 PENDING**；不要把代碼提交當測試通過。
-- **階段 49 程式**：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)：metadata fetch/reader 斷線的 `CENC_RANGE_HTTP`、固定無私密資料錯誤訊息，禁止錯誤回退整檔；階段 48 [45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a) 比對 HTTP 206 range/length/body。**已確認**：[CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811) **success**、[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) **success**、[pinned Librempeg HEVC WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) **success**。這些是合成/建置驗證，不是實際紅果 HEVC 解碼。
-- **Firefox FFmpeg.wasm workflow #43294139816** [失敗](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139816)：`tests/ffmpeg.firefox.mjs` 本身實際列印 `Firefox FFmpeg.wasm staged-and-manual-save remux PASSED`，**後續** `tests/browser-modes.firefox.mjs:367` 因選定 720p 時跳至 1080p 導致 HEVC 可選而 FAIL。階段 50 已針對這個具體行為修正。
-- **CENC Browser #43294139965** [失敗](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)：Chromium first frame、55s Seek、跨 Range 五次、90% reload 有個別 PASS，但新增三輪播放／下載切換最終 `tests/cenc-stream.browser.mjs:529` 發現 WASM `[mov...] subsample size exceeds ... / partial file` 主控台 stderr，不能宣稱三輪 E2E PASS。先釐清取消中的 demux 訊息與有效播放錯誤，不隱藏真實 decode failure。
-- **120 秒暫停驗收**：[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) **completed/success**（Chromium synthetic H.264/AAC）；不代表 Android/HEVC 實機。
-
-## 架構及已經驗證的基線
-
-- 使用 pinned **Librempeg Asyncify AVIO WASM**，CENC decrypt + stream copy MP4→**clear fMP4**，送 MSE；從 clear init 的真實 `hvc1/hev1 + hvcC` 選擇 MIME，不以 JS 取代 demux/mux。可參考 `docs/cenc-progressive-to-fmp4.md`。
-- 1080p HEVC/AAC 合成 WASM→FFmpeg 解碼、6 秒 RAP Seek PASS；Chromium／Firefox 合成 H.264 首影格在來源 EOF 前、遠距 Seek/reload PASS；Chromium 300s/1800s 播畢與有界 buffer PASS。詳情在 [CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。
-- BVC2 WASM 實驗版編譯、asset SHA/負例 PASS，**無**真實 ByteVC2 解碼正例、效能或音畫同步證據。
-
-## 下一個工程動作及外部阻礙
-
-**立即下一步**：取得階段 63 新 Web Audio PCM browser fast 的真正結果；若 AudioContext/PCM FAIL，讀具體 log 確認 browser policy／錯誤來源，不放寬成只檢查播放時間。已驗證 fast+long 與 Worker-window WASM 全 PASS，剩 Chromium 9 個快速 Seek MOV/AAC 日誌警訊需再區分取消與實際音訊失真，不能只依 video clock 認定無聲音問題。真實 HEVC/ByteVC2/Android/Windows 裝置仍缺可用素材及實測 是否真正達到三輪模式切換後前向播放；若 FAIL 讀具體錯誤並修正。針對 MOV stderr 仍需獨立驗證 AAC packet/音訊連續性，不能以單純轉為 warning 視為來源完美。接著強化弱網路／取消競態。
-
-**NOT TESTED**：有效授權、可 HTTP 206 的真實紅果 HEVC CENC（先前 CDN HTTP 403）；Windows/Android Firefox 真正 HEVC MSE 首影格／音效／Seek；真實 ByteVC2 bitstream frame decode、AAC 時序、CPU/RAM。合成 PASS 與 MIME 能力宣告不能代替以上實機驗收。
-
-**文件提交不是停止條件，更新後繼續下一階段。**
+**文件更新不是停止條件，更新後繼續工程。**

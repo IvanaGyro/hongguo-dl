@@ -42,7 +42,7 @@
 
 | CENC 分流 long：暫停 120s Range 不增、300s/1800s EOF、MSE buffer/RSS 有界趨勢 | Chromium Linux 合成 H264/AAC；真正牆鐘 120000 ms | **PASS（long job）** | [Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) long 131460510236：Range 9→9；300s 32 Range/span 76.021s；1800s 104 Range/span 72s，非 Android/GPU RAM |
 
-| CENC 真實 Browser MSE AAC 解碼 PCM（440Hz synthetic sine） | Chromium／Firefox headless Web Audio 25×80ms RMS；peak >0.01 且至少 4 窗 >0.005 | **PENDING（階段 63）** | [main 927dd13](https://github.com/IvanaGyro/hongguo-dl/commit/927dd132078dfcfdb976cb53095f8fdb2098d8c9) `CENC_TEST_AUDIO=1`，需實際 Browser fast job PASS，非只靠 FFmpeg/ffprobe |
+| CENC 真實 Browser MSE AAC 解碼 PCM（440Hz synthetic sine） | Chromium／Firefox headless Web Audio 25×80ms RMS；peak >0.01 且至少 4 窗 >0.005 | **PASS（Chromium）／PENDING（Firefox 修正）** | [Browser #43299574104](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43299574104) Chromium peak RMS 0.0885/25 窗 PASS、Firefox AudioContext.resume() 因無 user gesture timeout；[main f1ce714](https://github.com/IvanaGyro/hongguo-dl/commit/f1ce714bdc9f726289e5345b7a86ab21d1358135) 改 trusted click，新的 [Browser #43300329771](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43300329771) PENDING |
 
 ## 固定驗證指令
 
