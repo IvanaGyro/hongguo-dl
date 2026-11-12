@@ -96,18 +96,21 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  */
 export async function openCencProgressiveStream({
   video, url, fileSize, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null
+  startSeconds = 0, durationSeconds = null, videoCodecString = null
 }) {
   if (!/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
     throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
-  const videoCodec = codec === 'hevc' ? 'hvc1' :
+  const videoCodec = codec === 'hevc' ?
+    (/^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/.test(
+      videoCodecString || '') ? videoCodecString : 'hvc1') :
     codec === 'h264' ? 'avc1.42E01E' : null;
   if (!videoCodec) return null;
   const mime = 'video/mp4; codecs="' + videoCodec +
     (hasAac ? ', mp4a.40.2' : '') + '"';
   if (typeof MediaSource === 'undefined' ||
-      !MediaSource.isTypeSupported?.(mime) || !video.canPlayType(mime) ||
+      !MediaSource.isTypeSupported?.(mime) ||
+      (codec !== 'hevc' && !video.canPlayType(mime)) ||
       !await cencRemuxAvailable()) return null;
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
 
@@ -229,7 +232,7 @@ export async function openCencProgressiveStream({
     await close();
     const replacement = await openCencProgressiveStream({
       video, url, fileSize, codec, hasAac, key, signal,
-      startSeconds: seconds, durationSeconds
+      startSeconds: seconds, durationSeconds, videoCodecString
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;
