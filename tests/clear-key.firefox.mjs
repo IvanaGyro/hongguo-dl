@@ -13,6 +13,11 @@ const browser = await firefox.launch({ headless: true,
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 const mediaRequests = [], pageErrors = [];
+const emeDiagnostics = [];
+page.on('console', message => {
+  if (message.text().startsWith('[Hongguo EME]'))
+    emeDiagnostics.push(message.text());
+});
 page.on('pageerror', error => pageErrors.push(error.message));
 const serveApi = async route => {
   const url = new URL(route.request().url());
@@ -92,7 +97,9 @@ try {
     });
     assert(result.currentTime > 0.2, 'Native CENC must advance the video clock');
     assert(result.readyState >= 2 && result.mediaKeys,
-      'Native media pipeline and CDM must be active: ' + JSON.stringify(result));
+      'Native media pipeline and CDM must be active: ' + JSON.stringify({
+        ...result, emeDiagnostics, metadataRequests: mediaRequests.slice(0, 5)
+      }));
     assert.equal(result.videoWidth, 480);
     assert(mediaRequests.length > 0);
     assert(mediaRequests.some(r => r.status === 206 && r.first === 0 && r.last <= 65535),
