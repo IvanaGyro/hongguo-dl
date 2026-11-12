@@ -322,3 +322,12 @@
 - [a4ac231](https://github.com/IvanaGyro/hongguo-dl/commit/a4ac2315bed9954305eee39c601c330aafa10294)：新增 `tests/cenc-startup.test.mjs`，不接觸影片內容，利用 fake MediaSource、Worker、URL.createObjectURL、HEAD response 測試：建 Worker 拋錯時立即 revoke URL、postMessage 同步拋錯時 revoke URL 並 terminate Worker，且傳出的錯誤不得包含底層私人細節。測試完成恢復全部 global mocks。
 - **驗收狀態：PENDING CI**，此 checkpoint 不等於實際 tests PASS；正常路徑的 browser regression（含新 paused backpressure）亦需新 run 明確成功。之前已確證的 1800s synthetic playback PASS 仍可使用，但不能取代新測試。
 - 後續：若 CI/Browser 失敗，檢查一次失敗 job/對應斷言修正；否則接續較長暫停、切集與真實 HEVC 驗收。使用者要求每段工作即記錄，故先寫入此 checkpoint 再繼續。
+
+## 階段 32 — 2026-11-13 BVC2 合法本機正例驗收新增時間軸偏差檢查（已提交，待 CI）
+
+- [54fd067](https://github.com/IvanaGyro/hongguo-dl/commit/54fd067438f54bc5f05e67a72de8c7350b522ef9) 新增純函式 `scripts/bvc2-fixture-timing.mjs`，輸出若含 AAC，要求輸出 MP4 的 video/audio `start_time`、`duration` 可取得且合法，開始與結束時間差都不超過 1.5 秒；音訊不存在則明確回報 `checked:false`，不宣稱有音畫同步證據。
+- [cc9474c](https://github.com/IvanaGyro/hongguo-dl/commit/cc9474cce536ebf3e73e9d80566633b454ab8561) 新增 5 個 Node 單元案例：對齊成功、音訊起點偏差過大、終點偏差過大、遺失 duration 拒絕、無音訊明確略過。
+- [d241153](https://github.com/IvanaGyro/hongguo-dl/commit/d24115337f751dd2c1f4ff394be5f40e143dfc01) 接至 `scripts/verify-bvc2-fixture.mjs`，ffprobe 額外擷取 start_time / duration 並輸出 `avTimeline`；仍會解碼 H.264 frame、FFmpeg full decode、記錄耗時與 Node RSS，且銷毀明文暫存。不需要也不會提交私人 bitstream／簽名 URL／金鑰。
+- **完成邊界**：以上改動 **尚待新 CI 結論**；時間軸起訖偏差檢查**不是**逐影格 A/V sync 或畫質驗證，更**沒有真實 BVC2 正例**，因此 ByteVC2 正式播放仍 NOT TESTED。不存在音訊時不宣稱音畫同步通過。
+- **其他已驗收**：[CI #43285460654](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285460654) 含階段 31 的 CENC Worker 故障注入單元測試 **completed/success**；[CI #43285502025](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43285502025) **success**。CENC 暫停節流的 browser proof 尚須獨立 PASS。
+- 下一步：更新 BVC2 驗收說明、消除殘留過期 metadata 敘述，核對此次新 CI 的一次結論；有錯就修，無錯繼續針對真實來源不可驗的外部阻礙做產品錯誤診斷。所有修改直接 main，不開 PR。
