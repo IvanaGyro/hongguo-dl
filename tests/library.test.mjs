@@ -96,3 +96,13 @@ test('memory buffers are bounded and keyed by source quality/codec', () => {
   assert.notEqual(episodeCacheKey('1', '2', 'auto', 'h264'),
     episodeCacheKey('1', '2', '720p', 'h264'));
 });
+
+test('CENC 55s seek progress survives a temporary 0s media-source reload', () => {
+  const storage = fakeStorage();
+  rememberPlayback(storage, '123456789', '111111111', 55.8, 70);
+  const key = playbackKey('123456789', '111111111');
+  assert.equal(watchRecords(storage)[key].completed, false);
+  rememberPlayback(storage, '123456789', '111111111', 0, 70);
+  assert.equal(watchRecords(storage)[key].seconds, 55.8);
+  assert.equal(watchRecords(storage)[key].completed, false);
+});
