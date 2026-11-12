@@ -62,3 +62,9 @@
 - [`5ac183a`](https://github.com/IvanaGyro/hongguo-dl/commit/5ac183a69de73f19d586f0ef79a3222476284a7b)：原生 FFmpeg 自生成 CENC HEVC→clear fMP4 對照輸出 `hev1`（**非 pinned Librempeg 證據**），因此修正上一階段不當強制 `hvc1`：HEVC 只比對精確 profile/constraint/level，實際從 WASM init 片段採用 `hev1` 或 `hvc1` 作 MSE SourceBuffer MIME，並再次檢查支援。新增 pinned Librempeg WASM proof 解析輸出 sample entry，仍待執行結果。
 - 新 [CI #43291965366](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965366) `in_progress`、[Pages #43291965210](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965210) `queued`、[WASM #43291965388](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965388) `in_progress`、[Browser #43291965317](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43291965317) `pending`，不可標 PASS。
 - **立即恢復點**：若 CI 有具體 FAIL，針對錯誤修復；新增 fake MediaSource 對 `hev1` 動態建 SourceBuffer 的正例、拒絕不支援輸出的負例。接續長暫停與反覆切集測試。真實 HEVC/ByteVC2 仍未有合法 sample 與目標裝置驗證。
+
+## 最新工程 checkpoint（階段 44，2026-11-13）
+
+- main [`971dbc8`](https://github.com/IvanaGyro/hongguo-dl/commit/971dbc88a128513cffbfccc8d73171b9c44c3bfa) 新增 fake MediaSource 直接驗證 Librempeg `hev1` init 必須選 `hev1` SourceBuffer MIME，只有 `hvc1` 能力時必須 fail / stop / release；[`63c19b9`](https://github.com/IvanaGyro/hongguo-dl/commit/63c19b9c5e6902a69412deda3957acf1aea49bc1) 擴充 HEVC provisional Main/Main10 `hev1` MSE 選片探測。保留真實 init 的最終 codec 檢查。
+- [CI #43292269071](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269071) 與 [Pages #43292269068](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269068) 首次查詢均 `in_progress`，不能標 PASS。新 pinned WASM init MIME proof 待查看明確結果；原生 FFmpeg 對照不是 WASM 證據。
+- **立即恢復點**：有 CI 具體 FAIL 先修正；接著加強來源 HTTP 403/416/429 與 codec 不支援的無洩漏錯誤分類與 fail-fast，避免誤將 CDN 拒絕稱為解碼器失敗。繼續長暫停/切集測試。
