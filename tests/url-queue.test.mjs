@@ -23,15 +23,15 @@ test('stable episode filenames naturally sort, sanitise, and indicate codecs', (
     quality: 'auto', codec: 'auto' };
   const one = episodeFileName({ ...base, index: 1 }, '.mp4');
   const sixty = episodeFileName({ ...base, index: 60 }, '.mp4');
-  assert.equal(one, 'nova_新星_第001集.mp4');
-  assert.equal(sixty, 'nova_新星_第060集.mp4');
+  assert.equal(one, 'nova：新星_第001集.mp4');
+  assert.equal(sixty, 'nova：新星_第060集.mp4');
   assert.ok(one < sixty);
   assert.equal(episodeFileName({ ...base, index: 2, quality: '720p', codec: 'hevc' }),
-    'nova_新星_第002集_720p_hevc.mp4');
+    'nova：新星_第002集_720p_hevc.mp4');
   assert.equal(originalExtension('https://cdn.example/path/video.webm?auth=abc'), '.webm');
   assert.equal(collectionFileName([
     { ...base, index: 5 }, { ...base, index: 1 }
-  ], 'zip'), 'nova_新星_第1-5集.zip');
+  ], 'zip'), 'nova：新星_第1-5集.zip');
 });
 
 test('Nova source variant controls expose real resolution and codec tiers', () => {
