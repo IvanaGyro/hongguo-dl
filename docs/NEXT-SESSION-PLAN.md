@@ -3,7 +3,7 @@
 > **2026-11-12 使用者最新指示（優先於本文件原先的分支／PR 步驟）：此專案之後由 agent 直接在 `main` 提交，不再建立 PR。** 確認 `main` HEAD 與 CI 再逐階段提交 `docs/AGENT-PROGRESS.md`。已開啟的 PR #5 已關閉（未透過 PR 合併），其 23 個提交已直接 fast-forward 到 main；勿重新開啟或建立替代 PR。
 
 更新日期：2026-11-13（Asia/Taipei）
-固定交接入口：docs/AGENT-PROGRESS.md。本文件是**下一階段的工作清單與驗收標準**，不是完成報告。
+**精簡即時交接入口：[docs/AGENT-CURRENT.md](AGENT-CURRENT.md)**；完整可追溯紀錄：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)。本文件是下一階段的工作清單與驗收標準，不是完成報告。
 原始評估基準 main：fdb2039e68819334946fbc1fb44c3cafea6d61d6。後續 agent 應重新確認 HEAD。
 專案：https://github.com/IvanaGyro/hongguo-dl
 
