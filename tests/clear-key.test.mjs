@@ -138,3 +138,24 @@ test('prefers browser native EME and prepares license before fetching media', as
   await result.close();
   assert.equal(sessionClosed, true);
 });
+
+test('aborting stalled CENC KID metadata Range cancels reader and stops probing', async () => {
+  const controller = new AbortController();
+  let opened = 0, canceled = 0;
+  const stream = new ReadableStream({
+    start() { opened++; },
+    cancel() { canceled++; }
+  });
+  const pending = probeCencKid('https://example.com/encrypted.mp4', controller.signal,
+    async (_url, options) => {
+      assert.equal(options.headers.Range, 'bytes=0-65535');
+      return new Response(stream, { status: 206, headers: {
+        'Content-Range': 'bytes 0-65535/100000'
+      } });
+    });
+  await Promise.resolve();
+  controller.abort();
+  await assert.rejects(pending, /已切換影片/);
+  assert.equal(opened, 1);
+  assert.equal(canceled, 1, 'Metadata stream must be canceled immediately on abort');
+});
