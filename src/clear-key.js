@@ -3,7 +3,7 @@
 // millions of samples in JS/WASM. JS inspects at most 1 MiB of MP4 metadata.
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
-import { inspectMp4TrackFormats } from './mp4-track-formats.js';
+import { inspectMp4TrackFormats, movieDurationSeconds } from './mp4-track-formats.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_MOOV = 1024 * 1024;
@@ -128,6 +128,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
         metadata.hasAac = tracks.hasAac;
         metadata.videoCodec = tracks.videoCodec;
         metadata.audioTracks = tracks.audioTracks;
+        metadata.movieDurationSeconds = movieDurationSeconds(moov);
       }
       return cencKidFromMoov(moov);
     }
