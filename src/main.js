@@ -627,38 +627,37 @@ async function runJob(job, signal) {
 }
 
 async function startBulk(type) {
-  if (bulkController || !series || !selected.size) return;
-  const episodes = series.episodes.filter(ep => selected.has(ep.vid));
-  if (type === 'concat' && episodes.length < 2) return;
+  if (bulkController) return;
+  const items = jobs.filter(job => exportSelected.has(job.id));
+  if (!items.length) return;
   bulkController = new AbortController();
   const signal = bulkController.signal;
   $('bulk-cancel').hidden = false;
-  renderEpisodes();
+  renderQueue();
   $('bulk-status').textContent = type === 'zip'
-    ? '正在啟動單一 ZIP 下載，請保留此頁面直到完成…'
-    : '正在準備無損合併…';
+    ? '正在建立 ZIP 下載…' : '正在準備已選擇的 MP4…';
   try {
-    await runBulk({
-      type, series, episodes, quality: $('quality').value, codec: $('codec').value,
-      outputMode: $('output-mode').value,
-      sourceFor: getSource, fetchBytes, cache: mediaCache, signal,
-      saveZip: (stream, filename) => triggerArchiveDownload(stream, filename, {
-        onFallback: error => {
-          $('bulk-status').textContent = '瀏覽器不支援串流下載（' + error.message +
-            '），改用 240 MiB 上限的單一 ZIP 記憶體備援模式…';
+    await exportQueue({
+      type, jobs: items,
+      readFile: readQueuedFile,
+      currentStatus: id => jobs.find(j => j.id === id)?.status || 'missing',
+      signal,
+      saveArchive: (stream, filename) => triggerArchiveDownload(stream, filename, {
+        onFallback: () => {
+          $('bulk-status').textContent = '改用記憶體 ZIP 模式（上限 240 MiB）';
         }
       }),
-      saveOutput: saveProcessed,
+      saveMp4: (bytes, filename) => saveProcessed(bytes, filename),
       onStatus: text => { $('bulk-status').textContent = text; }
     });
   } catch (error) {
-    const result = classifyError(error);
-    $('bulk-status').textContent = (signal.aborted ? '批次處理已取消' : '批次處理失敗') +
-      '：' + result.message;
+    const failure = classifyError(error);
+    $('bulk-status').textContent = (signal.aborted ? '已取消' : '無法匯出') +
+      ' · ' + failure.message;
   } finally {
     bulkController = null;
     $('bulk-cancel').hidden = true;
-    renderEpisodes();
+    renderQueue();
   }
 }
 $('api-settings-form').addEventListener('submit', saveApiSettings);
@@ -668,6 +667,10 @@ player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
   qualitySelect: $('player-quality'), codecSelect: $('player-codec'),
+  speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
+  settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
+  settingsClose: $('player-settings-close'), pipButton: $('player-pip'),
+  sourceInfo: $('player-source-info'),
   getSeries: () => series, sourceFor: getSource,
   fetchBytes, getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
@@ -676,7 +679,7 @@ player = createPlayer({
 $('mode-download').addEventListener('click', () => setMode('download'));
 $('mode-play').addEventListener('click', () => setMode('play'));
 $('bulk-zip').addEventListener('click', () => { void startBulk('zip'); });
-$('bulk-concat').addEventListener('click', () => { void startBulk('concat'); });
+$('bulk-concat').addEventListener('click', () => { void startBulk('mp4'); });
 $('bulk-cancel').addEventListener('click', () => {
   if (bulkController) bulkController.abort();
 });
@@ -687,6 +690,23 @@ $('recent-series').addEventListener('click', event => {
   if (!record) return;
   $('input-url').value = record.seriesId;
   showSeries(record, true);
+});
+$('linked-series').addEventListener('click', event => {
+  const button = event.target.closest('button[data-linked-id]');
+  if (!button) return;
+  const entry = recentSeries(localStorage).find(x => x.seriesId === button.dataset.linkedId);
+  if (entry) showSeries(entry, true);
+});
+$('share-series').addEventListener('click', async () => {
+  if (!series?.seriesId) return;
+  const url = urlForSeriesIds(location.href, [series.seriesId]);
+  try {
+    await navigator.clipboard.writeText(url);
+    $('share-series').textContent = '✓ 已複製';
+    setTimeout(() => { $('share-series').textContent = '分享連結'; }, 2200);
+  } catch {
+    $('share-series').textContent = '複製失敗';
+  }
 });
 renderRecentSeries();
 $('lookup-form').addEventListener('submit', lookup);
@@ -712,6 +732,22 @@ $('episodes').addEventListener('change', e => {
   else selected.delete(checkbox.dataset.vid);
   renderEpisodes();
 });
+$('queue').addEventListener('change', event => {
+  const box = event.target.closest('input[data-export-id]');
+  if (!box) return;
+  if (box.checked) exportSelected.add(box.dataset.exportId);
+  else exportSelected.delete(box.dataset.exportId);
+  persistExportSelection();
+  renderQueue();
+});
+$('queue-select-all').addEventListener('click', () => {
+  exportSelected = new Set(jobs.map(job => job.id));
+  persistExportSelection(); renderQueue();
+});
+$('queue-select-none').addEventListener('click', () => {
+  exportSelected.clear();
+  persistExportSelection(); renderQueue();
+});
 $('queue').addEventListener('click', e => {
   const button = e.target.closest('button[data-action]');
   if (!button) return;
@@ -719,21 +755,45 @@ $('queue').addEventListener('click', e => {
   if (!job) return;
   if (button.dataset.action === 'retry') queueRetry(job);
   if (button.dataset.action === 'cancel') cancel(job);
+  if (button.dataset.action === 'save')
+    void saveOne(job).catch(error => update(job, {
+      errorCode: 'SAVE_ERROR', error: error.message || '儲存失敗'
+    }));
 });
 $('retry-failed').addEventListener('click', () => {
   for (const job of jobs.filter(j => j.status === 'failed' && j.vid !== 'direct')) queueRetry(job);
 });
 $('clear-finished').addEventListener('click', () => {
-  jobs = jobs.filter(j => !['completed', 'canceled'].includes(j.status));
-  saveJobs(); schedulePaint();
+  const remove = jobs.filter(j => ['completed', 'canceled'].includes(j.status));
+  if (!remove.length) return;
+  if (!window.confirm('清除 ' + remove.length +
+    ' 個佇列項目？這會同時刪除瀏覽器內的暫存影片，但不會刪除已儲存到資料夾的影片。')) return;
+  jobs = jobs.filter(j => !remove.includes(j));
+  for (const job of remove) {
+    exportSelected.delete(job.id);
+    void removeDownload(job.id).catch(() => {});
+  }
+  persistExportSelection(); saveJobs(); schedulePaint();
 });
 $('concurrency').addEventListener('change', pump);
 if (!window.showDirectoryPicker) {
-  $('choose-folder').disabled = true;
-  $('folder-status').textContent = '目前瀏覽器不支援資料夾串流寫入';
-  $('browser-note').textContent = '此瀏覽器會以 Blob 方式儲存單集，為避免記憶體耗盡，每集限 300 MiB。需要大型檔案時建議使用支援 File System Access API 的瀏覽器。';
+  $('choose-folder').hidden = true;
+  $('folder-status').textContent = '本機暫存';
+  $('browser-note').textContent = '✓ 影片完成後存入瀏覽器 · 請從佇列儲存或打包匯出';
 } else {
-  $('browser-note').textContent = '建議先選擇資料夾，讓大型原始影片直接寫入硬碟。轉檔仍需將媒體載入 FFmpeg.wasm 記憶體。';
+  $('browser-note').textContent = '✓ 已完成的影片可逐集儲存，或用佇列 ZIP／MP4 匯出';
+}
+if (navigator.storage?.estimate) {
+  navigator.storage.estimate().then(estimate => {
+    if (estimate.quota && !directory)
+      $('browser-note').title = '瀏覽器暫存用量 ' + formatBytes(estimate.usage) +
+        ' / ' + formatBytes(estimate.quota);
+  }).catch(() => {});
 }
 renderQueue();
 setMode('download');
+const initialIds = idsFromUrl(new URL(location.href));
+if (initialIds.length) {
+  $('input-url').value = initialIds.join(', ');
+  void lookupIds(initialIds);
+}
