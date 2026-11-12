@@ -75,7 +75,7 @@ jobs:
             -x265-params pools=none:frame-threads=1:wpp=0:log-level=error:keyint=24:min-keyint=24:scenecut=0 \
             -pix_fmt yuv420p -c:a aac -b:a 128k \
             -encryption_scheme cenc-aes-ctr \
-            -encryption_key 0011223344556677889900aabbccddeeff \
+            -encryption_key 00112233445566778899aabbccddeeff \
             -encryption_kid 11223344556677889900aabbccddeeff \
             -movflags +faststart -y tests/fixtures/cenc-hevc-1080p.mp4
           test -s tests/fixtures/cenc-hevc-1080p.mp4
