@@ -5,7 +5,7 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20)
   const key = String(error.code || 'UNKNOWN') + '\u0000' + String(error.message || '');
   const streak = previous?.key === key ? (previous.streak || 0) + 1 : 1;
   const attempts = (previous?.attempts || 0) + 1;
-  const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY'].includes(error.code)
+  const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT'].includes(error.code)
     ? 'not-retryable' : streak >= repeatedLimit ? 'repeated'
     : attempts >= attemptLimit ? 'total-limit' : null;
   return { key, streak, attempts, stoppedBy, retry: !stoppedBy,
