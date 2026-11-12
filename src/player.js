@@ -7,6 +7,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure } from './retry.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
+import { availableRenditions, chooseRendition, codecId } from './source-options.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -138,11 +139,27 @@ export function createPlayer({
     const key = episodeCacheKey(series?.seriesId, episode.vid, quality, codec);
     const blob = cache.get(key);
     if (blob) return { blob, source: { codec, quality, source: 'cache' } };
+    // Ask the Worker for all available variants once. Filtering inside the
+    // player supports source-specific renditions (e.g. 540p/480p/360p) instead
+    // of claiming every episode has the same quality/codec options.
     const list = episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await sourceFor(series.seriesId, episode.vid, quality, codec);
-    const source = list.variants?.[0];
-    if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '無可用片源');
+      : await sourceFor(series.seriesId, episode.vid, 'auto', 'auto');
+    const variants = list.variants || [];
+    const available = availableRenditions(variants);
+    for (const option of qualitySelect.options) {
+      if (option.value !== 'auto')
+        option.disabled = available.qualities.length > 0 &&
+          !available.qualities.includes(option.value);
+    }
+    for (const option of codecSelect.options) {
+      if (option.value !== 'auto')
+        option.disabled = available.codecs.length > 0 &&
+          !available.codecs.includes(option.value);
+    }
+    const source = chooseRendition(variants, { quality, codec });
+    if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE',
+      '此集沒有選擇的畫質／編碼，請改為自動或其他可用選項');
     const profile = source.source === 'app' ? 'app' : 'web';
     if (!isHlsUrl(source.url) && !source.contentKey)
       return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()), source };
@@ -168,6 +185,12 @@ export function createPlayer({
     const resolved = await sourceForEpisode(episode, signal);
     if (signal.aborted || currentToken !== token) return;
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
+    const containerCodec = codecId(resolved.source?.codec);
+    const decoder = containerCodec === 'hevc'
+      ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
+      ? 'video/mp4; codecs="vvc1"' : 'video/mp4; codecs="avc1.42E01E"';
+    if (containerCodec && video.canPlayType(decoder) === '')
+      sourceInfo.textContent += ' · 此編碼可能無法在本瀏覽器播放';
     if (activeUrl) URL.revokeObjectURL(activeUrl);
     activeUrl = resolved.blob ? URL.createObjectURL(resolved.blob) : null;
     loading = true;
