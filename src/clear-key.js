@@ -91,15 +91,17 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   if (!match || Number(match[1]) !== start || Number(match[2]) >= start + bytes ||
       !Number.isSafeInteger(Number(match[3])) || Number(match[3]) <= Number(match[2])) {
     await res.body?.cancel();
-    throw errorWith('CENC_UNAVAILABLE', 'HTTP Content-Range 不符合要求');
+    throw errorWith('CENC_RANGE_INVALID', 'HTTP Content-Range 不符合要求');
   }
   const length = Number(res.headers.get('content-length'));
-  if (res.headers.has('content-length') && length > bytes) {
-    await res.body?.cancel();
-    throw errorWith('CENC_UNAVAILABLE', 'HTTP Range 回應過大');
+  const declaredBytes = Number(match[2]) - start + 1;
+  if (res.headers.has('content-length') &&
+      (!Number.isSafeInteger(length) || length !== declaredBytes)) {
+    await res.body?.cancel().catch(() => {});
+    throw errorWith('CENC_RANGE_INVALID', 'HTTP Range Content-Length 不符合宣告');
   }
   const reader = res.body?.getReader();
-  if (!reader) throw errorWith('CENC_UNAVAILABLE', 'HTTP Range 回應缺少串流');
+  if (!reader) throw errorWith('CENC_RANGE_INVALID', 'HTTP Range 回應缺少串流');
   // A metadata Range may stall while the user switches episodes.
   // Do not wait for an unrelated network chunk to arrive to notice abort.
   const onAbort = () => { void reader.cancel().catch(() => {}); };
@@ -112,7 +114,8 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
       aborted(signal);
       if (done) break;
       count += value.byteLength;
-      if (count > bytes) throw errorWith('CENC_UNAVAILABLE', 'HTTP Range 超過預算');
+      if (!(value instanceof Uint8Array) || count > declaredBytes)
+        throw errorWith('CENC_RANGE_INVALID', 'HTTP Range 超過預算');
       chunks.push(value);
     }
   } finally {
@@ -121,6 +124,8 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
     reader.releaseLock();
   }
   aborted(signal);
+  if (count !== declaredBytes)
+    throw errorWith('CENC_RANGE_INVALID', 'HTTP Range 內容不完整');
   const output = new Uint8Array(count);
   let offset = 0;
   for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }

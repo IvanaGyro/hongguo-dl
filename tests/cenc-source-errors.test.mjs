@@ -43,3 +43,44 @@ for (const [status, code, nonRetryable] of [
       fetchImpl), { code });
   });
 }
+
+test('truncated or malformed 206 metadata never falls back to whole encrypted MP4', async () => {
+  const cases = [
+    {
+      name: 'inconsistent Content-Range',
+      range: 'bytes 1-65535/100000', bytes: 65535
+    },
+    {
+      name: 'declared full Range but truncated body',
+      range: 'bytes 0-65535/100000', bytes: 100
+    },
+    {
+      name: 'oversized body with matching Range header',
+      range: 'bytes 0-65535/100000', bytes: 65537
+    },
+    {
+      name: 'short declared Content-Length',
+      range: 'bytes 0-65535/100000', bytes: 100, contentLength: '100'
+    }
+  ];
+  for (const scenario of cases) {
+    let requests = 0;
+    await assert.rejects(openClearKeyStream({
+      video: { canPlayType: () => '' },
+      source, codec: 'hevc', workerOrigin: 'https://worker.example',
+      fetchImpl: async (_url, { headers }) => {
+        requests++;
+        assert.equal(headers.Range, 'bytes=0-65535');
+        return new Response(new Uint8Array(scenario.bytes), {
+          status: 206, headers: {
+            'Content-Range': scenario.range,
+            ...(scenario.contentLength ? { 'Content-Length': scenario.contentLength } : {})
+          }
+        });
+      },
+      requestAccess: async () => { throw new Error('Unexpected EME fallback'); }
+    }), error => error.code === 'CENC_RANGE_INVALID' &&
+      !error.message.includes('https://cdn.example'));
+    assert.equal(requests, 1, scenario.name + ': no whole-episode fallback');
+  }
+});
