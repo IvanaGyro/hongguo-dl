@@ -264,3 +264,12 @@
 - **30 分鐘有界合成影片驗收**：`42744fd` 讓 CENC browser stress 可測 300／1800 秒；`373aa37` 的 workflow 用 480×270 6fps AAC 合成 1800 秒 CENC progressive MP4，16× 加速完整播放，驗證 MSE buffer、無全檔讀取與 Linux RSS 趨勢。最新 [browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) 上次快照 **in_progress**，尚未標記 PASS。
 - **ByteVC2 真實正例準備工具**：[3893f22](https://github.com/IvanaGyro/hongguo-dl/commit/3893f2231d346e5e9894d2015f6640648919aea1) 新增 `scripts/verify-bvc2-fixture.mjs`：只接收**使用者合法持有的本地檔案**，必要時從環境變數接 AES-CTR key，對 pinned BVC2→x264 WASM 實測、ffprobe 確認 H.264 非零畫格、FFmpeg 真正 decode、記時/RSS、刪除暫存明文；不 fetch signed URL，不提交內容。仍 **沒有真實 ByteVC2 bitstream 正例**，P4 無法標 PASS。
 - `docs/bvc2-wasm.md` 已記錄安全驗證方式、上述證據、仍需真實 bitstream 的阻礙；下一步繼續驗收 1800 秒壓測、新 BVC2 bundle + Pages，修正任何實際 failed job，不因 checkpoint 停工。
+
+## 階段 25 — 2026-11-13 30 分鐘回歸失敗：長 MP4 moov 超過 1MiB，已修補並新增邊界測試
+
+- **可重現失敗**：[CENC browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069)，**completed/failure**，唯一失敗步驟 `Assert browser presents frames before HTTP EOF`。內部 Chromium/Firefox 15s 起播、55s/7s/63s/35s/5s 往返 seek/reload、切換下載模式、Chromium 300s 完整播放均 **PASS**；300s 量到 `maxBufferedSpan=78.021402s`，`processTreeRssMiB: first=769.2, peak=769.2, last=764.1, samples=20`（包含 Node test+browser 子行程及 shared pages）。
+- **1800 秒新案例 FAIL 的具體診斷**：1800s 合成 MP4 約 `25,829,221` bytes；`[Hongguo EME] native stream unavailable: no-cenc-kid`，後續落回整檔 fetch，mock 僅允許 Range 故出現 `HTTP_416` 五次、最後 20 秒未能進入 MSE，而非 HEVC/MSE 解碼失敗。最可能原因：長片 `moov` 的 sample table >1MiB，而 `src/clear-key.js` 的 `MAX_MOOV` 過小，`probeCencKid` 因上限回傳 null。
+- **修補 [40f324f](https://github.com/IvanaGyro/hongguo-dl/commit/40f324fd94b3c790fbf2bb881da9ef703d3e7101)**：將 metadata moov hard cap 從 1MiB 提至 **8MiB**；仍只發有界 HTTP Range，拒絕超量，並保持最多 4 次 metadata requests。不恢復無界 whole-response allocation。
+- **新單元測試 [7e66b0b](https://github.com/IvanaGyro/hongguo-dl/commit/7e66b0bb20f9e0e4bc9ce569bfe7a2eae5649546)**：實造 1.25MiB `moov` 加 KID，期望兩次有界 Range 可取得 key；合成宣告超過 8MiB 的 `moov` 必須一次 header 判定拒絕、不再 fetch。**這是針對具體診斷所做修補，尚待新 1800 秒 Browser CI 通過才可升級 PASS**。
+- **README 同步 [01c7d44](https://github.com/IvanaGyro/hongguo-dl/commit/01c7d445578abf81d583b96011ceb6bd43997e02)**：修正過時的「所有 seek／長片緩衝均未驗證」，列出新合成 CENC 55s/10/50/90%、300 秒、1080p HEVC 及 BVC2 negative 的真實 PASS，清楚標示真實來源／Android／ByteVC2 正例缺口。
+- **後續**：繼續執行長片 code/test 閉環、新 30min browser proof；若長片 moov >8MiB，再以實際 log 與安全上限評估，不放寬到無界。完整驗收仍需合法真實 HEVC/ByteVC2 bitstream 與設備。
