@@ -132,20 +132,21 @@ h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.01em; }
 #player-video { border-radius: 12px; }
 .player-bottom-controls {
   position: absolute; z-index: 3; bottom: 0; left: 0; right: 0;
-  padding: 1.15rem .55rem .45rem;
+  padding: .45rem .5rem .25rem;
   border-radius: 0 0 12px 12px;
   background: linear-gradient(to top, #030811f0 0%, #030811a8 54%, transparent 100%);
 }
 .player-seek {
-  display: block; width: 100%; height: 14px; margin: 0 0 .25rem;
+  display: block; width: 100%; height: 10px; margin: 0 0 .1rem;
   accent-color: #90c4ff; cursor: pointer; background: transparent;
 }
 .player-control-bar, .player-control-group { display: flex; align-items: center; gap: .25rem; }
 .player-control-bar { justify-content: space-between; min-width: 0; }
 .player-control-group button {
   background: transparent; border: 0; border-radius: 7px;
-  min-width: 36px; min-height: 38px; padding: .28rem .4rem;
-  color: #fff; font-size: 1.2rem; font-weight: 700; text-shadow: 0 1px 3px #000c;
+  min-width: 38px; height: 38px; padding: .25rem .35rem;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+  color: #fff; font-size: 1.18rem; font-weight: 700; text-shadow: 0 1px 3px #000c;
 }
 .player-control-group button:hover:not(:disabled) { background: #304968e6; }
 .player-clock { white-space: nowrap; font-size: .72rem; color: #e4efff; font-variant-numeric: tabular-nums; padding-left: .25rem; }
@@ -177,7 +178,7 @@ h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.01em; }
 @media (max-width: 550px) {
   .hero { padding-top: 1.2rem; }
   .episode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .player-control-group button { min-width: 38px; min-height: 42px; }
+  .player-control-group button { min-width: 38px; height: 40px; }
   .player-clock { font-size: .66rem; }
   .job-topline { flex-direction: column; gap: .5rem; }
   .job-controls { justify-content: flex-start; }

@@ -235,6 +235,7 @@ try {
   assert.equal(downloadEvents, beforeFullZip + 1);
   const fullPath = await fullZip.path();
   await zipInspect(fullPath, 60, '六十集測試.E01.mp4', '六十集測試.E60.mp4');
+  await page.setViewportSize({ width: 393, height: 852 });
   await page.goto(base + '?id=99', { waitUntil: 'load' });
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === '受限測試');
   assert.match(await page.locator('#series-count').textContent(), /55 集可能受限制/);
@@ -242,6 +243,25 @@ try {
   assert.equal(await page.locator('#episodes label').nth(5).textContent(), '6');
   assert.match(await page.locator('#episodes label').nth(5).locator('input').getAttribute('aria-label'),
     /可能受限制/);
+  await page.locator('#mode-play').click();
+  await page.locator('#player-panel').waitFor({ state: 'visible' });
+  const mobile = await page.evaluate(() => {
+    const stage = document.querySelector('#player-stage').getBoundingClientRect();
+    const controls = document.querySelector('.player-bottom-controls').getBoundingClientRect();
+    return {
+      horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+      stageHeight: stage.height, controlsHeight: controls.height,
+      buttonsInside: ['player-prev', 'player-play-pause', 'player-next',
+        'player-settings-toggle', 'player-fullscreen'].every(id => {
+        const rect = document.getElementById(id).getBoundingClientRect();
+        return rect.left >= stage.left && rect.right <= stage.right;
+      })
+    };
+  });
+  assert.equal(mobile.horizontalOverflow, false, 'Mobile layout must not scroll sideways');
+  assert.equal(mobile.buttonsInside, true, 'All mobile controls should fit in the player');
+  assert(mobile.controlsHeight < mobile.stageHeight * 0.5,
+    'Controls should not obscure most of the video on mobile');
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);
