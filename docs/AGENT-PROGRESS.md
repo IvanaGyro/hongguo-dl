@@ -308,3 +308,10 @@
 - [7b46f19](https://github.com/IvanaGyro/hongguo-dl/commit/7b46f19a3812dbfd742670e4fe438e52a1afac8c)：`.github/workflows/cenc-browser.yml` 在 300s 案例啟用 `CENC_TEST_PAUSE=1`，保留 1800s 完整播放案例不變。
 - **驗收狀態：NOT YET TESTED**。這兩個提交已觸發新的 browser acceptance，但新增 PASS 行尚未由執行紀錄證明；不得以既有 1800s 成功替代「暫停節流」新案例。後續只檢查這項測試一次；失敗即依唯一具體錯誤修復。
 - 下一步：另查 CENC worker/源站中斷時的資源釋放與不受限備援路徑；若 browser 新測試失敗須優先修。繼續每階段 checkpoint，直接 main、不開 PR。
+
+## 階段 30 — 2026-11-13 CENC Worker 同步初始化失敗時立即清理 object URL
+
+- [8cefd5a](https://github.com/IvanaGyro/hongguo-dl/commit/8cefd5adbd2d4a5b52dc451427d342644b53b5b5)：`src/cenc-remux.js` 的 `openCencProgressiveStream()`，在 `URL.createObjectURL(MediaSource)` 之後建立 Worker 時以 try/catch 保證若建構失敗即 `URL.revokeObjectURL`；在 `worker.postMessage({type:'start'})` 同步拋錯時，呼叫已存在的 `close()`，完成 abort、remove listener、terminate Worker 與 revoke URL，再向播放器提供固定的 `CENC_UNAVAILABLE` 錯誤。不暴露媒體網址和 CENC key。
+- **改動界線**：未變更已經 Chromium/Firefox synthetic PASS 的 AVIO Range、WASM remux、MSE fragment/seek 本體；防止只有同步啟動錯誤時由於 stream handle 還沒回傳而沒有可呼叫的 close。尚未加入故障注入單元測試；正常路徑待新 CI/browser regression 確認，**不冒稱已驗證例外路徑**。
+- 新 `CENC_TEST_PAUSE=1` 的 300 秒播放暫停/恢復 CI 仍需明確 PASS；先前 1800s PASS 是舊版、未涵蓋此情境。
+- 下一步：驗證 CENC 改動後 baseline + pause case，失敗即修；可再補 Worker 建構／postMessage 故障注入測試，或進一步驗證實機 HEVC（有合法 206 來源及適當裝置時）。直接 main、不開 PR；每一段更新本文件。
