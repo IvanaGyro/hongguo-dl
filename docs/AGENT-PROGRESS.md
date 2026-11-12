@@ -631,3 +631,12 @@
 - **驗收 PENDING**：新 CI/Browser fast 尚無此 commit 的 completed/success；如果測試 FAIL 必須檢查究竟哪一 phase 的 error，不能任意加大分流範圍消除錯誤。前 [Browser #43297755488](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297755488) fast+long PASS 沒有這個 active-stream 區分，因此不能代替新版 proof。
 - **同時進行的獨立音訊正例**：stage66 [0de621e](https://github.com/IvanaGyro/hongguo-dl/commit/0de621efa13ea2b6ac0e61cbe80986f39424b086) 的 [Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) 當次查詢 fast/long 都 `in_progress`；其 fast 也包含 startup+post-seek AAC PCM，需等真實結果，不能用主 CI 成功推論。
 - **下一步**：若 active-stream MOV 警訊觸發 FAIL，研究 Librempeg indexed seek 在特定影音 sample 與 AVIO/取消競態造成的錯誤，不能將正則寫得更寬繞過；如 WebAudio 啟動仍卡住，查看 Firefox 的 browser context + PulseAudio 虛擬輸出狀態診斷。
+
+
+## 階段 68 — 2026-11-13 CENC 遠距 MSE Seek 會重設 playbackRate，修正使用者選定 1.25×
+
+- **實際程式缺口**：階段 51 修復了切畫質與換片 `video.load()` 會把 `playbackRate` 重設的問題，但 `src/player.js` unbuffered seek 重建 `nativeStream` 後仍直接 `video.src=nextStream.url; video.load()`，未同步 `defaultPlaybackRate/playbackRate`，因此有與第一版相同風險。這是實際產品播放路徑，不僅測試程式。
+- **已直接提交 main**：[9ef5bf90074e6a60a1303ef8eb7c0619c440b9d4](https://github.com/IvanaGyro/hongguo-dl/commit/9ef5bf90074e6a60a1303ef8eb7c0619c440b9d4)，修改 `src/player.js` 與 `tests/cenc-stream.browser.mjs`。每次 `oldStream.seekTo(target)` 建新 MSE URL，從 `#player-speed` 取設定值，先設 `video.defaultPlaybackRate`，`load()` 後再設 `video.playbackRate`；Browser Chromium/Firefox 合成 70s 的 unbuffered 55s seek 前用實際速度選單選 1.25×，之後斷言兩個率都保留 1.25，最後還原 1×。
+- **新測試尚 PENDING**：這項 regression 尚未拿到對應 HEAD 的 Browser E2E completed/success，不能以之前非 1.25× 的 Seek PASS 取代。
+- **另項前版驗收結果**：[Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) fast job `131473676149` **failure**；但音訊部分確有 `PASS chromium ... PCM (startup)` RMS 0.08854、25 個非靜音視窗，以及 `PASS firefox ... PCM (startup)` RMS 0.08855、23 個非靜音視窗。這是第一次在 Firefox headless 真正驗收 AAC PCM 解碼正例，Linux PulseAudio/null sink 設置有效。第三個測試於 Chromium 70s seek 到 55s 後，等待 `video.currentTime>55.75` 超過 90s；目前無 log 斷言原因，不能推論是新的 remote seek playbackRate patch 造成（該 run 的 HEAD 在此 patch 之前）。
+- **初步可調查點**：stage65 在 CENC_TEST_SEEK=1 的 70s 測試開頭先對同一 `<video>` 進行 Web Audio `createMediaElementSource`，然後於 startup PCM 探測結束立刻 `context.close()`。當接下來 MSE remote seek 會 `video.load()` 時，媒體元素仍與已關閉 AudioContext 的 source node 綁定，可能干擾後續播放；先把「初次 PCM」與「Seek 之後 PCM」移成互不重疊的驗收階段並增加狀態診斷，不能盲目把超時歸因 CENC 原始碼或增加 timeout。
