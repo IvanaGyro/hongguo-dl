@@ -7,7 +7,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure } from './retry.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
-import { availableRenditions, chooseRendition, codecId } from './source-options.js';
+import { availableRenditions, renditionForAttempt, codecId } from './source-options.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -33,6 +33,7 @@ export function createPlayer({
   let controller = null, token = 0, activeUrl = null;
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
+  let sourceAttempt = 0;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
     [qualitySelect, preferences.quality], [codecSelect, preferences.codec],
@@ -133,11 +134,11 @@ export function createPlayer({
     });
     if (!signal.aborted) trySeek();
   }
-  async function sourceForEpisode(episode, signal) {
+  async function sourceForEpisode(episode, signal, attempt = 0) {
     const series = getSeries();
     const quality = qualitySelect.value, codec = codecSelect.value;
     const key = episodeCacheKey(series?.seriesId, episode.vid, quality, codec);
-    const blob = cache.get(key);
+    const blob = attempt === 0 ? cache.get(key) : null;
     if (blob) return { blob, source: { codec, quality, source: 'cache' } };
     // Ask the Worker for all available variants once. Filtering inside the
     // player supports source-specific renditions (e.g. 540p/480p/360p) instead
@@ -157,7 +158,9 @@ export function createPlayer({
         option.disabled = available.codecs.length > 0 &&
           !available.codecs.includes(option.value);
     }
-    const source = chooseRendition(variants, { quality, codec });
+    // Rotate through the advertised CDNs on retry rather than repeatedly
+    // fetching a failing signed URL from one upstream edge.
+    const source = renditionForAttempt(variants, { quality, codec }, attempt);
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE',
       '此集沒有選擇的畫質／編碼，請改為自動或其他可用選項');
     const profile = source.source === 'app' ? 'app' : 'web';
@@ -182,7 +185,7 @@ export function createPlayer({
     return { blob: result, source };
   }
   async function load(episode, currentToken, signal, autoPlay) {
-    const resolved = await sourceForEpisode(episode, signal);
+    const resolved = await sourceForEpisode(episode, signal, sourceAttempt++);
     if (signal.aborted || currentToken !== token) return;
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     const containerCodec = codecId(resolved.source?.codec);
@@ -243,6 +246,7 @@ export function createPlayer({
     disposeSource();
     current = episode;
     failure = null;
+    sourceAttempt = 0;
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { idsFromUrl, urlForSeriesIds } from '../src/deep-link.js';
 import { episodeFileName, collectionFileName, originalExtension } from '../src/naming.js';
-import { availableRenditions, chooseRendition } from '../src/source-options.js';
+import { availableRenditions, chooseRendition, qualityId, renditionForAttempt } from '../src/source-options.js';
 import { orderQueueSelection, exportQueue } from '../src/queue-export.js';
 import { rememberPlayback, playbackKey, watchRecords } from '../src/library.js';
 
@@ -48,6 +48,29 @@ test('Nova source variant controls expose real resolution and codec tiers', () =
   assert.equal(chooseRendition(variants, { quality: '540p' }).codec, 'bytevc2');
   assert.equal(chooseRendition(variants, { codec: 'hevc' }).quality, '1080p');
   assert.equal(chooseRendition(variants, { quality: '720p', codec: 'hevc' }), null);
+});
+
+test('mislabelled 720p HEVC does not override the actual dimensions', () => {
+  const bad = { url: 'https://cdn-a.example/bad', codec: 'hevc',
+    quality: '720p', width: 1920, height: 1080 };
+  const good = { url: 'https://cdn-b.example/good', codec: 'bytevc2',
+    quality: '720p', width: 1280, height: 720 };
+  assert.equal(qualityId(bad), '1080p');
+  assert.equal(qualityId({ codec: 'bytevc2', quality: '540p',
+    width: 1024, height: 576 }), '540p');
+  assert.equal(chooseRendition([bad, good], { quality: '720p' }), good);
+  assert.equal(chooseRendition([bad, good], { quality: '720p', codec: 'hevc' }), null);
+});
+
+test('retries choose alternate CDN within the selected rendition', () => {
+  const a = { url: 'https://cdn-a.example/one', codec: 'hevc', quality: '1080p' };
+  const b = { url: 'https://cdn-b.example/two', codec: 'hevc', quality: '1080p' };
+  const lower = { url: 'https://cdn-c.example/three', codec: 'bytevc2', quality: '720p' };
+  const variants = [a, b, lower];
+  assert.equal(renditionForAttempt(variants, { quality: '1080p' }, 0), a);
+  assert.equal(renditionForAttempt(variants, { quality: '1080p' }, 1), b);
+  assert.equal(renditionForAttempt(variants, { quality: '1080p' }, 2), a);
+  assert.equal(renditionForAttempt(variants, { quality: '720p' }, 1), lower);
 });
 
 test('queue export chooses queue entries sorted by series and episode, not current page selection', () => {

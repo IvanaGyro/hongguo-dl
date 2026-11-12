@@ -10,6 +10,7 @@ import { episodeFileName, originalExtension } from './naming.js';
 import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
+import { renditionForAttempt } from './source-options.js';
 
 const $ = id => {
   const element = document.getElementById(id);
@@ -566,9 +567,11 @@ async function runJob(job, signal) {
     }
     const data = job.vid === 'direct'
       ? { variants: [{ url: job.directUrl, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await getSource(job.seriesId, job.vid, job.quality, job.codec);
+      : await getSource(job.seriesId, job.vid, 'auto', 'auto');
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-    const source = data.variants?.[0];
+    // Retry with another advertised URL while preserving the selected tier.
+    const source = renditionForAttempt(data.variants,
+      { quality: job.quality, codec: job.codec }, job.attempts - 1);
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
     update(job, { status: 'downloading', sourceCodec: source.codec || 'unknown' });
     const hls = isHlsUrl(source.url);
