@@ -3,6 +3,7 @@
 // millions of samples in JS/WASM. JS inspects at most 1 MiB of MP4 metadata.
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
+import { inspectMp4TrackFormats } from './mp4-track-formats.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_MOOV = 1024 * 1024;
@@ -121,10 +122,12 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
         metadata.fileSize = fileSize;
-        // 'enca' tracks hold the original 'mp4a' tag inside their 'frma' box.
-        metadata.hasAac = Array.from({ length: moov.length - 4 }, (_, i) => i)
-          .some(i => moov[i] === 0x6d && moov[i + 1] === 0x70 &&
-            moov[i + 2] === 0x34 && moov[i + 3] === 0x61);
+        // Inspect stsd sample entries (including encrypted sinf/frma), not
+        // arbitrary "mp4a" text in udta or another nested box.
+        const tracks = inspectMp4TrackFormats(moov);
+        metadata.hasAac = tracks.hasAac;
+        metadata.videoCodec = tracks.videoCodec;
+        metadata.audioTracks = tracks.audioTracks;
       }
       return cencKidFromMoov(moov);
     }
@@ -322,6 +325,10 @@ export async function openClearKeyStream({
     return declined('mp4-range-or-kid-probe', error);
   }
   if (!kid) return declined('no-cenc-kid');
+  if (metadata.videoCodec &&
+      (codec === 'hevc' && !['hvc1', 'hev1'].includes(metadata.videoCodec) ||
+       codec === 'h264' && !['avc1', 'avc3'].includes(metadata.videoCodec)))
+    return declined('stsd-declared-codec-mismatch');
   const key = hexKey(source.contentKey);
   if (!metadata.fragmented) {
     try {
