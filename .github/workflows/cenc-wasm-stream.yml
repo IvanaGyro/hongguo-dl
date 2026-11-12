@@ -1,7 +1,7 @@
 name: Progressive CENC AVIO WASM proof and pinned bundle
 on:
   push:
-    branches: [main, 'feature/cenc-*', 'fix/cenc-*']
+    branches: [main]
     paths:
       - '.github/workflows/cenc-wasm-stream.yml'
       - 'scripts/cenc-stream-remux.c'
@@ -25,6 +25,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 jobs:
   build-test:
     runs-on: ubuntu-24.04
@@ -65,9 +66,11 @@ jobs:
           ffmpeg -v error -i /tmp/clear-fmp4.mp4 -f null -
       - name: Test box assembly and WASM manifest guards
         run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs
-      - name: Publish only to a CENC feature branch after synthetic decoding succeeds
-        if: success() && github.event_name == 'push' && github.ref != 'refs/heads/main'
+      - name: Publish verified JS/WASM pair directly to main
+        if: success() && github.ref == 'refs/heads/main'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           node scripts/cenc-wasm-bundle.mjs publish /tmp/hongguo-cenc-stream/dist
@@ -77,10 +80,12 @@ jobs:
           git add public/cenc/cenc-core.mjs public/cenc/cenc-core.wasm public/cenc/manifest.json
           if ! git diff --cached --quiet; then
             git commit -m "build(cenc): publish verified JS/WASM pair and provenance"
-            branch="${GITHUB_REF#refs/heads/}"
-            git fetch origin "$branch"
-            git rebase "origin/$branch"
-            git push origin "HEAD:$branch"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+            # A GITHUB_TOKEN push does not trigger push-based Pages or CI.
+            # workflow_dispatch explicitly runs Pages on the new main HEAD.
+            gh workflow run pages.yml --ref main
           fi
       - name: Verify main holds the exact tested bundle
         if: success() && github.ref == 'refs/heads/main'
