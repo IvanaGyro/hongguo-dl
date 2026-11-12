@@ -124,7 +124,7 @@ export async function openCencProgressiveStream({
     try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
     worker.terminate();
     const endWithError = () => {
-      if (closed || failed) return;
+      if (closed) return;
       if (buffer?.updating) {
         buffer.addEventListener('updateend', endWithError, { once: true });
         return;
@@ -148,7 +148,10 @@ export async function openCencProgressiveStream({
   };
   const onAbort = () => { void close(); };
   signal?.addEventListener('abort', onAbort, { once: true });
-  if (signal?.aborted) await close();
+  if (signal?.aborted) {
+    await close();
+    throw errorWith('CANCELED', '已切換影片');
+  }
   const trimOldMedia = async (behind = 30, minimum = 8) => {
     const end = evictionEnd(buffer?.buffered, video.currentTime, behind, minimum);
     if (end !== null) await waitBufferUpdate(buffer,
@@ -185,7 +188,7 @@ export async function openCencProgressiveStream({
     if (data.type !== 'init' && data.type !== 'media') return;
     queued = queued.then(async () => {
       await waitSourceOpen(ms, internal.signal);
-      if (closed) return;
+      if (closed || failed) return;
       if (data.type === 'init') {
         if (buffer) throw new Error('Duplicate MSE init');
         buffer = ms.addSourceBuffer(mime);
