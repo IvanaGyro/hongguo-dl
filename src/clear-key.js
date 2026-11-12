@@ -2,6 +2,7 @@
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects at most 1 MiB of MP4 metadata.
 import { mediaProxyUrl, errorWith } from './logic.js';
+import { openCencProgressiveStream } from './cenc-remux.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_MOOV = 1024 * 1024;
@@ -120,6 +121,10 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
         metadata.fileSize = fileSize;
+        // 'enca' tracks hold the original 'mp4a' tag inside their 'frma' box.
+        metadata.hasAac = Array.from({ length: moov.length - 4 }, (_, i) => i)
+          .some(i => moov[i] === 0x6d && moov[i + 1] === 0x70 &&
+            moov[i + 2] === 0x34 && moov[i + 3] === 0x61);
       }
       return cencKidFromMoov(moov);
     }
@@ -306,18 +311,7 @@ export async function openClearKeyStream({
     return null;
   };
   const mime = mimeForCodec(codec);
-  if (!mime || !source?.contentKey || typeof requestAccess !== 'function' ||
-      typeof video.setMediaKeys !== 'function' || !video.canPlayType(mime)) return null;
-  aborted(signal);
-  let access;
-  try {
-    access = await requestAccess(KEY_SYSTEM, [{
-      initDataTypes: ['cenc', 'keyids'],
-      videoCapabilities: [{ contentType: mime, encryptionScheme: 'cenc' }],
-      persistentState: 'not-allowed', distinctiveIdentifier: 'not-allowed',
-      sessionTypes: ['temporary']
-    }]);
-  } catch (error) { return declined('key-system-access', error); }
+  if (!mime || !source?.contentKey || !video.canPlayType(mime)) return null;
   aborted(signal);
   const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
   const metadata = {};
@@ -329,6 +323,35 @@ export async function openClearKeyStream({
   }
   if (!kid) return declined('no-cenc-kid');
   const key = hexKey(source.contentKey);
+  if (!metadata.fragmented) {
+    try {
+      const remux = await openCencProgressiveStream({
+        video, url, fileSize: metadata.fileSize,
+        codec, hasAac: metadata.hasAac, key: source.contentKey, signal
+      });
+      if (remux) {
+        console.info('[Hongguo CENC] playback route: progressive-remux-to-mse');
+        return remux;
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      console.info('[Hongguo CENC] remux preparation unavailable:', error?.name || 'Error');
+    }
+  }
+  // Already-fragmented CENC remains encrypted and is delivered through EME.
+  // When the local remux binary is not deployed, retain the existing fallback.
+  if (typeof requestAccess !== 'function' || typeof video.setMediaKeys !== 'function')
+    return declined('no-eme-or-remux');
+  let access;
+  try {
+    access = await requestAccess(KEY_SYSTEM, [{
+      initDataTypes: ['cenc', 'keyids'],
+      videoCapabilities: [{ contentType: mime, encryptionScheme: 'cenc' }],
+      persistentState: 'not-allowed', distinctiveIdentifier: 'not-allowed',
+      sessionTypes: ['temporary']
+    }]);
+  } catch (error) { return declined('key-system-access', error); }
+  aborted(signal);
   let session = null, mediaKeysSet = false;
   try {
     aborted(signal);
