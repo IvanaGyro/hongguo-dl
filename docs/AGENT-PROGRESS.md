@@ -542,3 +542,11 @@
 - **直接提交 main**：[b5211a655915514a86bbe8fec68d8ed5f26cc7e3](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3)，僅改 `.github/workflows/cenc-browser.yml`。使用 matrix `suite: [fast, long]`、`fail-fast:false`、獨立 job 名稱；fast 生成 15/70s 素材並跑原四項 Chromium/Firefox first-frame、RAP seek/reload、多次切換；long 生成 300/1800s 素材，保留原 Chromium 120000ms 暫停與 300s/1800s 有界 MSE memory/Range/EOF 驗收。每個 job 使用自己的 Firefox/Chromium Playwright setup；global concurrency 仍不取消已啟動的工作。
 - **驗證狀態**：workflow 已由 GitHub 直接提交，**新的 matrix CI 結論 PENDING**；改動是執行排程與分組，不是播放演算法或將原有長測變短。不得把較早主 CI/Firefox pass 當 matrix pass。
 - **下一步**：新 fast/long job 成立後分別看結論，若 Chromium/Firefox fast FAIL，優先修具體斷言；long 120s 在測就繼續其他工程，不輪詢。並檢視 stage55 strict WASM H264/AAC decoded seek 是否成功。
+
+
+## 階段 57 — 2026-11-13 pinned WASM 70s H264／AAC 四個 Seek 的實際嚴格解碼 PASS
+
+- **真正已完成**：[WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145) `completed/success`、job `131459529845` 的 `Strict video and AAC decode across 70s H264 CENC indexed seeks` step **success**；日誌有四行 `PASS H264/AAC pinned WASM seek strict decode: 7`、`35`、`55`、`63`。每個時點都用 pinned Librempeg 真的解密 remux，`ffmpeg -xerror` 嚴格解出 H264 及 AAC，ffprobe 確認 codec 及首包 PTS；不是原生 FFmpeg 假裝 WASM。
+- **配套 PASS**：[CI #43297467112](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467112) 與 [Pages #43297467101](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467101) `completed/success`，涵蓋當時 workflow 變更。未改原始 C bridge/WASM binary。
+- **限制**：這些是彼此獨立啟動的四次 seek，不是同一瀏覽器連續取消 Worker 後的音訊可聽性證明；快速 Seek 時 MOV stderr 仍有可能是舊 stream 的中止診斷。不能宣告全部消失或用合成成功替代真實紅果 HEVC/Android/ByteVC2。
+- **下一步**：追蹤階段 56 的 `Browser fast`／`Browser long` 各自結論，有 FAIL 時針對具體程式 bug 修；若 PASS，需進一步記錄音訊時間軸而非只靠 `videoWidth`。文件更新完繼續工程工作。

@@ -34,7 +34,7 @@
 
 | CENC SourceBuffer pending updateend／sourceopen 取消、ended 無限等候防護 | Node EventTarget + 模擬 Worker | **PASS（單元）** | [CI #43297100841](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297100841) completed/success；`0fab93e` 測 pending ACK/close/ended，非真實弱網路實機 |
 
-| pinned Librempeg 70s H264/AAC CENC：7／35／55／63s RAP Seek、AAC 與 AVC 嚴格解碼 | Ubuntu 24.04；自行生成 encrypted progressive MP4 | **PENDING（階段 55）** | [main fc18bc7](https://github.com/IvanaGyro/hongguo-dl/commit/fc18bc712b2462c6792aab5e5a6602098e07e6eb) 新增 WASM proof，`ffmpeg -xerror` + ffprobe PTS；不能以既有 6s HEVC Seek 代替 |
+| pinned Librempeg 70s H264/AAC CENC：7／35／55／63s RAP Seek、AAC 與 AVC 嚴格解碼 | Ubuntu 24.04；自行生成 encrypted progressive MP4 | **PASS（四時點嚴格解碼）** | [WASM #43297467145](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43297467145)，job 131459529845 四行獨立 PASS；`ffmpeg -xerror` + ffprobe PTS，非瀏覽器連續取消/AAC 音訊品質證明 |
 
 | CENC Browser fast（首影格／Seek／三輪切換）與 long（120s 暫停／1800s）可獨立報告 | GitHub Actions matrix / Linux Chromium+Firefox | **PENDING（階段 56）** | [main b5211a6](https://github.com/IvanaGyro/hongguo-dl/commit/b5211a655915514a86bbe8fec68d8ed5f26cc7e3) 新 workflow matrix，尚需 fast/long 各自 completed/success |
 
