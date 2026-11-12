@@ -9,7 +9,7 @@ let availability = null;
 
 export async function cencRemuxAvailable() {
   if (typeof Worker !== 'function' || typeof MediaSource !== 'function') return false;
-  const coreUrl = new URL(import.meta.env.BASE_URL + 'cenc/cenc-core.wasm', location.href);
+  const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm', location.href);
   if (!availability) {
     availability = fetch(coreUrl, { method: 'HEAD', cache: 'force-cache' })
       .then(res => res.ok &&
