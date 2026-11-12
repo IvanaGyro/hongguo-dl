@@ -1,0 +1,83 @@
+name: Progressive CENC AVIO WASM proof (experimental)
+on:
+  push:
+    branches: [feature/cenc-avio-mse-stream, main]
+    paths:
+      - '.github/workflows/cenc-wasm-stream.yml'
+      - 'scripts/cenc-stream-remux.c'
+      - 'scripts/build-cenc-stream-wasm.sh'
+      - 'scripts/verify-cenc-stream-wasm.mjs'
+      - 'src/cenc-remux.js'
+      - 'src/cenc-remux-worker.js'
+      - 'src/fmp4-assembler.js'
+      - 'src/clear-key.js'
+      - 'tests/fmp4-assembler.test.mjs'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: '3.1.74'
+      - name: Install FFmpeg and generate local synthetic encrypted HEVC + AAC progressive MP4
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg pkg-config >/dev/null
+          mkdir -p tests/fixtures
+          ffmpeg -nostdin -hide_banner -v error -threads 1 \
+            -f lavfi -i testsrc=size=320x180:rate=24 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 5 -c:v libx265 -preset ultrafast \
+            -x265-params pools=none:frame-threads=1:wpp=0:log-level=error:keyint=24:min-keyint=24:scenecut=0 \
+            -pix_fmt yuv420p -c:a aac -b:a 128k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y tests/fixtures/cenc-hevc-aac.mp4
+          test -s tests/fixtures/cenc-hevc-aac.mp4
+      - name: Compile and run async CENC AVIO WASM bridge
+        shell: bash
+        run: bash scripts/build-cenc-stream-wasm.sh /tmp/hongguo-cenc-stream
+      - name: Verify output HEVC and AAC can decode
+        shell: bash
+        run: |
+          node scripts/verify-cenc-stream-wasm.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.mjs \
+            /tmp/hongguo-cenc-stream/dist/cenc-core.wasm \
+            tests/fixtures/cenc-hevc-aac.mp4 /tmp/clear-fmp4.mp4
+          ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/clear-fmp4.mp4
+          ffmpeg -v error -i /tmp/clear-fmp4.mp4 -f null -
+      - name: Verify MP4 fragment assembler and browser source option tests
+        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs
+      - name: Publish verified WASM bundle to feature branch
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/cenc-avio-mse-stream'
+        run: |
+          set -euo pipefail
+          mkdir -p public/cenc
+          cp /tmp/hongguo-cenc-stream/dist/cenc-core.mjs public/cenc/cenc-core.mjs
+          cp /tmp/hongguo-cenc-stream/dist/cenc-core.wasm public/cenc/cenc-core.wasm
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/cenc/cenc-core.mjs public/cenc/cenc-core.wasm
+          if ! git diff --cached --quiet; then
+            git commit -m "build(cenc): publish verified AVIO remux wasm core"
+            git fetch origin feature/cenc-avio-mse-stream
+            git rebase origin/feature/cenc-avio-mse-stream
+            git push origin HEAD:feature/cenc-avio-mse-stream
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experimental-cenc-remux
+          path: |
+            /tmp/hongguo-cenc-stream/dist/
+            /tmp/hongguo-cenc-stream/configure.log
+            /tmp/hongguo-cenc-stream/build.log
+            /tmp/hongguo-cenc-stream/link.log
+          if-no-files-found: warn

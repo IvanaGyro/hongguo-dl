@@ -1,0 +1,67 @@
+name: Progressive CENC MSE real-frame browser acceptance
+on:
+  push:
+    branches: [feature/cenc-avio-mse-stream]
+    paths:
+      - '.github/workflows/cenc-browser.yml'
+      - 'src/cenc-remux.js'
+      - 'src/cenc-remux-worker.js'
+      - 'src/fmp4-assembler.js'
+      - 'src/clear-key.js'
+      - 'src/player.js'
+      - 'tests/cenc-stream.browser.mjs'
+      - 'public/cenc/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - run: bun ci
+      - run: bun add --dev playwright@1.58.0
+      - run: bunx playwright install --with-deps chromium firefox
+      - name: Assemble output box regression
+        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs
+      - name: Verify WASM assets are published to branch
+        run: |
+          test -s public/cenc/cenc-core.wasm
+          test -s public/cenc/cenc-core.mjs
+      - name: Generate large synthetic encrypted H264/AAC progressive sample
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
+          ffmpeg -nostdin -hide_banner -loglevel error \
+            -f lavfi -i testsrc=size=480x270:rate=24 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 15 -c:v libx264 -preset ultrafast -crf 12 -g 24 \
+            -pix_fmt yuv420p -c:a aac -b:a 128k \
+            -encryption_scheme cenc-aes-ctr \
+            -encryption_key 00112233445566778899aabbccddeeff \
+            -encryption_kid 11223344556677889900aabbccddeeff \
+            -movflags +faststart -y /tmp/cenc-h264-stream-fixture.mp4
+          test $(stat -c %s /tmp/cenc-h264-stream-fixture.mp4) -gt 600000
+          ffmpeg -nostdin -v error -decryption_key 00112233445566778899aabbccddeeff \
+            -i /tmp/cenc-h264-stream-fixture.mp4 -c copy -f null -
+      - name: Build site with new CENC remux Web Worker
+        env:
+          VITE_BASE_PATH: /hongguo-dl/
+        run: bun run build
+      - name: Assert browser presents frames before HTTP EOF
+        shell: bash
+        run: |
+          set -euo pipefail
+          VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:4173/hongguo-dl/ -o /dev/null; then break; fi
+            sleep 1
+          done
+          CENC_BROWSER=chromium node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4

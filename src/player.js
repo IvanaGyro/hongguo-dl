@@ -390,8 +390,10 @@ export function createPlayer({
     }
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
-    if (resolved.native) sourceInfo.textContent += resolved.native.kind === 'mse'
-      ? ' · 原生串流解密（MSE）' : ' · 原生串流解密（MP4）';
+    if (resolved.native) sourceInfo.textContent +=
+      resolved.native.kind === 'cenc-remux' ? ' · 增量解密轉封裝（MSE）'
+      : resolved.native.kind === 'mse' ? ' · 原生串流解密（MSE）'
+      : ' · 原生串流解密（MP4）';
     const containerCodec = resolved.source?.outputCodec || codecId(resolved.source?.codec);
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'
