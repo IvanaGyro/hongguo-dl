@@ -1,10 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，最新階段 48）
+# Hongguo DL — 目前狀態（2026-11-13，最新階段 49）
 
 > **接手規則**：所有程式直接提交 `main`，**不得開 PR**。每完成可驗證工程階段，立即更新 [AGENT-PROGRESS](AGENT-PROGRESS.md)（commit SHA、修改檔案、PASS/FAIL/PENDING、證據連結、限制、下一步），並更新本短版後**繼續做下一階段**。GitHub 讀／寫／Actions 任一步都可能卡住，禁止同一操作無限重試或反覆輪詢；寫入前比較最新 main 與 path blob SHA。不能輸出 signed URL、CENC key 或私有影片。
 
 ## 最新程式／CI
 
-- 最新核心程式提交：[45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a)：CENC metadata HTTP 206 的 Content-Range、Content-Length、body 截斷/過量不得降級整檔 FFmpeg；新增四組測試。[ac615db](https://github.com/IvanaGyro/hongguo-dl/commit/ac615db6965c6978cecfe35ea3d70d5e497608d1) 另新增三輪播放／下載切換的 Range 與 MSE Object URL 追蹤，尚待 Browser E2E。
+- 最新核心程式提交：[aaea7ea](https://github.com/IvanaGyro/hongguo-dl/commit/aaea7ea5a2fff39abfba4d2c0c38bdc718d71afe)：HTTP metadata fetch/reader.throw 轉成固定安全 `CENC_RANGE_HTTP`，避免 signed URL/key 洩漏並禁止無界降級；[45933e6](https://github.com/IvanaGyro/hongguo-dl/commit/45933e6ffc84929e8b826b345e213657a1bd373a)：CENC metadata HTTP 206 的 Content-Range、Content-Length、body 截斷/過量不得降級整檔 FFmpeg；新增四組測試。[ac615db](https://github.com/IvanaGyro/hongguo-dl/commit/ac615db6965c6978cecfe35ea3d70d5e497608d1) 另新增三輪播放／下載切換的 Range 與 MSE Object URL 追蹤，尚待 Browser E2E。
 - 最新已確認主 CI 綠燈：[CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208)，HEAD `de84114`，**completed/success**（Bun 單測、CENC/BVC2 WASM manifest、Vite build、Worker cold-start）；[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) **success**。**不是**後續 `ac615db` 最新功能的驗收。
 - 後續新測試： [CI #43293286745](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286745)、[Pages #43293286729](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286729) 首次查詢 `in_progress`；[Browser #43293286765](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293286765) `pending`；[Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) 新增 120 秒暫停也待確認。不要把 PENDING 當 PASS。
 
@@ -21,10 +21,11 @@
 - **重要後續校正**：[5ac183a](https://github.com/IvanaGyro/hongguo-dl/commit/5ac183a69de73f19d586f0ef79a3222476284a7b) 不能假設 Librempeg 必輸出 `hvc1`，現在從**真正 clear fMP4 init** 導出 `hvc1/hev1` SourceBuffer MIME，仍比對完整 profile/tier/level，並補 pinned WASM output proof；[971dbc8](https://github.com/IvanaGyro/hongguo-dl/commit/971dbc88a128513cffbfccc8d73171b9c44c3bfa)、[63c19b9](https://github.com/IvanaGyro/hongguo-dl/commit/63c19b9c5e6902a69412deda3957acf1aea49bc1) 補 MSE `hev1` 正負例／前置 probe。原生 FFmpeg 自行生成樣本實見 `hev1`，**非 pinned WASM 結果**；需等新 WASM proof。
 - [9279172](https://github.com/IvanaGyro/hongguo-dl/commit/9279172b3ed0f38af62c56d832618aa3bdcf3c13) 修正 Worker fail 時未 revoke URL，加入連續 Seek lifecycle 單測；[de84114](https://github.com/IvanaGyro/hongguo-dl/commit/de84114fe0a35a024e6b7271d1197b86f657fe84) 區分 CENC metadata HTTP 200/403/416/429/503，避免 CDN 被拒時降級整檔 FFmpeg 並誤認 HEVC 解碼失敗；[e58213f](https://github.com/IvanaGyro/hongguo-dl/commit/e58213f6fc2885cc0ebfea78e2b8952a6490a45f) 120 秒 paused-Range Browser E2E PENDING。
 
-## 階段 48 新待驗證
+## 階段 48–49 新待驗證
 
+- [CI #43294139811](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139811)／[Pages #43294139714](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139714) 初查 `in_progress`、[Browser #43294139965](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139965)／[WASM #43294139733](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43294139733) `pending`，最新變更 NOT YET VERIFIED。上一版 
 - [CI #43293840096](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293840096) 初查 `in_progress`、[Browser #43293839080](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43293839080) `pending`；新增 206 欄位/內容不符四種測試 **PENDING**。此前 [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) 已 PASS 的 HTTP 200/403/416/429/503 分類不能取代 206 新測試。
-- **立即下一個程式修補**：HTTP fetch 及 reader.read 在網路失敗時應保留有限重試、不得執行 whole-file fallback；錯誤訊息不得包含 signed URL/key。
+- **立即下一個工程動作**：若有具體 CI/Browser/WASM FAIL 則修；否則新增暫停/切集/模式切換時 stalled HTTP/Worker 的取消及 MSE URL 釋放驗收，不讓 120 秒測試排隊阻塞程式開發。
 
 ## 缺乏的外部驗收與立即恢復點
 
