@@ -95,7 +95,7 @@ jobs:
               "-v", "error", "-select_streams", "v:0", "-show_entries",
               "packet=pts_time", "-of", "csv=p=0", "/tmp/clear-fmp4-seek.mp4"
             ], {encoding:"utf8"});
-            const first = Number(out.trim().split(/\\s+/)[0]);
+            const first = Number(out.trim().split(/\s+/)[0]);
             if (!(first >= 3 && first <= 7)) {
               throw new Error("Seek output timeline does not match source: " + first);
             }
