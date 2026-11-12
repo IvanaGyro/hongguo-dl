@@ -1,3 +1,22 @@
+// Video.js 10 HTML preset and composable native UI components.
+import '@videojs/html/video/player';
+import '@videojs/html/ui/container';
+import '@videojs/html/ui/controls';
+import '@videojs/html/ui/controls-content';
+import '@videojs/html/ui/play-button';
+import '@videojs/html/ui/mute-button';
+import '@videojs/html/ui/fullscreen-button';
+import '@videojs/html/ui/time-slider';
+import '@videojs/html/ui/slider-track';
+import '@videojs/html/ui/slider-buffer';
+import '@videojs/html/ui/slider-fill';
+import '@videojs/html/ui/slider-thumb';
+import '@videojs/html/ui/time';
+import '@videojs/html/ui/time-group';
+import '@videojs/html/ui/time-separator';
+import '@videojs/html/ui/gesture';
+import '@videojs/html/ui/hotkey';
+import '@videojs/html/ui/status-announcer';
 import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
@@ -689,9 +708,6 @@ updateApiSettings();
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
-  playPauseButton: $('player-play-pause'), seekInput: $('player-seek'),
-  clock: $('player-clock'), fullscreenButton: $('player-fullscreen'),
-  playerStage: $('player-stage'),
   qualitySelect: $('player-quality'), codecSelect: $('player-codec'),
   speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
