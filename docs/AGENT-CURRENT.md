@@ -1,8 +1,10 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 68）
+# Hongguo DL — 目前狀態（2026-11-13，階段 69）
 
 > **執行規則**：只在 `main` 直接提交，不建立 PR。每個獨立階段先程式／測試，再更新 `docs/AGENT-PROGRESS.md` 與本短版並繼續。GitHub Actions 狀態只作有限度單次查詢；不可把 pending 寫成 PASS。不得記錄 signed media URL、CENC key、私有影片／使用者識別碼。
 
 ## 最新工作及 CI 證據
+
+- **階段 69 PCM 探測與後續 MSE Seek 隔離**：[9a040f6](https://github.com/IvanaGyro/hongguo-dl/commit/9a040f6966ebf32bcd2bb5c8049d78abbca60b7e)、[27353d0](https://github.com/IvanaGyro/hongguo-dl/commit/27353d0856d8c53c97374a11eb84220379567b66)：針對 Chromium 70s seek 在前置 WebAudio PCM 測試後 timeout，將同一 video 元素的 `createMediaElementSource`/close 移至所有 seek 和模式切換完成後才執行。遠距 Seek 超時加安全診斷（播放時間、buffer、速率、錯誤數、警訊 phase），不含 raw console error URL/key。初次起播 PCM 仍在 15s fixture 對兩瀏覽器跑；70s post-seek PCM **仍強制驗收**。最新版 Browser E2E PENDING。
 
 - **階段 68 遠距 CENC Seek 保留 1.25×**：[9ef5bf9](https://github.com/IvanaGyro/hongguo-dl/commit/9ef5bf90074e6a60a1303ef8eb7c0619c440b9d4)：`src/player.js` 於 native MSE 重建時，`video.load()` 前設定 `defaultPlaybackRate` 並於後重新設定 `playbackRate`；Chromium/Firefox 的 55s remote seek browser test 增加實際 speed UI 1.25× 檢查。**新版 Browser 回歸 PENDING**。
 - **Firefox PCM 啟動已首次實證 PASS**：[Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) fast job 131473676149：PulseAudio/null sink 加入後 Chromium startup RMS **0.08854 /25**、Firefox startup RMS **0.08855 /23** 均有實際 PASS 行。**但 Browser fast 整體 FAIL**：Chromium 第二個 70s Seek 素材起播後，`tests/cenc-stream.browser.mjs:485` 等待 `video.currentTime >55.75` + readyState/buffer 超時 90s。推測先前對同一 media element 建立再關閉 `MediaElementAudioSource` 影響後續 MSE load，需排除**測試干擾**，不可將 fast job 寫成成功。long job 初查仍 in_progress。
@@ -24,7 +26,7 @@
 
 既有 **Librempeg Asyncify AVIO WASM** 解密 progressive CENC MP4 並無損 remux 為 clear fMP4，透過 MSE 播放；`hvc1/hev1` codec tag 依 pinned WASM 實際輸出 init 決定。CENC 來源 403／429／無效 206 不得 fallback 成整檔下載。BVC2 獨立實驗性整檔 WASM 解碼＋x264 路徑，沒有真實 ByteVC2 正例。
 
-**下一個工程動作**：隔離初次起播 WebAudio PCM 與後續 70s Seek 的測試干擾（閉合的 MediaElementAudioSource 可能綁住同一 video），加入超時時的無私密播放器狀態診斷，確認階段 68 遠距 Seek 1.25× 真正 E2E 通過，再驗收 post-seek PCM；目前已確認 Firefox startup PCM PASS，但不能因此宣稱 fast 整組成功（PulseAudio/null sink + 明確允許 Web Audio）；若 still fails 只讀實際 job log 的匿名 browser state 診斷並修。startup 和 5 次遠距 Seek/3 次模式切換後都須有真正 AAC PCM 正例；另透過階段 67 的 phase 分類確認 Chromium MOV demux 診斷是否出現在穩定播放／PCM 驗收期間，若有則以真正播放錯誤處理。必要時修正 tests 與 Worker 取消競態，保留強制合成 E2E。僅在具體失敗時讀相關 Actions log，不連續輪詢。
+**下一個工程動作**：階段 69 已隔離 PCM 預先建立與後續 MSE Seek 的測試干擾；取得最新 Browser fast 實際結果，先確認 remote seek 1.25×，再確認 post-seek AAC PCM；若仍超時，讀新增的安全播放狀態／Range/MOV phase 精準定位；目前已確認 Firefox startup PCM PASS，但不能因此宣稱 fast 整組成功（PulseAudio/null sink + 明確允許 Web Audio）；若 still fails 只讀實際 job log 的匿名 browser state 診斷並修。startup 和 5 次遠距 Seek/3 次模式切換後都須有真正 AAC PCM 正例；另透過階段 67 的 phase 分類確認 Chromium MOV demux 診斷是否出現在穩定播放／PCM 驗收期間，若有則以真正播放錯誤處理。必要時修正 tests 與 Worker 取消競態，保留強制合成 E2E。僅在具體失敗時讀相關 Actions log，不連續輪詢。
 
 **外部未驗（NOT TESTED）**：具合法 HTTP 206 的真實紅果 HEVC CENC（先前 CDN 403）、Windows/Android HEVC MSE 實機首影格與 AAC／完整播放、真正 ByteVC2 bitstream frame decode/性能。合成證據不能取代真實裝置。
 

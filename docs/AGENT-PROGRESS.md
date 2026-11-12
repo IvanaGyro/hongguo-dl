@@ -640,3 +640,12 @@
 - **新測試尚 PENDING**：這項 regression 尚未拿到對應 HEAD 的 Browser E2E completed/success，不能以之前非 1.25× 的 Seek PASS 取代。
 - **另項前版驗收結果**：[Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) fast job `131473676149` **failure**；但音訊部分確有 `PASS chromium ... PCM (startup)` RMS 0.08854、25 個非靜音視窗，以及 `PASS firefox ... PCM (startup)` RMS 0.08855、23 個非靜音視窗。這是第一次在 Firefox headless 真正驗收 AAC PCM 解碼正例，Linux PulseAudio/null sink 設置有效。第三個測試於 Chromium 70s seek 到 55s 後，等待 `video.currentTime>55.75` 超過 90s；目前無 log 斷言原因，不能推論是新的 remote seek playbackRate patch 造成（該 run 的 HEAD 在此 patch 之前）。
 - **初步可調查點**：stage65 在 CENC_TEST_SEEK=1 的 70s 測試開頭先對同一 `<video>` 進行 Web Audio `createMediaElementSource`，然後於 startup PCM 探測結束立刻 `context.close()`。當接下來 MSE remote seek 會 `video.load()` 時，媒體元素仍與已關閉 AudioContext 的 source node 綁定，可能干擾後續播放；先把「初次 PCM」與「Seek 之後 PCM」移成互不重疊的驗收階段並增加狀態診斷，不能盲目把超時歸因 CENC 原始碼或增加 timeout。
+
+
+## 階段 69 — 2026-11-13 避免 Web Audio PCM 測試干擾同一 HTMLVideoElement 的後續 MSE 重載
+
+- **前版失敗背景**：[Browser #43301335775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43301335775) fast job `131473676149` 中 Chromium / Firefox 15s encrypted H264/AAC **startup PCM 正例全部 PASS**，證明 PulseAudio 虛擬 sink 的測試路徑有效。但第三項 70s Chromium Seek 素材在額外執行 startup PCM 後遠距跳到 55s，`tests/cenc-stream.browser.mjs:485` 等待 `currentTime>55.75`、`readyState>=2` 和 MSE buffered 持續 90s 無結果，fast job 整體 FAIL；該舊版尚未包含階段68 remote seek speed patch。不能直接說 CENC 變壞。
+- **可能造成假陰性的因素**：`createMediaElementSource(video)` 將 HTMLMediaElement 綁到 `AudioContext`，而原測試在初次 PCM 後 `context.close()`，之後使用同一元素切換 MSE URL、`video.load()`。這樣測試順序會改變播放媒體本身狀態，不能再視為純正比對。
+- **直接提交 main**：[9a040f6966ebf32bcd2bb5c8049d78abbca60b7e](https://github.com/IvanaGyro/hongguo-dl/commit/9a040f6966ebf32bcd2bb5c8049d78abbca60b7e)、[27353d0856d8c53c97374a11eb84220379567b66](https://github.com/IvanaGyro/hongguo-dl/commit/27353d0856d8c53c97374a11eb84220379567b66)，修改 `tests/cenc-stream.browser.mjs`。CENC_TEST_SEEK=1 的 70s 測試**不在開頭建立 WebAudio node**，仍在完整 5 次 Seek／90% reload／3 次播放下載切換後測試 non-silent PCM；非 Seek 的 15s fixture 在 Chromium/Firefox 各測 startup PCM。不減少最終兩個場景的 AAC 驗收要求。
+- **新增失敗診斷**：55s remote RAP seek 若 timeout，收集 `playerStatus`、`currentTime`、`readyState`、`buffered`、`playbackRate`、`defaultPlaybackRate`、`mediaError`、新增 Range 次數及 MOV warning phases。**不輸出 video.src、簽署 URL、CENC key 或原始 browser error 字串**，只有錯誤數量。
+- **新 CI / E2E PENDING**：此版 `27353d0` 變更已提交 main；只有真正完成 browser fast 且執行 startup/seek/post-seek AAC PCM、speed assertions 才可填 PASS。若仍失敗，必須根據新診斷處理，不能取消長片 120s/1800s 或其他 E2E 門檻。
