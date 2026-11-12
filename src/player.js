@@ -192,7 +192,8 @@ export function createPlayer({
     // retry without another upstream API call. Refresh on the next cycle.
     const sameList = !quiet && lastVariants && lastVariantsVid === episode.vid &&
       Date.now() - lastVariantsAt < 30000;
-    const list = episode.vid === 'direct'
+    const list = options.variants?.length ? { variants: options.variants }
+      : episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList && attempt > 0 && attempt < lastVariants.length
         ? { variants: lastVariants }
@@ -245,6 +246,12 @@ export function createPlayer({
     if (!isHlsUrl(source.url) && !source.contentKey)
       return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
         source, fallbackNotice, variants: quiet ? variants : null };
+    // If the current episode already uses native EME, prepare only the next
+    // episode's source metadata. Avoid downloading+remuxing the whole upcoming
+    // episode with FFmpeg while the current one already streams natively.
+    if (quiet && options.nativePrefetch && source.contentKey && !isHlsUrl(source.url)) {
+      return { nativePending: true, source, fallbackNotice, variants };
+    }
     // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
     // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
     // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
@@ -311,7 +318,17 @@ export function createPlayer({
     // If the incoming episode is already being downloaded/decrypted, consume
     // that one promise rather than issuing a second expensive media request.
     const prepared = handoff && attempt === 0 ? await handoff.promise : null;
-    const resolved = prepared || await sourceForEpisode(episode, signal, attempt);
+    let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
+    if (resolved?.nativePending) {
+      await keyCleanup;
+      const native = await openClearKeyStream({
+        video, source: resolved.source, codec: codecId(resolved.source.codec),
+        workerOrigin: getWorkerOrigin(), signal
+      });
+      resolved = native ? { ...resolved, native, url: native.url, nativePending: false }
+        : await sourceForEpisode(episode, signal, attempt,
+          { variants: prepared.variants });
+    }
     if (signal.aborted || currentToken !== token) return;
     if (prepared?.variants?.length) {
       lastVariants = prepared.variants;
@@ -424,7 +441,8 @@ export function createPlayer({
     // A prefetch is intentionally bounded to one episode and <=32 MiB of
     // incoming encrypted media. Failures remain silent until actually played.
     const promise = sourceForEpisode(next, preloadController.signal, 0, {
-      quiet: true, quality, codec, seriesId
+      quiet: true, quality, codec, seriesId,
+      nativePrefetch: Boolean(nativeStream)
     }).catch(() => null);
     prefetched = { vid: next.vid, key, controller: preloadController, promise };
   }
