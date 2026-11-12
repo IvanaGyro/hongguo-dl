@@ -1,17 +1,27 @@
-name: Progressive CENC AVIO WASM proof (experimental)
+name: Progressive CENC AVIO WASM proof and pinned bundle
 on:
   push:
-    branches: [feature/cenc-avio-mse-stream, main]
+    branches: [main, 'feature/cenc-*', 'fix/cenc-*']
     paths:
       - '.github/workflows/cenc-wasm-stream.yml'
       - 'scripts/cenc-stream-remux.c'
       - 'scripts/build-cenc-stream-wasm.sh'
+      - 'scripts/cenc-wasm-bundle.mjs'
       - 'scripts/verify-cenc-stream-wasm.mjs'
       - 'src/cenc-remux.js'
       - 'src/cenc-remux-worker.js'
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
       - 'tests/fmp4-assembler.test.mjs'
+      - 'tests/cenc-wasm-bundle.test.mjs'
+  pull_request:
+    paths:
+      - '.github/workflows/cenc-wasm-stream.yml'
+      - 'scripts/cenc-stream-remux.c'
+      - 'scripts/build-cenc-stream-wasm.sh'
+      - 'scripts/cenc-wasm-bundle.mjs'
+      - 'scripts/verify-cenc-stream-wasm.mjs'
+      - 'public/cenc/**'
   workflow_dispatch:
 permissions:
   contents: write
@@ -53,28 +63,37 @@ jobs:
             tests/fixtures/cenc-hevc-aac.mp4 /tmp/clear-fmp4.mp4
           ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/clear-fmp4.mp4
           ffmpeg -v error -i /tmp/clear-fmp4.mp4 -f null -
-      - name: Verify MP4 fragment assembler and browser source option tests
-        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs
-      - name: Publish verified WASM bundle to feature branch
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/cenc-avio-mse-stream'
+      - name: Test box assembly and WASM manifest guards
+        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs
+      - name: Publish only to a CENC feature branch after synthetic decoding succeeds
+        if: success() && github.event_name == 'push' && github.ref != 'refs/heads/main'
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p public/cenc
-          cp /tmp/hongguo-cenc-stream/dist/cenc-core.mjs public/cenc/cenc-core.mjs
-          cp /tmp/hongguo-cenc-stream/dist/cenc-core.wasm public/cenc/cenc-core.wasm
+          node scripts/cenc-wasm-bundle.mjs publish /tmp/hongguo-cenc-stream/dist
+          node scripts/cenc-wasm-bundle.mjs verify
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/cenc/cenc-core.mjs public/cenc/cenc-core.wasm
+          git add public/cenc/cenc-core.mjs public/cenc/cenc-core.wasm public/cenc/manifest.json
           if ! git diff --cached --quiet; then
-            git commit -m "build(cenc): publish verified AVIO remux wasm core"
-            git fetch origin feature/cenc-avio-mse-stream
-            git rebase origin/feature/cenc-avio-mse-stream
-            git push origin HEAD:feature/cenc-avio-mse-stream
+            git commit -m "build(cenc): publish verified JS/WASM pair and provenance"
+            branch="${GITHUB_REF#refs/heads/}"
+            git fetch origin "$branch"
+            git rebase "origin/$branch"
+            git push origin "HEAD:$branch"
           fi
+      - name: Verify main holds the exact tested bundle
+        if: success() && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/cenc-wasm-bundle.mjs verify
+          cmp /tmp/hongguo-cenc-stream/dist/cenc-core.mjs public/cenc/cenc-core.mjs
+          cmp /tmp/hongguo-cenc-stream/dist/cenc-core.wasm public/cenc/cenc-core.wasm
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: experimental-cenc-remux
+          name: verified-cenc-remux
           path: |
             /tmp/hongguo-cenc-stream/dist/
             /tmp/hongguo-cenc-stream/configure.log
