@@ -68,3 +68,9 @@
 - main [`971dbc8`](https://github.com/IvanaGyro/hongguo-dl/commit/971dbc88a128513cffbfccc8d73171b9c44c3bfa) 新增 fake MediaSource 直接驗證 Librempeg `hev1` init 必須選 `hev1` SourceBuffer MIME，只有 `hvc1` 能力時必須 fail / stop / release；[`63c19b9`](https://github.com/IvanaGyro/hongguo-dl/commit/63c19b9c5e6902a69412deda3957acf1aea49bc1) 擴充 HEVC provisional Main/Main10 `hev1` MSE 選片探測。保留真實 init 的最終 codec 檢查。
 - [CI #43292269071](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269071) 與 [Pages #43292269068](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292269068) 首次查詢均 `in_progress`，不能標 PASS。新 pinned WASM init MIME proof 待查看明確結果；原生 FFmpeg 對照不是 WASM 證據。
 - **立即恢復點**：有 CI 具體 FAIL 先修正；接著加強來源 HTTP 403/416/429 與 codec 不支援的無洩漏錯誤分類與 fail-fast，避免誤將 CDN 拒絕稱為解碼器失敗。繼續長暫停/切集測試。
+
+## 最新工程 checkpoint（階段 45，2026-11-13）
+
+- main [`de84114`](https://github.com/IvanaGyro/hongguo-dl/commit/de84114fe0a35a024e6b7271d1197b86f657fe84)：CENC metadata HTTP 200/403/416/429 分成不同安全錯誤，終止有問題的 whole-file fallback、限制重試；503 仍進有限重試。新增 `tests/cenc-source-errors.test.mjs` 五組 mock HTTP 回歸；不保留媒體 signed URL/keys。
+- [CI #43292589208](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589208) `in_progress`、[Pages #43292589298](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589298) `queued`、[Browser #43292589271](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292589271) `pending`、[HEVC WASM #43292588933](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292588933) `in_progress`，本階段 CI NOT YET VERIFIED。不可把 CDN 403 稱為解碼失敗。
+- **立即恢復點**：若最新 CI 失敗，檢查一個對應具體 job 修正。接續合成數分鐘長暫停／切集測試、資源釋放及 pinned Librempeg 真實 fMP4 sample-entry 驗證。紅果實際授權 HEVC、Android/Windows、ByteVC2 正例仍 NOT TESTED。
