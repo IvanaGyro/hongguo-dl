@@ -258,3 +258,92 @@ test('MSE follows the actual clear HEVC sample entry rather than presumed hvc1',
   assert.deepEqual(revoked, created);
   await unsupported.close();
 });
+
+test('CENC abort closes Worker and object URL even with a blocked MSE ACK', async t => {
+  const saved = {
+    Worker: globalThis.Worker, MediaSource: globalThis.MediaSource,
+    fetch: globalThis.fetch, location: globalThis.location,
+    createObjectURL: URL.createObjectURL,
+    revokeObjectURL: URL.revokeObjectURL
+  };
+  t.after(() => {
+    for (const field of ['Worker', 'MediaSource', 'fetch', 'location']) {
+      if (saved[field] === undefined) delete globalThis[field];
+      else globalThis[field] = saved[field];
+    }
+    URL.createObjectURL = saved.createObjectURL;
+    URL.revokeObjectURL = saved.revokeObjectURL;
+  });
+  let sequence = 0, appends = 0;
+  const revoked = [], workers = [];
+  URL.createObjectURL = () => 'blob:blocked-ack-' + ++sequence;
+  URL.revokeObjectURL = value => revoked.push(value);
+  globalThis.location = { href: 'https://example.test/hongguo-dl/' };
+  globalThis.fetch = async () => ({
+    ok: true, headers: new Headers({
+      'Content-Type': 'application/wasm', 'Content-Length': '1024'
+    })
+  });
+  let mseMode = 'open';
+  globalThis.MediaSource = class extends EventTarget {
+    readyState = mseMode;
+    static isTypeSupported() { return true; }
+    addSourceBuffer() {
+      const buffer = new EventTarget();
+      buffer.buffered = { length: 0 };
+      buffer.updating = false;
+      // Simulate a browser that never delivers updateend.
+      buffer.appendBuffer = () => { appends++; };
+      return buffer;
+    }
+    endOfStream(reason) { this.endReason = reason; }
+  };
+  globalThis.Worker = class {
+    constructor() { this.messages = []; this.terminated = false; workers.push(this); }
+    postMessage(data) { this.messages.push(data); }
+    terminate() { this.terminated = true; }
+  };
+  const base = {
+    video: { canPlayType: () => 'probably', currentTime: 0 },
+    url: '/api/media?test=1', fileSize: 10240,
+    codec: 'h264', hasAac: true, key: '00112233445566778899aabbccddeeff'
+  };
+  const sendInit = worker => worker.onmessage({ data: {
+    type: 'init', id: 123, bytes: new Uint8Array([1, 2, 3, 4]).buffer
+  } });
+
+  const controller = new AbortController();
+  const stream = await openCencProgressiveStream({ ...base, signal: controller.signal });
+  sendInit(workers.at(-1));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(appends, 1, 'Synthetic append must reach a pending updateend ACK');
+  controller.abort();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workers.at(-1).terminated, true);
+  assert.equal(workers.at(-1).messages.some(message => message.type === 'ack'), false,
+    'A canceled stream must not acknowledge a SourceBuffer append');
+  await stream.close();
+  assert.equal(revoked.length, 1, 'Cancel and close cannot double-revoke an MSE URL');
+
+  mseMode = 'closed';
+  const waiting = await openCencProgressiveStream(base);
+  sendInit(workers.at(-1));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workers.at(-1).messages.some(message => message.type === 'ack'), false);
+  await waiting.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workers.at(-1).terminated, true);
+  assert.equal(revoked.length, 2,
+    'Closing before sourceopen must release URL and terminate stalled Worker');
+
+  mseMode = 'ended';
+  const ended = await openCencProgressiveStream(base);
+  sendInit(workers.at(-1));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workers.at(-1).terminated, true,
+    'An ended MediaSource must fail instead of waiting forever for sourceopen');
+  assert.equal(revoked.length, 3,
+    'Failure before SourceBuffer creation must revoke its object URL');
+  await ended.close();
+  assert.equal(revoked.length, 3);
+});

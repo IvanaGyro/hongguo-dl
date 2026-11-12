@@ -26,6 +26,10 @@ export async function cencRemuxAvailable() {
 const waitSourceOpen = (mediaSource, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error('CENC stream canceled'));
   if (mediaSource.readyState === 'open') return resolve();
+  // Once MSE entered 'ended' it cannot emit sourceopen again. Fail promptly
+  // instead of leaving a queued Worker unit waiting for an impossible event.
+  if (mediaSource.readyState === 'ended')
+    return reject(new Error('MediaSource ended before fragment append'));
   const cleanup = () => {
     mediaSource.removeEventListener('sourceopen', opened);
     mediaSource.removeEventListener('sourceclose', closed);
