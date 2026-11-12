@@ -43,3 +43,10 @@
 - 新程式碼 main [`08258a8`](https://github.com/IvanaGyro/hongguo-dl/commit/08258a841183b67311c53672a37ac3315cfe960d)：修正 HEVC 在來源選擇時被泛用 `hvc1` `canPlayType` 否決的問題。採用 Main/Main10 **完整 MSE MIME 暫定探測**，實際接受仍以有界 moov hvcC + 精確 MSE 為準；不推論硬體解碼。新增三個 `tests/hevc-rendition.test.mjs` 回歸，本地等價 Node 測試 3/3 PASS。
 - 新 [CI #43289873073](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873073)、[Pages #43289873079](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873079)、[Browser #43289873014](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289873014) 首次查詢均 **in_progress**；不得冒稱 PASS。上一程式修補的 [CI #43289090142](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43289090142) 確實 PASS。
 - **立即恢復點**：檢查 clear fMP4 init HEVC hvcC/sample entry 與建立的 SourceBuffer MIME 一致性，驗證 Seek 帶入同一完整 codec；有具體錯誤才修。真實紅果 HEVC / Android / ByteVC2 正例仍 NOT TESTED。
+
+## 最新工程 checkpoint（階段 41，2026-11-13）
+
+- main [`1b9cb3d`](https://github.com/IvanaGyro/hongguo-dl/commit/1b9cb3d484b63f2f980f7dfb9a1a6afe289d3f6d)：對 clear HEVC fMP4 init 的 sample entry (`hev1`/`hvc1`) 與 hvcC 精確 MIME 做有界一致性檢查，拒絕缺失/錯誤 codec，在 MSE append 前分類錯誤並清理 Worker。新增四個 Node/Bun 單測。
+- [CI #43290337102](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337102) **PASS**（Bun 全測試 + Vite build + WASM manifest + worker cold-start）；[Pages #43290337124](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337124) **PASS**。
+- [WASM proof #43290337070](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337070) 首次查詢仍 `in_progress`、[Browser #43290337304](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43290337304) `pending`。不能視為 real HEVC / Android 解碼證據。
+- **立即恢復點**：增加數分鐘暫停、反覆切集及 abort pending ACK/Range 的定向壓力測試；必要時修 lifecycle。真實授權 HEVC 206/Android/Windows 與 ByteVC2 bitstream 仍 NOT TESTED。
