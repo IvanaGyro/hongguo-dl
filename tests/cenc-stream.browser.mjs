@@ -221,6 +221,10 @@ try {
         window.__cencStressExpected = duration;
       }, expectedSeconds);
       if (process.env.CENC_TEST_PAUSE === '1') {
+        const pauseWindowMs = Number(process.env.CENC_TEST_PAUSE_MS || 3000);
+        assert(Number.isSafeInteger(pauseWindowMs) &&
+          pauseWindowMs >= 3000 && pauseWindowMs <= 180000,
+          'Pause observation window must remain bounded (3-180s)');
         // Regression: a paused viewer must not cause an entire encrypted movie
         // to be fetched. Let the existing ~40s-ahead backpressure settle,
         // observe HTTP Range traffic, then resume and complete playback.
@@ -242,7 +246,7 @@ try {
         // request counts. There should be no new stream-wide media fetches.
         await page.waitForTimeout(1500);
         const rangesAtPause = mediaRequests.length;
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(pauseWindowMs);
         const rangesAfterPause = mediaRequests.length;
         const timeAfterPause = await page.evaluate(() =>
           document.querySelector('#player-video').currentTime);
@@ -260,7 +264,8 @@ try {
         }, pausedAt, { timeout: 30000 });
         console.log('PASS ' + browserName +
           ' paused CENC HTTP Range backpressure and playback resume',
-          JSON.stringify({ pausedAt, rangesAtPause, rangesAfterPause }));
+          JSON.stringify({ pausedAt, pauseWindowMs,
+            rangesAtPause, rangesAfterPause }));
       }
       // Linux ps RSS is observational only: includes the Node test harness,
       // child browser processes and shared pages, but not GPU allocations.
