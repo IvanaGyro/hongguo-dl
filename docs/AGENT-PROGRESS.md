@@ -290,3 +290,14 @@
 - [8f9d4c7](https://github.com/IvanaGyro/hongguo-dl/commit/8f9d4c73a5228991a1db7b19a26a080f014d412f)：新增 `tests/bvc2-job.test.mjs` 共 **7** 個測試：正常返回、subarray、建 Worker 期間取消、post 後取消、同步 postMessage throw、空回應、建 Worker throw。
 - **驗收狀態**：原始碼與測試已提交 main，測試**尚未取得執行結果**；下一步只核對一次適用 CI 結論，若失敗針對具體錯誤修補。這些是 Worker lifecycle 回歸，**不是 ByteVC2 真實 bitstream 正例解碼成功**。
 - **立即繼續**：更新過期的 NEXT-SESSION-PLAN 和 CENC 技術文件，使完成／未完成明確，並把 1800 秒壓測視為獨立的 pending acceptance；文件更新後仍繼續程式與驗收。
+
+## 階段 28 — 2026-11-13 30 分鐘 CENC 合成瀏覽器驗收 PASS，BVC2 lifecycle CI 成功
+
+- **已完成、已讀 log 的 1800 秒實證**：[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947)，job `131409687391`，**completed/success**。實際輸出 `PASS chromium 1800-second CENC playback and bounded MSE window`，`maxDurationSeconds=1800.021402`、`lastTime=1800.021402`、`ended=true`、`videoError=null`、`rangeRequests=104`、`samples=530`；`maxBufferedSpan=72.0s`、`maxBufferedAhead=43.555s`。
+- 同一 1800s 合成片的首影格測試 **PASS before HTTP EOF**：480×270 H.264/AAC，25,829,221 bytes，首影格已到時下載約 **6.6%**，11 HTTP Range requests；8 MiB moov 補丁對大索引能端到端起播，不再 fallback HTTP 416。
+- 同 job 量測的 Linux test harness+Chromium process-tree RSS（粗估、不等於單一 browser/GPU/Android RAM）：`first=802.5 MiB`、`peak=838.8 MiB`、`last=838.2 MiB`、`samples=58`。未出現隨播放 1800s 無限制攀升的明顯跡象，但末尾高於起點，後續仍可檢查 pauses／重複切集；不可宣稱精確的記憶體 leak-free 上界。
+- 同 job **300 秒 PASS**：`ended=true`、`maxBufferedSpan=72s`、`ahead=41.127s`、32 Range，RSS first/peak/last=751.7/773.8/773.8 MiB；Chromium/Firefox 55s、7→63→35→5→63s unbuffered seek/續播與模式切換也均有實際 PASS 行。
+- **BVC2 新測試驗收**：[CI #43284208866](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43284208866) 對含 7 個 Worker lifecycle tests 的 main commit `8f9d4c7` **completed/success**；[CI #43284268205](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43284268205)、[Pages #43284268437](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43284268437) 亦 **success**。這驗證單元與 build，不等於 BVC2 真實 frame proof。
+- **文件已更新**：[NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md) commit [e02dbd4](https://github.com/IvanaGyro/hongguo-dl/commit/e02dbd44b1b549dbfbbf0daf5fba2ede9eaf372a) 清除過時的「沒有 seek/eviction/主分支發布」描述；[cenc-progressive-to-fmp4.md](cenc-progressive-to-fmp4.md) commit [f5fb50c](https://github.com/IvanaGyro/hongguo-dl/commit/f5fb50c6c97e2d70c1dd63d365ae968de95c2789) 更新架構與 8MiB moov；[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md) commit [f66c66b](https://github.com/IvanaGyro/hongguo-dl/commit/f66c66b7c7945b55df1628ce2e0dcdfcaaae75a8) 正式將 1800s PASS 列入矩陣。
+- **未解限制，不能偷換**：真實紅果 1080p HEVC + CENC 的瀏覽器首影格/音畫/播畢、Android Firefox 真實裝置、ByteVC2 合法正例均 NOT TESTED；本次 1800s 仍是 synthetic 6fps H.264，不是 HEVC。
+- **下一步不停止**：繼續 code-level 稽核 CENC/Worker 流式網路與取消/失敗狀態，優先找可補回歸的具體問題。勿連續查同一 Actions；如有新發現，先 code+test，立即新增 checkpoint。
