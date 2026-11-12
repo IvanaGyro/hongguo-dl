@@ -24,7 +24,7 @@
 
 - 階段 2：合併 main — **完成**，詳見下方紀錄。
 - 階段 3：合併後原始碼與部署確認 — **完成**；主分支新觸發的瀏覽器 CI 結果另待確認。
-- 階段 4：實際 1080p HEVC + CENC 早期起播、seek、Android Firefox 驗證 — 尚未完成。
+- 階段 4：實際 1080p HEVC + CENC 早期起播、seek、Android Firefox 驗證 — 尚未完成，已提供具體交接計畫。
 
 ## 待解決風險與驗收條件
 
@@ -62,4 +62,11 @@
 ### 階段 3 最後一次 CI 狀態快照（2026-11-12 Asia/Taipei）
 
 - [Main WASM proof #9](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230424222)：**success**。
-- [Main browser acceptance #13](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230870775)，提交 `fdab8ae`：**in_progress**。不要在完成前宣稱成功，也不要持續輪詢阻塞。下一個 session 檢查一次結果後，再更新本文件。
+- [Main browser acceptance #13](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43230870775)，提交 `fdab8ae`：**completed successfully**，已確認 browser job status=completed/conclusion=success。合成 H.264/AAC 的 Chromium/Firefox EOF 前首影格測試通過；不代表真實 HEVC 已驗證。
+
+## 階段 4 — 盤點剩餘工作及下一個 session 計畫（本階段研究與交接已完成；實作待做）
+
+- 已根據 main 原始碼與兩項成功 CI，建立 [docs/NEXT-SESSION-PLAN.md](NEXT-SESSION-PLAN.md)，提交 [28c978c](https://github.com/IvanaGyro/hongguo-dl/commit/28c978cbe4fba07041d1ffa44acce35549310f0f)。包含優先順序 P0–P7、每階段程式檔案、驗收條件、測試矩陣、風險與交接規則。
+- 已核對 **Main browser acceptance #13 成功**，更新上方原本 in_progress 的過時資訊；Main WASM proof #9 亦成功。
+- **程式碼尚未解決**：真實 HEVC 1080p 端對端尚未驗證；無未緩衝位置的 Range seek；MSE 舊範圍沒有 eviction；錯誤時 Worker/ACK 未保證立即清理；Main WASM publishing 在 workflow 只針對 feature 分支；ByteVC2 沒有真實影格驗證，仍是整檔轉碼。
+- 下一個 session 先執行 [NEXT-SESSION-PLAN.md 第 4 節](NEXT-SESSION-PLAN.md)：建立新功能分支，確認合成 CI 基線與 main 資產發布的一致性，更新進度檔，再開始真實 HEVC 測試；勿直接認定 CI 意味真實紅果 HEVC 可播。
