@@ -41,6 +41,9 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
 });
 try {
   await page.goto('http://127.0.0.1:4173/hongguo-dl/?id=123456789');
+  // The controls exist in static HTML before the application attaches handlers.
+  await page.waitForFunction(() => document.querySelector('#series-title')
+    ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
   await page.locator('#mode-play').click();
   await page.locator('[data-play-vid="111111111"]').click();
   await page.waitForFunction(() => {
@@ -66,4 +69,13 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ decodedSyntheticBvc2Frames: true, boundedRangeRequests: reads.length,
     outputs: ['original', 'h264', 'hevc', 'vvc', 'av1'], liveMseAfterModeSwitch: 0 }));
+} catch (error) {
+  console.error('Synthetic BVC2 browser state', await page.evaluate(() => ({
+    status: document.querySelector('#player-status')?.textContent,
+    source: document.querySelector('#player-source-info')?.textContent,
+    title: document.querySelector('#series-title')?.textContent,
+    videoError: document.querySelector('#player-video')?.error?.code || null
+  })));
+  console.error('Page errors', errors);
+  throw error;
 } finally { await browser.close(); }
