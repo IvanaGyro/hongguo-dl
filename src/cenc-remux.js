@@ -5,6 +5,7 @@ import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
 import { retryableAvailability } from './retryable-availability.js';
 import { assertHevcInitCodecMatches } from './cenc-init-codec.js';
+import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
 const checkCencCore = retryableAvailability(async () => {
@@ -145,7 +146,29 @@ export async function openCencProgressiveStream({
   }
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
-  let finished = false;
+  let finished = false, initialStartChecked = false;
+  // Real progressive HEVC can have its first common audio/video buffered
+  // range start a few hundred milliseconds after zero (e.g. 0.16s).
+  // Per MSE's readyState rules, a media clock at 0 then remains stuck at
+  // HAVE_METADATA even while multiple complete fragments have been appended.
+  // Only adjust a fresh zero-start HEVC stream, never indexed seeks or user
+  // resume positions. Defer until metadata and media ranges are available.
+  const alignFirstBuffer = () => {
+    if (closed || failed || initialStartChecked || codec !== 'hevc' ||
+        startSeconds > 0.01 || video.readyState < 1 ||
+        !video.buffered?.length) return;
+    try {
+      const firstStart = video.buffered.start(0);
+      const firstEnd = video.buffered.end(0);
+      if (firstEnd - firstStart < 0.1) return;
+      // Attempt only once when real buffered media is available. A gap larger
+      // than 0.5s indicates a different timeline defect, not harmless preroll.
+      initialStartChecked = true;
+      alignInitialCencBufferedStart(video, startSeconds);
+      video.removeEventListener('loadedmetadata', alignFirstBuffer);
+    } catch { /* video src may have been replaced during cancellation */ }
+  };
+  video.addEventListener('loadedmetadata', alignFirstBuffer);
   // Terminate directly: posting cancel first can resume an interrupted AVIO
   // sample with EIO before termination, producing spurious MOV corruption logs.
   // Termination itself stops Worker fetches and discards its pending ACK.
@@ -157,6 +180,7 @@ export async function openCencProgressiveStream({
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
     worker.terminate();
+    video.removeEventListener('loadedmetadata', alignFirstBuffer);
     const endWithError = () => {
       if (closed) return;
       if (buffer?.updating) {
@@ -179,6 +203,7 @@ export async function openCencProgressiveStream({
     closed = true;
     internal.abort();
     signal?.removeEventListener('abort', onAbort);
+    video.removeEventListener('loadedmetadata', alignFirstBuffer);
     worker.terminate();
     revokeObjectUrl();
   };
@@ -244,6 +269,7 @@ export async function openCencProgressiveStream({
       }
       if (!buffer) throw new Error('Missing MSE initialization');
       await append(new Uint8Array(data.bytes));
+      if (data.type === 'media') alignFirstBuffer();
       await waitBufferHeadroom(video, buffer, internal.signal);
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(error => fail(error?.code === 'HEVC_INIT_MISMATCH'
