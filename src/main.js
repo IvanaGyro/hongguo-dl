@@ -30,6 +30,7 @@ import { episodeFileName, originalExtension, filenameExtension, episodeDisplayTi
 import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
+import { interruptQueueOnPageHide } from './queue-lifecycle.js';
 import { renditionForAttempt, codecId } from './source-options.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
@@ -87,6 +88,7 @@ const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
 let currentMode = 'download';
+let pageSuspended = false;
 let player = null;
 let bulkController = null;
 let loadingDeepLinks = false;
@@ -426,6 +428,9 @@ function cancel(job) {
     update(job, { status: 'canceled', error: '使用者取消', errorCode: 'CANCELED' });
 }
 function pump() {
+  // A suspended BFCache page must never start a new queued network download
+  // from an aborted job's finally callback.
+  if (pageSuspended) return;
   const concurrency = Number($('concurrency').value) || 2;
   while (active.size < concurrency) {
     const job = orderQueueSelection(jobs).find(j => j.status === 'queued' && !active.has(j.id));
@@ -597,6 +602,7 @@ async function runJob(job, signal) {
     if (cached) {
       update(job, { status: 'downloading', bytes: cached.size, totalBytes: cached.size });
       await saveProcessed(cached, episodeFileName(job, '.mp4'), job);
+      if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
       update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
       return;
     }
@@ -654,8 +660,12 @@ async function runJob(job, signal) {
       }
       await saveProcessed(out, outputFileName(job, source, true), job, source);
     }
+    if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
     update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });
   } catch (error) {
+    // pagehide already persisted an INTERRUPTED result. A late reject from
+    // the aborted download must not overwrite it with 'user canceled'.
+    if (job.status === 'failed' && job.errorCode === 'INTERRUPTED') return;
     const result = classifyError(error);
     if (result.code === 'CANCELED' || signal.aborted) {
       update(job, { status: 'canceled', errorCode: 'CANCELED', error: '使用者已取消' });
@@ -857,6 +867,25 @@ $('clear-finished').addEventListener('click', () => {
   persistExportSelection(); saveJobs(); schedulePaint();
 });
 $('concurrency').addEventListener('change', pump);
+// BFCache keeps the document and its JavaScript environment alive. Explicitly
+// stop downloading, retries and archive export instead of relying on unload.
+window.addEventListener('pagehide', () => {
+  pageSuspended = true;
+  interruptQueueOnPageHide({
+    active, retryTimers, jobs, bulkController,
+    onInterrupted: job => update(job, {
+      status: 'failed', errorCode: 'INTERRUPTED',
+      error: '頁面已離開；請手動重試未完成的下載'
+    })
+  });
+  saveJobs();
+});
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  pageSuspended = false;
+  // Intentionally do not pump(): interrupted work requires manual retry.
+  renderQueue();
+});
 $('browser-note').hidden = true;
 if (!window.showDirectoryPicker) {
   $('choose-folder').hidden = true;
