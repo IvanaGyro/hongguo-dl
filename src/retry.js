@@ -1,13 +1,15 @@
 // Consecutive identical errors, rather than a fixed retry count, determine
 // when a job stops. A separate safety ceiling prevents alternating failures
 // from retrying indefinitely when the server is permanently unavailable.
-export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20) {
+export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
+  { retryForbidden = false } = {}) {
   const key = String(error.code || 'UNKNOWN') + '\u0000' + String(error.message || '');
   const streak = previous?.key === key ? (previous.streak || 0) + 1 : 1;
   const attempts = (previous?.attempts || 0) + 1;
   const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
     'CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'CENC_RANGE_INVALID',
-    'CENC_RANGE_UNSUPPORTED'].includes(error.code)
+    'CENC_RANGE_UNSUPPORTED'].includes(error.code) &&
+    !(retryForbidden && error.code === 'CENC_SOURCE_FORBIDDEN')
     ? 'not-retryable' : streak >= repeatedLimit ? 'repeated'
     : attempts >= attemptLimit ? 'total-limit' : null;
   return { key, streak, attempts, stoppedBy, retry: !stoppedBy,

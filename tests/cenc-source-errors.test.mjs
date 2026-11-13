@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openClearKeyStream, probeCencKid } from '../src/clear-key.js';
+import { playbackRendition } from '../src/source-options.js';
 import { recordFailure } from '../src/retry.js';
 
 const source = {
@@ -116,4 +117,25 @@ test('CENC metadata fetch and read errors stay bounded, retryable and redacted',
     assert.equal(calls, 1, 'No full-file fallback after ' + phase + ' failed');
     assert.equal(canceled, phase === 'read' ? 1 : 0);
   }
+});
+
+
+test('playback retries CENC 403 with CDN rotation and existing finite limits', () => {
+  const variants = ['a', 'b'].map(host => ({
+    ...source, url: 'https://' + host + '.example/video.mp4', quality: '1080p'
+  }));
+  const error = { code: 'CENC_SOURCE_FORBIDDEN', message: 'CDN 拒絕存取影片（HTTP 403）' };
+  let failure;
+  const hosts = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    hosts.push(new URL(playbackRendition(variants, { quality: '1080p' },
+      () => 'probably', attempt).source.url).hostname);
+    failure = recordFailure(failure, error, 5, 20, { retryForbidden: true });
+    assert.equal(failure.retry, attempt < 4);
+  }
+  assert.deepEqual(hosts, ['a.example', 'b.example', 'a.example', 'b.example', 'a.example']);
+  assert.equal(failure.stoppedBy, 'repeated');
+  assert.equal(recordFailure(null, { code: 'CENC_RATE_LIMITED' }, 5, 20,
+    { retryForbidden: true }).retry, false, '429 policy remains unchanged');
+  assert.equal(recordFailure(null, error, 5).retry, false, 'Default/download policy remains unchanged');
 });

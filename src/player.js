@@ -372,11 +372,20 @@ export function createPlayer({
     if (!quiet && (attempt === 0 || retryIncrementalCenc) &&
         source.contentKey && !isHlsUrl(source.url)) {
       await keyCleanup;
-      const native = await openClearKeyStream({
-        video, source, codec: codecId(source.codec),
-        workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode, seriesId)
-      });
+      let native;
+      try {
+        native = await openClearKeyStream({
+          video, source, codec: codecId(source.codec),
+          workerOrigin: getWorkerOrigin(), signal,
+          startSeconds: savedResumeSeconds(episode, seriesId)
+        });
+      } catch (error) {
+        // A rejected CDN must rotate to another bounded streaming candidate.
+        // A retry must not bypass this path and download the whole episode.
+        if (['CENC_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP'].includes(error?.code))
+          retryIncrementalCenc = true;
+        throw error;
+      }
       if (native) {
         if (native.kind === 'cenc-remux') retryIncrementalCenc = true;
         return { url: native.url, native, source, fallbackNotice, variants: null };
@@ -553,7 +562,7 @@ export function createPlayer({
           setStatus('無法播放 · ' + parsed.message);
           return;
         }
-        errors = recordFailure(errors, parsed, 5);
+        errors = recordFailure(errors, parsed, 5, 20, { retryForbidden: true });
         failure = errors;
         setStatus(playbackFailureMessage(errors, parsed, 5));
         if (!errors.retry) {
@@ -722,7 +731,7 @@ export function createPlayer({
       disposeNativeKeys();
     }
     const parsed = { code: 'PLAYBACK_ERROR', message: video.error?.message || '播放中斷' };
-    failure = recordFailure(failure, parsed, 5);
+    failure = recordFailure(failure, parsed, 5, 20, { retryForbidden: true });
     setStatus(playbackFailureMessage(failure, parsed, 5));
     if (!failure.retry) return;
     const prior = failure;

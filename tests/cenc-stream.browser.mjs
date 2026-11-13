@@ -130,6 +130,8 @@ function browserProcessTreeRssBytes(rootPid) {
 
 const KID = '11223344556677889900aabbccddeeff';
 const KEY = '00112233445566778899aabbccddeeff';
+const cdnRetry = process.env.CENC_TEST_CDN_RETRY === '1';
+let deniedCdnRequests = 0, alternateCdnRequests = 0;
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
   headless: true, ...(browserName === 'firefox'
@@ -207,11 +209,13 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   if (u.pathname === '/api/source') return route.fulfill({
     contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' },
-    body: JSON.stringify({ variants: [{
-      codec: 'h264', quality: '720p', source: 'app',
-      url: 'https://cdn.fqnovelvod.com/cenc-progressive.mp4',
-      contentKey: KEY, width: 480, height: 270
-    }] })
+    body: JSON.stringify({ variants: (cdnRetry
+      ? ['https://denied.fqnovelvod.com/cenc-progressive.mp4',
+        'https://alternate.fqnovelvod.com/cenc-progressive.mp4']
+      : ['https://cdn.fqnovelvod.com/cenc-progressive.mp4']).map(url => ({
+        codec: 'h264', quality: '720p', source: 'app', url,
+        contentKey: KEY, width: 480, height: 270
+      })) })
   });
   if (u.pathname !== '/api/media') throw new Error('Unexpected API endpoint');
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
@@ -220,6 +224,15 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
       first: 0, last: input.length - 1, bytes: input.length });
     return route.fulfill({ status: 416, contentType: 'text/plain',
       body: 'Bounded synthetic fixture requires Range' });
+  }
+  if (cdnRetry) {
+    const host = new URL(u.searchParams.get('url')).hostname;
+    if (host.startsWith('denied.')) {
+      deniedCdnRequests++;
+      return route.fulfill({ status: 403, body: 'synthetic CDN rejection' });
+    }
+    assert(host.startsWith('alternate.'), 'Retry must select the alternate CDN');
+    alternateCdnRequests++;
   }
   const first = Number(range[1]);
   const last = range[2] ? Math.min(Number(range[2]), input.length - 1) : input.length - 1;
@@ -317,6 +330,11 @@ try {
     assert(frame.requests >= 2 && !mediaRequests.some(req => req.unbounded),
       'Metadata and fragment HTTP ranges must both be used');
     assert.equal(frame.mediaKeys, false, 'Clear output should not need EME');
+    if (cdnRetry) {
+      assert.equal(deniedCdnRequests, 1, 'First CDN should fail once, then rotate');
+      assert(alternateCdnRequests >= 2, 'Alternate must serve metadata and media Ranges');
+      console.log('PASS ' + browserName + ' CENC 403 rotates CDN and streams before EOF');
+    }
     await page.waitForFunction(() =>
       document.querySelector('#player-video')?.currentTime > 1.5,
       null, { timeout: 20000 });
