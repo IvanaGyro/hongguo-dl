@@ -42,7 +42,7 @@ try {
       mseAvailable: typeof MediaSource !== 'undefined',
       hevcMseProbesSupported: supported,
       hevcVideo: video.canPlayType('video/mp4; codecs="hvc1"') || '',
-      h264Mse: Boolean(MediaSource?.isTypeSupported?.(
+      h264Mse: Boolean(globalThis.MediaSource?.isTypeSupported?.(
         'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'))
     };
   }, MIME_PROBES);
