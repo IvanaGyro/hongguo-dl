@@ -43,6 +43,11 @@ function snapshot(raw) {
     keys: Object.keys(original).slice(0, 40),
     code: present(original,'code') ? original.code : null,
     Code: present(original,'Code') ? original.Code : null,
+    // Non-identifying top-level diagnostics to check server-side time windows.
+    serverTime: ['number', 'string'].includes(valueType(original.server_time))
+      ? original.server_time : null,
+    newUser: ['number', 'boolean', 'string'].includes(valueType(original.new_user))
+      ? String(original.new_user).slice(0,32) : null,
     fields,
     currentValidator: {
       deviceIdAccepted: preferred('device_id'),
