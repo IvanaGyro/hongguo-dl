@@ -112,6 +112,33 @@ try {
       video.paused && video.readyState >= 1)) {
       await page.locator('#player-play-pause').click();
     }
+    // Diagnostic only: macOS WebKit currently appends valid MSE media from
+    // 0.16s onward while playback remains at 0.000s in HAVE_METADATA.
+    // Seek into that *already buffered* first RAP interval to test whether
+    // this source-start gap, rather than HEVC decoding, prevents the first
+    // frame. Keep this intervention in the test until a real pass proves it.
+    await page.waitForFunction(() => {
+      const v = document.querySelector('#player-video');
+      return v?.readyState >= 1 && v.buffered.length > 0 &&
+        v.buffered.end(0) - v.buffered.start(0) > 1;
+    }, null, { timeout: 45000 }).catch(() => {});
+    const firstBufferTrial = await page.evaluate(() => {
+      const v = document.querySelector('#player-video');
+      if (!v?.buffered.length) return { outcome: 'NO_BUFFERED_MEDIA' };
+      const start = v.buffered.start(0), end = v.buffered.end(0);
+      const oldTime = v.currentTime;
+      if (!(start > 0.01 && start < 0.5 && oldTime < start)) {
+        return { outcome: 'NO_FIRST_FRAME_GAP', start, end, oldTime };
+      }
+      const target = start + 0.04;
+      try {
+        v.currentTime = target;
+        return { outcome: 'SEEK_INSIDE_FIRST_BUFFER', start, end, oldTime, target };
+      } catch {
+        return { outcome: 'SEEK_REJECTED', start, end, oldTime };
+      }
+    });
+    console.log('macOS WebKit initial buffered gap diagnostic:', JSON.stringify(firstBufferTrial));
     await page.waitForFunction(() => {
       const video = document.querySelector('#player-video');
       const failure = document.querySelector('#player-status')?.textContent || '';
