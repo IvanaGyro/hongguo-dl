@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Adaptive E experiment (real anonymous device registration, local workerd).
-// Starts with upper=240s, first probe=180s. After a failure, waits ONLY
-// the remaining time to upper; confirms recovery BEFORE another trigger.
+// Continuation after a validated 180s silent recovery: first probe 150s.
+// After failure, wait ONLY the remaining time to the known base (180s).
+// Confirm recovery BEFORE any new trigger. Short triggers are recorded, not dropped.
 // Exact device IDs: short-retention artifact only, NEVER stdout.
 import {mkdir,writeFile} from 'node:fs/promises';
 
 const ROOT='http://127.0.0.1:8787', OUT='/tmp/registration-adaptive-e';
-const MAX_ROUNDS=3, MAX_TRIGGER_REQUESTS=160, INITIAL_UPPER=240, INITIAL_PROBE=180;
+const MAX_ROUNDS=4, MAX_TRIGGER_REQUESTS=160, INITIAL_UPPER=180, INITIAL_PROBE=150;
 const epoch=performance.now(), elapsed=()=>Math.round(performance.now()-epoch);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const rows=[], events=[];
@@ -111,11 +112,11 @@ async function trigger(round){
         countOfSuccessfulRegistrationsSinceRoundStart:nSuccess+3,
         serverTime:r.responseSnapshot?.serverTime??null});
       await persist();
-      // A short trigger means the quota did not reset; a later recovery
-      // probe cannot be interpreted as an independent 120-success test.
+      // Do not abort on earlier-than-120 zero IDs: recovery is the actual
+      // measurement here. Report the residual quota as a confounder.
       if(nSuccess<100){
-        mark('confounded-early-trigger',{round,successfulBurst:nSuccess});
-        return null;
+        mark('early-trigger-observed',{round,successfulBurst:nSuccess,
+          interpretation:'possible residual window/quota; trial remains usable for recovery observation'});
       }
       return {t0,ordinal:i,successes:nSuccess+3};
     }
@@ -144,8 +145,8 @@ async function waitForRecovery(round,t0,trial,base){
     recoveredAt=trial;
     recoveryResult=trialResult;
   }else{
-    // User-requested base semantics: after a failure at e.g. 180s,
-    // WAIT ONLY 60 MORE seconds and probe at 240s.
+    // User-requested base semantics: if trial 150s fails while base=180s,
+    // WAIT ONLY 30 MORE seconds and probe at 180s.
     const checks=[base,base+60,base+120,base+240,base+360];
     for(const sec of checks){
       if(sec<=trial)continue;
@@ -172,7 +173,7 @@ async function waitForRecovery(round,t0,trial,base){
 }
 function nextCandidate(){
   // Successful single probes narrow the upper bound; failed probes raise
-  // a lower bound. The first probe is deliberately 180s (not midpoint).
+  // a lower bound. Continuation begins with 150s after known 180s success.
   if(lower===null)return Math.max(15,upper-30);
   return Math.round(((upper+lower)/2)/5)*5;
 }
@@ -184,7 +185,7 @@ for(let round=1;round<=MAX_ROUNDS;round++){
   mark('round-start',{round,base:upper,candidate,lower});
   const result=await trigger(round);
   if(!result){
-    mark('halt',{round,reason:'unhealthy baseline, confounded trigger or unrelated error'});
+    mark('halt',{round,reason:'unhealthy baseline, missing zero ID or unrelated error'});
     break;
   }
   const base=upper,probe=candidate;
