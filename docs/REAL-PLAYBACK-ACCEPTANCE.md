@@ -40,3 +40,9 @@
 - **P3：自動畫質體驗** — 若 HEVC 不可用且只有 ByteVC2，顯示「需整檔轉碼」的實際等待階段與取消，而不是假裝影片已開始播放；根據有效來源及裝置能力選擇，不要默默以無法解碼的來源取代使用者的畫質設定。
 
 **目前總判定：真實播放 FAIL；合成 CENC 已 PASS；真實片源讀取與 ByteVC2 解碼仍 NOT VERIFIED。**
+
+
+## macOS Apple Silicon 真實 HEVC Browser 第一輪（後續補充）
+
+- 在 Linux browser MSE HEVC 不支援之後，以 GitHub Hosted `macos-15` M1 + Playwright WebKit 做獨立實測。[#43345639384](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43345639384) **FAIL**，這次 MSE HEVC Main/Main10 codec 四個宣告全部 supported，並且真實來源 **14×HTTP206**、video 自帶 `width=1920,height=1080`；但 `readyState=1` (HAVE_METADATA)、`currentTime=0`、實際呈現影格 0、`mediaError=null`。所以「真實源可解密且 FFmpeg 可解」仍不是 browser 的正例。
+- 下一輪 [#43346260353](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43346260353) 加上 SourceBuffer append/updateend/buffered 及在 metadata 後 user gesture 的儀表化，查詢時 PENDING。未知原因不能猜成 WebKit bug、fMP4 PTS 壞或 autoplay，應根據這組數據排除。
