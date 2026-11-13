@@ -1,24 +1,20 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 78：真實播放五輪驗收）
+# Hongguo DL — 目前狀態（2026-11-13；PR #7 已合併、真實 HEVC WASM 解碼 PASS）
 
-> **優先工作入口**：[REAL-PLAYBACK-ACCEPTANCE.md](REAL-PLAYBACK-ACCEPTANCE.md)；真實影片能否播放的證據高於合成 CI。所有工程直接提交 `main`、不開 PR；不得在 repo 或 log 保存簽章影片 URL、CENC key、Cookie 或真實影片片段。
+> **當前焦點：真正紅果片源在瀏覽器的首影格／音訊**。不要把合成 Browser PASS 混為真實播放 PASS。使用者另有 agent 實作 BVC2 串流及下載，本交接範圍不修改 BVC2；仍直接提交 `main`，不開新的 PR。絕不記錄 signed URL、密鑰、影片 bytes、Cookie。
 
-## 最高優先結論
+## 目前實證（優先於歷史階段 74–78）
 
-**現有部署站對真實紅果《nova：新星》第 1 集：FAIL，沒有成功呈現影格或讓播放時間前進。** 這是本輪最重要的新實證，不是 synthetic CENC 的成功。真實來源 API 正常顯示 1080p encrypted HEVC（2 份候選）與 720/540/480/360p encrypted ByteVC2（各 2 份候選）。第 1 集 360p 瀏覽器實測最後收到 **media HTTP 403**；GitHub Actions bounded HEVC 206 metadata probe 2 候選都未取得合格 206、0 筆上游 HTTP status，失敗於傳輸/逾時階段。不能因此推論「ByteVC2 解碼器壞掉」，也不能推論「真實 HEVC 播放成功」。
+- **PR #7 已合併**：[PR #7](https://github.com/IvanaGyro/hongguo-dl/pull/7)，merge SHA [49ba72a](https://github.com/IvanaGyro/hongguo-dl/commit/49ba72a876d03ce76f18e247fb85b6605a03133a)。修正 Worker cancel→terminate 的 MOV race，不改 decoder/WASM。主分支 [CENC Browser #43343712331](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343712331) **fast/long completed/success**；Chromium/Firefox rapid seek + 3 mode cycles 各 0 MOV warnings，AAC PCM post-seek Chromium 25 個視窗非靜音、Firefox 24 個，MSE URL／Range 清理通過。[Issue #6](https://github.com/IvanaGyro/hongguo-dl/issues/6) 已關閉。
+- **真實加密 HEVC 206／moov/hvcC 已 PASS**：[ae0db3e](https://github.com/IvanaGyro/hongguo-dl/commit/ae0db3e24b74cf491e325571dd65a8c91087db76) 改有限多集數新鮮 source 的 bounded probe；[Live #43343959663](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343959663) **PASS**：前兩集共 4×403，第 3 集候選 1 成功 2×206；6 requests／requested 556730 bytes。真實第 3 集 1080p encrypted HEVC `hvc1` + AAC、KID/hvcC 有效、非分段、fileSize 8594279。拒絕不是普遍性故障，**更換集數／候選可得到 206**。
+- **真實紅果 HEVC CENC 解密→WASM→fMP4→FFmpeg 實際影格／AAC 解碼 PASS**：[70a4a2b](https://github.com/IvanaGyro/hongguo-dl/commit/70a4a2b7f2ba998293d45494ba9c46adda3780cd) 新增獨立 [Real HEVC WASM #43344492452](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43344492452) **completed/success**：fresh episode 3 候選 1/2、episode 1 候選 1 得 403；episode 1 下一候選成功，**35×206、3×403，38 requests，總 requested 9098695 bytes**。8,277,562 bytes 的真實 CENC HEVC 檔經 pinned Librempeg WASM 有界 Range 產生**56 個 fMP4 media fragments**，第一個完整片段在僅存取最高 755303 bytes 時出現，**尚未讀完 EOF**；clear fMP4 8,099,216 bytes，FFprobe 1920×1080 HEVC + AAC，FFmpeg `-xerror` 實際解出至少 12 個 HEVC 影格與 3 秒 AAC。真實輸出只保存在 Actions runner `/tmp`，step trap 刪除，無 artifact。
+- **真實瀏覽器 HEVC MSE 仍 NOT VERIFIED**：[Browser capability check](https://agent.tinyfish.ai/runs/f0d73805-8310-485f-8975-1197331a691f) 實際 headless browser `MediaSource.isTypeSupported` HEVC + AAC / Main10 + AAC 都 **false**，H264 + AAC true；不應在不能解 HEVC 的環境硬播並誤判回歸。此前真正部署站第 1 集 360p ByteVC2 HTTP403、0:00 無畫面仍為歷史證據，**但不可因此否認現已證實的 HEVC 解密／解碼**。
+- **最新驗收連結**：PR #7 main [CI #43343712325](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343712325)、[WASM #43343712362](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343712362)、[Browser #43343712331](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343712331) fast/long 全 PASS；real WASM commit [CI #43344492415](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43344492415)、[Pages #43344492519](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43344492519) PASS。
 
-## 本輪五階段（74–78）
+## 下一優先
 
-1. **階段74 真實 1080p/auto 畫面實測**：部署頁顯示《nova：新星》共 60 集（前 5 集 available），第一集至少 20s 內無影格、0:00/0:00、播放器顯示 ByteVC2 實驗轉碼。[Browser 實測記錄](https://agent.tinyfish.ai/runs/2f5dc5e8-f69f-49e6-b7e5-3ba0f62c0d65)。
-2. **階段75 真實 HEVC 206 bounded probe**：[3184c85](https://github.com/IvanaGyro/hongguo-dl/commit/3184c85815868ae3299ef177586967a4d2f59f9d) 日誌加入安全的 HTTP status/count；[live run #43339207034](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339207034) **FAIL**（2 候選、0 success、0 status、名目 131072 bytes／2 requests）。不能聲稱源站 HTTP 403，因為這輪沒有收到任何 HTTP status。
-3. **階段76 ByteVC2 真實階段診斷**：[1b8b080](https://github.com/IvanaGyro/hongguo-dl/commit/1b8b080b5bb90a146b7d9922a627de6d43186755) 顯示整集 bytes 下載 %、WASM loading/ready、transcoding（無虛構%）、finalizing；[CI #43339401291](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339401291)、[Firefox #43339401187](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339401187) success。**只增可觀測性，不代表已能串流播放**。
-4. **階段77 真實 360p ByteVC2 實播**：[Browser 實測記錄](https://agent.tinyfish.ai/runs/35c95408-2dd2-4e25-9977-573cd58caa70)：**FAIL**，完整觀測到 MEDIA_HTTP HTTP 403，曾顯示整集下載 90% 但始終 0:00／無影格，5 次重試停止。這次證明媒體代理/上游 CDN 無法提供可用影片，**不能斷定所有影片均如此**。
-5. **階段78 錯誤分類／回歸**：[a74869f](https://github.com/IvanaGyro/hongguo-dl/commit/a74869f4500c16c9cb07d9845958098492102e85) Worker 將上游 403/429 分類為 media forbidden/rate limited；[63a2733](https://github.com/IvanaGyro/hongguo-dl/commit/63a27334dd6d8eaef17b3618e75a74c3cebf6adb) 前端也能將**舊 Worker** 的 generic MEDIA_HTTP 403/429 映射為明確原因。429 非可重試；403 仍遵守原有候選/重試策略。[CI #43340041117](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43340041117)、[Pages #43340041383](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43340041383) completed/success。**Worker 原始碼更新沒有證據表明已部署 Cloudflare**，但 Pages 前端與舊 Worker 相容。
+1. **真正 HEVC MSE 有支援的環境**（Windows/Android：須先實測 `MediaSource.isTypeSupported` 用源片 hvcC 精確 MIME，不能以 bare hvc1 宣稱）；對真實 1080p CENC 使用原播放器，驗首影格 EOF 前、聲音、pause/seek/resume、end。在這之前 browser playback = **NOT VERIFIED**。
+2. 若真實 browser 403，優先輪替候選 CDN 和 refresh API source，有 206 的候選已證實存在；尊重 429 立即停損，不繞過來源授權。注意來源簽章時效，**不要在 CI/log 保存 URL/key**。
+3. ByteVC2 streaming/download 是其他 agent 的進行中工作；本階段不碰其 Worker、transcoder、播放器 BVC2 路徑。
+4. [Issue #8](https://github.com/IvanaGyro/hongguo-dl/issues/8) 保持 open，結論聚焦 browser first frame/音訊，**不再宣稱所有真實 HEVC Range 都無法接取**。
 
-## 下一個工作重點（不可跳過）
-
-- **P0 真實媒體存取**：取得使用者有權使用而且返回有效 206/Content-Range 的真實來源；若官方 CDN 回 403，先辨別是否舊簽章、存取限制、Cloudflare egress/區域、或原站防盜鏈，**無證據不得猜**、不得嘗試繞過限制。不要再花大量時間只測 synthetic AAC。
-- **P1 真實 HEVC**：在有 HEVC MSE 的實際 Windows/Android 裝置上驗 metadata、CENC 解密、EOF 前第一影格和音訊；不要把 Linux Chromium 不支援 HEVC 說成 remux 壞。
-- **P2 ByteVC2 真正起播**：目前只能整集下載→同步單執行緒 WASM→H264，**不是 progressive streaming**；沒有合法 bitstream 真實解碼正例。未驗證解碼器前不要宣稱 ByteVC2 已支援。
-- **產品限制**：如 CDN HTTP403，應明確標 SOURCE_FORBIDDEN 而非 decoder fail；真實 Android Firefox 大型 ZIP 和 BFCache 仍未驗。
-
-歷史完整日誌：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)；[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。**CI PASS 不等於真實播放 PASS。**
+詳細：[REAL-PLAYBACK-ACCEPTANCE.md](REAL-PLAYBACK-ACCEPTANCE.md)、[AGENT-PROGRESS.md](AGENT-PROGRESS.md)、[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。

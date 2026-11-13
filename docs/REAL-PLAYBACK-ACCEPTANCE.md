@@ -4,7 +4,15 @@
 
 ## 結論
 
-**真實紅果影片：FAIL / 尚未驗證成功播放。** 針對既有公開測試系列 `7699513062054710296` 的第 1 集，瀏覽器 1080p HEVC / 360p ByteVC2 測試均**沒有**取得可見的第一個影格或向前的播放時間。360p 實播得到上游媒體 HTTP 403；bounded 1080p HEVC metadata probe 的兩個候選都無法建立可驗證的 HTTP 206 範圍回應。這些是當下環境的觀察，**不能因此宣稱所有紅果影片都不能播放，也不能把 HTTP 403 當作解碼器失敗。**
+**目前狀態：真實 HEVC 已成功經 pinned Librempeg WASM 解密／轉封裝，FFmpeg 真實 HEVC 影格與 AAC 解碼 PASS；但尚未在支援 HEVC MSE 的瀏覽器驗到實際畫面與聲音。** 以下原始五輪紀錄保留當時的失敗背景（早期兩個候選沒有 206、360p ByteVC2 曾 HTTP403），**不再代表目前沒有真實 206**。後續驗收已在第 3 集取得合法 206/CENC metadata，更進一步在第 1 集候選成功完成 EOF 前的 fMP4 串流輸出與 FFmpeg 解碼。真正 Browser playback 仍未驗證成功。
+
+## 2026-11-13 後續正例（高於原始五輪的歷史狀態）
+
+- [PR #7](https://github.com/IvanaGyro/hongguo-dl/pull/7) 已合併，CENC Worker teardown race 修復。[主 Browser #43343712331](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343712331) Chromium/Firefox fast/long success，取消/Seek 後 MOV warning 0，AAC PCM 恢復非靜音，沒有改動音訊解碼器本身。
+- [真實 HTTP206 #43343959663](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343959663) completed/success：輪流 refresh 4 集中可公開存取的 HEVC 來源；集 1/2 共 4 候選回 403；集 3 第一候選成功 2×206，有效 CENC KID、`hvc1`/hvcC、AAC、fileSize **8,594,279 bytes**。6 Range requests，requested **556,730 bytes**，無保存 URL/key。
+- [真實 pinned WASM + FFmpeg #43344492452](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43344492452) completed/success：實際另一次 refresh 先 3 個 403，**集 1 下一候選返回合法 206**。正式 pinned Librempeg Asyncify WASM（未解碼影像的 compressed packet copy）接真實有界 Range，input **8,277,562 bytes**，輸出 clear fMP4 **8,099,216 bytes／56 fragments**。**第一個完整 media fragment 在來源最高存取 755,303 bytes 時即完成，明顯在 EOF 之前。** 後續 FFprobe 確認 HEVC 1920×1080 + AAC，FFmpeg `-xerror` 真實解碼 **12 個 video frames、3 秒 AAC**，兩者成功。
+- **剩餘**：[實際 browser codec capability](https://agent.tinyfish.ai/runs/f0d73805-8310-485f-8975-1197331a691f) 此測試瀏覽器 `MediaSource.isTypeSupported` 對 HEVC+AAC／HEVC Main10+AAC 都是 `false`，對 H264+AAC 是 `true`。因此未用此不支援的瀏覽器強制測 HEVC 第一影格。瀏覽器實際播放、HEVC 硬體／系統解碼、聲音、Seek 與播放到 EOF **仍未驗證**。
+- 真實媒體僅存於 CI runner 暫存檔並以 trap 清除；沒有上傳 artifact、輸出簽章 URL／content key／KID。以上是有效真實片源 **WASM pipeline PASS**，**非真實 browser playback PASS**。
 
 ## 五輪工作與證據
 
