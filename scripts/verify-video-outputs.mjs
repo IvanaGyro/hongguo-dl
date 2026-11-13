@@ -64,7 +64,7 @@ try {
   const longVvc = join(dir, 'vvc-long.mp4');
   execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error',
     '-stream_loop', '11', '-i', join(dir, 'vvc3.mp4'), '-c', 'copy',
-    '-movflags', '+faststart', '-y', longVvc]);
+    '-y', longVvc]);
   const longBvc = syntheticBvc2(longVvc);
   assert(longBvc.length > 512 * 1024,
     'Long BVC2 fixture must exceed two 256 KiB media prefetch windows');
