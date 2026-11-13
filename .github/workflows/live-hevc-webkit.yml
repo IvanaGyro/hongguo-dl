@@ -1,0 +1,30 @@
+name: Real Hongguo HEVC first-frame WebKit on macOS (conditional)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/live-hevc.webkit.mjs'
+      - '.github/workflows/live-hevc-webkit.yml'
+  workflow_dispatch:
+concurrency:
+  group: real-hevc-webkit-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  webkit:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test-only Playwright WebKit
+        run: |
+          npm install --no-save playwright@1.58.0
+          npx playwright install webkit
+      - name: Check test script syntax
+        run: node --check tests/live-hevc.webkit.mjs
+      - name: Verify HEVC MSE support before fetching any real media
+        run: node tests/live-hevc.webkit.mjs
