@@ -3,7 +3,7 @@
 // raw PCM, video data, cookies, content keys or downloaded files are logged.
 import assert from 'node:assert/strict';
 
-export async function verifyRealHevcAudioAndSeek(page) {
+export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   // This is Web Audio PCM from the actual decoded MSE media element, NOT
   // ffprobe metadata or FFmpeg-only bitstream acceptance. Use a trusted
   // Playwright click to unlock AudioContext on browsers requiring activation.
@@ -126,11 +126,18 @@ export async function verifyRealHevcAudioAndSeek(page) {
     audio.nonSilentWindows >= 4 && audio.playableTimeAdvanced > 2 &&
     audio.mediaError == null;
   const audioControlValid = Number(audio.controlPeakRms || 0) > 0.01;
+  const nativeElementPcm = Boolean(mediaControl?.native?.mediaPcmMeasured);
+  const mseElementPcm = Boolean(mediaControl?.mse?.mediaPcmMeasured);
   console.log('macOS WebKit Web Audio control:', JSON.stringify({
     oscillatorProducesPCM: audioControlValid,
+    knownAudibleNativeMp4PCM: nativeElementPcm,
+    knownAudibleH264MsePCM: mseElementPcm,
     mediaProducesPCM: audioValid,
     interpretation: !audioControlValid ? 'WEB_AUDIO_SINK_UNVERIFIED'
-      : audioValid ? 'REAL_AAC_PCM_PASS' : 'MEDIA_PCM_SILENT_OR_UNSUPPORTED'
+      : audioValid ? 'REAL_AAC_PCM_PASS'
+      : !nativeElementPcm ? 'MEDIA_ELEMENT_CAPTURE_NOT_VALIDATED'
+      : !mseElementPcm ? 'MSE_AUDIO_CAPTURE_NOT_VALIDATED'
+      : 'REAL_HEVC_MSE_PCM_NOT_DETECTED_DESPITE_VALID_CONTROLS'
   }));
 
   // The player must perform an indexed unbuffered seek, not pretend to seek
@@ -220,8 +227,11 @@ export async function verifyRealHevcAudioAndSeek(page) {
   if (!seekValid) failures.push('Real HEVC 120s remote seek / decoded frames did not pass');
   if (!audioControlValid) failures.push('Web Audio oscillator control did not produce PCM; cannot validate AAC');
   if (!audioValid && !(afterSeekAudio?.peakRms > 0.004 &&
-      afterSeekAudio.nonSilentWindows >= 4))
-    failures.push('Real HEVC AAC PCM not detected at beginning or at 120s');
+      afterSeekAudio.nonSilentWindows >= 4)) {
+    failures.push(nativeElementPcm && mseElementPcm
+      ? 'Real HEVC MSE AAC PCM not detected despite positive known-audible MP4/MSE controls'
+      : 'Real HEVC AAC PCM unverified: known-audible media-element control inconclusive');
+  }
   assert.deepEqual(failures, [], 'Extended real HEVC acceptance failures');
   console.log('PASS real Hongguo HEVC AAC PCM plus 120s distant seek');
 
