@@ -21,13 +21,23 @@ async function rangeProbe(variant,sequence) {
     finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
     result.readBytes=n;
   }else await r.body?.cancel().catch(()=>{});
+  if(r.status===403 || r.status===416){
+    const proxy=WORKER+'/api/media?url='+encodeURIComponent(variant.url)+'&profile='+(variant.source==='app'?'app':'web');
+    try{
+      const p=await fetch(proxy,{headers:{Range:'bytes=0-15'},signal:controller.signal,cache:'no-store'});
+      result.proxyStatus=p.status;
+      result.proxyRangeValid=Boolean(/^bytes 0-15\/\d+$/.test(p.headers.get('content-range')||''));
+      if(p.status===206&&p.body){const reader=p.body.getReader();let n=0;try{while(n<16){const chunk=await reader.read();if(chunk.done)break;n+=chunk.value.byteLength;}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}result.proxyBytes=n;}
+      else await p.body?.cancel().catch(()=>{});
+    }catch{result.proxyError='fetch-failed';}
+  }
  }catch(e){result.error=e.name==='AbortError'?'timeout':'CORS-or-fetch-failure';}
  finally{clearTimeout(timeout);result.elapsedMs=Math.round(performance.now()-started);}
  return result;
 }
 try {
  const series=await json('/api/series?input='+SID);
- const episodes=[series.episodes.find(e=>e.available!==false),series.episodes.find(e=>e.available===false)];
+ const episodes=[series.episodes.find(e=>e.available!==false && e.index===2)||series.episodes.find(e=>e.available!==false),series.episodes.find(e=>e.available===false)];
  for(const [index,episode] of episodes.entries()){
   if(!episode){results.episodes.push({kind:index?'restricted':'unrestricted',error:'no-sample-episode'});output(results);continue;}
   const result={kind:index?'restricted':'unrestricted',index:episode.index,channels:[],probes:[]};
