@@ -1,4 +1,4 @@
-name: Registration risk study C2: 150 real upstream registrations at 2s intervals
+name: "Registration risk study C2 - 150 real upstream registrations at 2s intervals"
 on:
   push:
     branches:
