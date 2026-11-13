@@ -690,3 +690,10 @@
 - **驗收界限**：SW 取消 handler 對「尚未被下載 fetch 消費」的 pending record 有明確語義；對已交付 Response 的瀏覽器下載則由原有 ZIP producer AbortSignal/stream 取消處理，不保證可把已寫出的部分檔案從裝置磁碟撤銷。尚未做真實 Android Firefox 數十集大型 ZIP 的中途取消正例。
 - **Firefox/CENC CI**：[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624)、[CENC Browser #43336436548](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436548) 查詢時仍未 completed；只可報告主 CI 已 PASS。
 - **上一階段的具體 Firefox 證據**：[Firefox #43335942046](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942046) completed/success，job 日誌 `PASS Firefox in-flight source AbortSignal, pagehide cleanup, manual retry and real history navigation`；`pageshow.persisted=false`，**是真實 goBack 但未命中 BFCache，不能將其列為 BFCache PASS**。
+
+
+### 階段 73 後續驗收更新（2026-11-13）
+
+- **主 CI**：[CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) completed/success，包含 `tests/archive-download.test.mjs` 的 SW.ready／ACK abort mock 正例。
+- **Firefox 既有流程**：[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) completed/success，實際 log 有 `Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED`，及階段72 `PASS Firefox in-flight source AbortSignal, pagehide cleanup, manual retry and real history navigation`。後者的 `pageshow.persisted=false` 仍表示真實導覽返回採用 reload 而不是 BFCache。
+- **Pages**：[Pages #43336436625](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436625) success。**CENC Browser #43336436548** 最後查詢仍 pending，沒有寫成 pass。真實 Android Firefox 尚未驗證大型 ZIP 開始下載後的半途取消；純單元 + 正常 ZIP 回歸不等同這個中斷場景。
