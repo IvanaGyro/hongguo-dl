@@ -49,3 +49,28 @@ test('429 does not retry through proxy', async () => {
   assert.equal((await transport.fetch(direct, { headers: { Range: 'bytes=0-15' } })).status, 429);
   assert.deepEqual(seen, [direct]);
 });
+
+
+test('proxy success marks host proxy-preferred in one session', async () => {
+  const seen=[],memory=new Set();
+  const source = 'https://v5-reading-video-b.qznovelvod.com/different.mp4';
+  const request = async url => {
+    seen.push(url);
+    return url === proxy ? range() : response(403);
+  };
+  await createMediaTransport({ directUrl: direct, proxyUrl: proxy,
+    fetchImpl: request, sessionFailureCache: memory
+  }).fetch(direct,{headers:{Range:'bytes=0-15'}});
+  assert.equal(memory.has('v5-reading-video-b.qznovelvod.com'),true);
+  await createMediaTransport({directUrl:source,proxyUrl:proxy,
+    fetchImpl:request,sessionFailureCache:memory
+  }).fetch(source,{headers:{Range:'bytes=0-15'}});
+  assert.deepEqual(seen,[direct,proxy,proxy]);
+});
+test('403 on direct and proxy does not poison whole host', async () => {
+  const memory = new Set();
+  const transport = createMediaTransport({directUrl:direct,proxyUrl:proxy,
+    fetchImpl:async()=>response(403),sessionFailureCache:memory});
+  assert.equal((await transport.fetch(direct,{headers:{Range:'bytes=0-15'}})).status,403);
+  assert.equal(memory.size,0);
+});

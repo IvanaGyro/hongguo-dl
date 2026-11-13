@@ -26,6 +26,9 @@ await page.addInitScript(() => {
 await page.route('**/cenc/cenc-core.wasm', route => route.fulfill({ status:404, body:'not deployed' }));
 await page.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());
+  if (url.pathname === '/api/health') return route.fulfill({
+    json: { ok: true, sourceChannels: false }
+  });
   if (url.pathname === '/api/series') return route.fulfill({ json: {
     kind:'series', seriesId:'123456789', title:'Fallback fixture', total:1, accessible:1,
     episodes:[{index:1, vid:'111111111', available:true}]

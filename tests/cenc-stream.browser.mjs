@@ -215,6 +215,10 @@ await page.exposeFunction('recordCencFirstFrame', () => {
 });
 await context.route(url => url.pathname.startsWith('/api/'), async route => {
   const u = new URL(route.request().url());
+  if (u.pathname === '/api/health') return route.fulfill({
+    json: { ok: true, sourceChannels: false },
+    headers: { 'Access-Control-Allow-Origin': '*' }
+  });
   if (u.pathname === '/api/series') return route.fulfill({
     contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' },

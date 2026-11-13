@@ -81,6 +81,9 @@ export function createPlayer({
     [qualitySelect, preferences.quality], [codecSelect, preferences.codec],
     [speedSelect, preferences.speed], [fitSelect, preferences.fit]
   ]) {
+    if (value && select === qualitySelect && /^d{3,4}p$/.test(value) &&
+        !Array.from(select.options).some(o => o.value === value))
+      select.add(new Option(value + '（待確認）', value));
     if (value && Array.from(select.options).some(o => o.value === value)) select.value = value;
   }
   if (typeof preferences.autoNext === 'boolean') autoNextInput.checked = preferences.autoNext;
