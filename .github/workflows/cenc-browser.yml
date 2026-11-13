@@ -1,7 +1,7 @@
 name: Progressive CENC MSE real-frame browser acceptance
 on:
   push:
-    branches: [main, fix/cenc-cancel-diagnostics]
+    branches: [main, 'fix/cenc-*']
     paths:
       - '.github/workflows/cenc-browser.yml'
       - 'src/cenc-remux.js'
@@ -30,7 +30,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [fast]
+        # Focused CENC fixes run real Chromium/Firefox acceptance; main retains both suites.
+        suite: ${{ github.ref != 'refs/heads/main' && github.event_name == 'push' && fromJSON('["fast"]') || fromJSON('["fast","long"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:

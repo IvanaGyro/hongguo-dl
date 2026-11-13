@@ -146,6 +146,9 @@ export async function openCencProgressiveStream({
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
   let finished = false;
+  // Terminate directly: posting cancel first can resume an interrupted AVIO
+  // sample with EIO before termination, producing spurious MOV corruption logs.
+  // Termination itself stops Worker fetches and discards its pending ACK.
   // Stop Range fetch and pending ACK *before* reporting the media error.
   // SourceBuffer errors are not permitted to leave a live WASM worker behind.
   const fail = cause => {
@@ -153,7 +156,6 @@ export async function openCencProgressiveStream({
     failed = true;
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
-    try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
     worker.terminate();
     const endWithError = () => {
       if (closed) return;
@@ -177,7 +179,6 @@ export async function openCencProgressiveStream({
     closed = true;
     internal.abort();
     signal?.removeEventListener('abort', onAbort);
-    try { worker.postMessage({ type: 'cancel' }); } catch { /* already gone */ }
     worker.terminate();
     revokeObjectUrl();
   };

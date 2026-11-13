@@ -176,24 +176,19 @@ if (process.env.CENC_TEST_MULTI_SEEK === '1') {
 const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
 const rapidDiagnosticPhases = [];
 let exercisingRepeatedSeeks = false, rapidPhase = 'not-started';
-// A canceled Librempeg AVIO demux can report a partial audio packet on its
-// stderr while the old Worker is being torn down. Track only these *specific*
-// MOV diagnostics separately from JS page exceptions and MSE/video errors.
+// Track the issue #6 diagnostics for reporting, but never exempt transition
+// phases from errors: teardown must terminate without resuming aborted AVIO.
 const canceledSeekMovError = /^\[mov,mp4,m4a,3gp,3g2,mj2 @ 0x[0-9a-f]+\] (?:subsample size exceeds the packet size left|Packet corrupt \(stream = \d+, dts = -?\d+\)\.|stream \d+, offset 0x[0-9a-f]+: partial file)$/i;
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
   const text = message.text();
-  if (text.startsWith("CENC TRACE")) console.log(text);
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {
     if (exercisingRepeatedSeeks && canceledSeekMovError.test(text)) {
       canceledSeekDemuxDiagnostics.push(text.slice(0, 180));
       rapidDiagnosticPhases.push(rapidPhase);
-      // A damaged sample in a fully re-established active stream is not a
-      // canceled Worker. Keep it fatal even if video.currentTime advances.
-      if (rapidPhase.startsWith('steady') || rapidPhase === 'pcm-proof')
-        errors.push('Active CENC MOV demux error: ' + text.slice(0, 180));
+      errors.push('CENC MOV demux error (' + rapidPhase + '): ' + text.slice(0, 180));
     } else errors.push(text.slice(0, 180));
   }
 });
@@ -720,8 +715,8 @@ try {
           await assertCencAacPcm(page, 'after-five-seeks-and-three-mode-cycles');
         }
         assert(!errors.length, 'Browser errors after mode cycling: ' + errors.join('; '));
-        // Do not silently erase Librempeg diagnostics. The synthetic sample
-        // still needs an independent AAC quality test on a real device.
+        // Report diagnostics without allowing teardown errors to pass.
+        // Audible PCM recovery is checked above; seeks are discontinuities.
         if (canceledSeekDemuxDiagnostics.length)
           console.warn('CENC rapid seek/cancel MOV demux diagnostics:',
             JSON.stringify({ count: canceledSeekDemuxDiagnostics.length,
