@@ -27,7 +27,7 @@ import { createPlayer } from './player.js';
 import { createPlaybackDiagnostics } from './playback-diagnostics.js';
 import { createMediaTransportForSource } from './media-transport.js';
 import { createEpisodeSourceStore } from './episode-source-store.js';
-import { initialDownloadQualityEpisode, downloadQualityOptions, hasExactDownloadQuality } from './download-quality-options.js';
+import { initialDownloadQualityEpisode, hasExactDownloadQuality } from './download-quality-options.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -36,7 +36,7 @@ import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 import { interruptQueueOnPageHide } from './queue-lifecycle.js';
-import { renditionForAttempt, codecId } from './source-options.js';
+import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId } from './source-options.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
 const $ = id => {
@@ -415,11 +415,11 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto',
 }
 function renderDownloadQualityChoices(variants) {
   const select = $('quality');
-  const previous = select.value;
-  const choices = downloadQualityOptions(variants);
+  const previous = parseRenditionValue(select.value);
+  const choices = renditionOptions(variants);
   select.replaceChildren(new Option('最佳可取得', 'auto'),
-    ...choices.map(q => new Option(q, q)));
-  if (choices.includes(previous)) select.value = previous;
+    ...choices.map(option => new Option(option.label, option.value)));
+  select.value = matchingRenditionValue(choices, previous) || 'auto';
   if (downloadQualitySeriesId === String(series?.seriesId))
     select.title = choices.length ? '以第一個可能受限制集數取得的畫質為準；其他集數若不符合會個別報錯'
       : '這個集數尚未提供可辨識的畫質';
@@ -514,7 +514,8 @@ async function chooseFolder() {
 }
 function queueSelected() {
   if (!series || !selected.size) return;
-  const quality = $('quality').value, codec = $('codec').value, mode = $('output-mode').value;
+  const { quality, codec } = parseRenditionValue($('quality').value);
+  const mode = $('output-mode').value;
   for (const ep of series.episodes.filter(e => selected.has(e.vid))) {
     const same = jobs.find(j => j.seriesId === series.seriesId && j.vid === ep.vid &&
       j.mode === mode && j.codec === codec && j.quality === quality &&
@@ -912,7 +913,7 @@ void supportsIndependentSourceChannels().catch(() => {});
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
-  qualitySelect: $('player-quality'), codecSelect: $('player-codec'),
+  qualitySelect: $('player-quality'),
   speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
   settingsClose: $('player-settings-close'), pipButton: $('player-pip'),

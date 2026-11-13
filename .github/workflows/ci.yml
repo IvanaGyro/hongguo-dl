@@ -54,3 +54,31 @@ jobs:
           echo "Worker failed to start within smoke-test window:"
           cat /tmp/hongguo-workerd.log
           exit 1
+
+  rendition-menu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - run: bun ci
+      - run: bun add --dev playwright@1.58.0
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run build
+      - name: Verify rendition menus and source-failure CENC retry in Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/rendition-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:4173/ -o /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          node tests/rendition-menu.browser.mjs

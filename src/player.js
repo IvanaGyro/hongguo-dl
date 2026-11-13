@@ -8,7 +8,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition } from './source-options.js';
+import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
@@ -33,7 +33,7 @@ function printableSource(source) {
   ].filter(Boolean).join(' · ');
 }
 export function createPlayer({
-  video, status, label, prevButton, nextButton, qualitySelect, codecSelect,
+  video, status, label, prevButton, nextButton, qualitySelect,
   speedSelect, fitSelect, autoNextInput, settingsToggle, settingsMenu,
   settingsClose, pipButton, sourceInfo,
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress,
@@ -79,55 +79,42 @@ export function createPlayer({
   video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
-    [qualitySelect, preferences.quality], [codecSelect, preferences.codec],
     [speedSelect, preferences.speed], [fitSelect, preferences.fit]
   ]) {
-    if (value && select === qualitySelect && /^d{3,4}p$/.test(value) &&
-        !Array.from(select.options).some(o => o.value === value))
-      select.add(new Option(value + '（待確認）', value));
     if (value && Array.from(select.options).some(o => o.value === value)) select.value = value;
+  }
+  const selection = () => parseRenditionValue(qualitySelect.value);
+  function selectRendition(quality, codec = 'auto') {
+    const options = renditionOptions(lastVariants || []);
+    qualitySelect.value = matchingRenditionValue(options, { quality, codec }) || 'auto';
+  }
+  if (preferences.quality && preferences.quality !== 'auto') {
+    const value = renditionValue(preferences.quality, preferences.codec || 'auto');
+    qualitySelect.add(new Option(preferences.quality + '（待確認）', value));
+    qualitySelect.value = value;
   }
   if (typeof preferences.autoNext === 'boolean') autoNextInput.checked = preferences.autoNext;
   function persistPrefs() {
     try {
       storage.setItem(PREF_KEY, JSON.stringify({
-        quality: qualitySelect.value, codec: codecSelect.value,
+        ...selection(),
         speed: speedSelect.value, fit: fitSelect.value,
         autoNext: autoNextInput.checked
       }));
     } catch { /* storage might be disabled */ }
   }
   function setStatus(value) { status.textContent = value; }
-  function updateCodecOptions(variants, partial = lastVariantsPartial) {
-    const available = availableRenditions(variants);
-    // The HTML supplies only the Auto option. Enumerate observed renditions
-    // for this episode, retaining an explicit selection even if unavailable.
-    const requested = qualitySelect.value || preferences.quality || 'auto';
-    const names = new Set(available.qualities);
-    if (requested !== 'auto') names.add(requested);
-    const qualities = [...names].sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
+  function updateRenditionOptions(variants) {
+    const requested = selection();
+    const options = renditionOptions(variants);
+    let value = matchingRenditionValue(options, requested);
+    if (requested.quality !== 'auto' && !value) {
+      value = renditionValue(requested.quality, requested.codec);
+      options.push({ value, label: requested.quality + '（本集未提供）' });
+    }
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
-      ...qualities.map(q => new Option(q + (available.qualities.includes(q)
-        ? '' : '（本集未提供）'), q)));
-    qualitySelect.value = requested;
-    const atQuality = codecsAtQuality(variants, qualitySelect.value);
-    for (const option of codecSelect.options) {
-      if (option.value !== 'auto')
-        option.disabled = available.codecs.length > 0 &&
-          !(qualitySelect.value === 'auto' ? available.codecs : atQuality).includes(option.value);
-    }
-    if (codecSelect.value !== 'auto' && !atQuality.includes(codecSelect.value))
-      codecSelect.value = 'auto';
-    const auto = codecSelect.querySelector('option[value="auto"]');
-    if (auto) auto.textContent = atQuality.length === 1 && qualitySelect.value !== 'auto'
-      ? '自動（' + (CODEC_NAMES[atQuality[0]] || atQuality[0]) + '）' : '自動';
-    for (const option of qualitySelect.options) {
-      if (option.value === 'auto') continue;
-      const candidates = (variants || []).filter(v => qualityId(v) === option.value);
-      if (candidates.length &&
-          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey) &&
-          !canTranscodeBvc2) option.textContent += '（ByteVC2，尚無可用 WASM）';
-    }
+      ...options.map(option => new Option(option.label, option.value)));
+    qualitySelect.value = value || 'auto';
   }
   function ordered() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
@@ -292,6 +279,7 @@ export function createPlayer({
   }
   async function prepareNativeStream(args) {
     try {
+      log('cenc.prepare.begin', { codec: args.codec, elapsedMs: ageMs() });
       const stream = await openClearKeyStream(args);
       log('cenc.route', { kind: stream?.kind || 'unavailable', elapsedMs: ageMs() });
       if (stream?.kind === 'cenc-remux') retryIncrementalCenc = true;
@@ -307,8 +295,8 @@ export function createPlayer({
   }
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
-    const quality = options.quality ?? qualitySelect.value;
-    let codec = options.codec ?? codecSelect.value;
+    const quality = options.quality ?? selection().quality;
+    let codec = options.codec ?? selection().codec;
     const quiet = !!options.quiet;
     const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
     const onStage = (stage, fields = {}) => {
@@ -405,7 +393,7 @@ export function createPlayer({
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
       lastVariantsPartial = sourceQuery.partial;
-      updateCodecOptions(variants);
+      updateRenditionOptions(variants);
       // An independently resolved web/App source may arrive after playback
       // has already started. Merge it for future quality changes and retries,
       // but never restart or replace a healthy active MediaSource.
@@ -424,7 +412,7 @@ export function createPlayer({
           if (added) {
             lastVariantsAt = Date.now();
             log('source.list.extended', { added, variants: variants.length });
-            updateCodecOptions(variants);
+            updateRenditionOptions(variants);
           }
         }).catch(() => {});
         pendingSourceExpansion = { vid: episode.vid, promise: expansion };
@@ -433,8 +421,8 @@ export function createPlayer({
       }
       // Persisted codec preferences can belong to another episode's tier.
       // Use the now-enabled selection, rather than rejecting a stale codec.
-      if (codec !== codecSelect.value) {
-        codec = codecSelect.value;
+      if (codec !== selection().codec) {
+        codec = selection().codec;
         key = episodeCacheKey(seriesId, episode.vid, quality, codec);
         persistPrefs();
       }
@@ -482,10 +470,9 @@ export function createPlayer({
         .map(id => CODEC_NAMES[id] || id).join('/');
       fallbackNotice = original + ' 只有 ' + originalCodecs +
         '，已改用 ' + actual + ' ' + (CODEC_NAMES[codecId(source.codec)] || source.codec);
-      if (!quiet && actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
-        qualitySelect.value = actual;
-        codecSelect.value = 'auto';
-        updateCodecOptions(variants);
+      if (!quiet && actual && renditionOptions(variants).some(o => o.quality === actual)) {
+        selectRendition(actual);
+        updateRenditionOptions(variants);
         persistPrefs();
       }
     }
@@ -591,8 +578,9 @@ export function createPlayer({
     // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
     // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
     // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
-    if (!quiet && (attempt === 0 || retryIncrementalCenc) &&
-        source.contentKey && !isHlsUrl(source.url)) {
+    // A source/API failure may consume attempt zero before any CENC setup.
+    // Every newly selected encrypted source must still try incremental playback.
+    if (!quiet && source.contentKey && !isHlsUrl(source.url)) {
       await keyCleanup;
       const native = await prepareNativeStream({
         video, source, codec: codecId(source.codec),
@@ -702,14 +690,13 @@ export function createPlayer({
       lastVariants = prepared.variants;
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
-      lastVariantsPartial = sourceQueryForPlayback(qualitySelect.value).partial;
-      updateCodecOptions(prepared.variants);
+      lastVariantsPartial = sourceQueryForPlayback(selection().quality).partial;
+      updateRenditionOptions(prepared.variants);
       if (prepared.fallbackNotice) {
         const actual = qualityId(prepared.source);
-        if (actual && Array.from(qualitySelect.options).some(o => o.value === actual)) {
-          qualitySelect.value = actual;
-          codecSelect.value = 'auto';
-          updateCodecOptions(prepared.variants);
+        if (actual && renditionOptions(prepared.variants).some(o => o.quality === actual)) {
+          selectRendition(actual);
+          updateRenditionOptions(prepared.variants);
           persistPrefs();
         }
       }
@@ -832,8 +819,8 @@ export function createPlayer({
         if (canTryNextCencSource({
           code: parsed.code, variants: lastVariants,
           variantsVid: lastVariantsVid, episodeVid: episode.vid,
-          tried: sourceAttempt - sourceCycleStart, quality: qualitySelect.value,
-          codec: codecSelect.value
+          tried: sourceAttempt - sourceCycleStart, quality: selection().quality,
+          codec: selection().codec
         })) {
           retryIncrementalCenc = true; // keep the bounded MSE/Range path
           log('playback.cdn.rotate', { attempt: sourceAttempt, elapsedMs: ageMs() });
@@ -871,8 +858,8 @@ export function createPlayer({
       autoNext: autoNextInput.checked, saveData: !!navigator.connection?.saveData,
       hasNext: !!next
     })) return;
-    const seriesId = getSeries().seriesId, quality = qualitySelect.value;
-    const codec = codecSelect.value;
+    const seriesId = getSeries().seriesId, quality = selection().quality;
+    const codec = selection().codec;
     const key = episodeCacheKey(seriesId, next.vid, quality, codec);
     if (prefetched?.key === key || cache.getEntry(key)) return;
     cancelPrefetch();
@@ -888,7 +875,7 @@ export function createPlayer({
   function open(episode, autoPlay = true, keepSettings = false) {
     if (!episode) return;
     const key = episodeCacheKey(getSeries()?.seriesId, episode.vid,
-      qualitySelect.value, codecSelect.value);
+      selection().quality, selection().codec);
     const handoff = prefetched?.vid === episode.vid && prefetched.key === key
       ? prefetched : null;
     if (handoff) prefetched = null;
@@ -905,8 +892,8 @@ export function createPlayer({
     cencRetryTier = null;
     streamFailure = null;
     log('playback.open', {
-      episode: Number(episode.index) || 0, quality: qualitySelect.value,
-      codec: codecSelect.value, resumeSeconds: savedResumeSeconds(episode)
+      episode: Number(episode.index) || 0, quality: selection().quality,
+      codec: selection().codec, resumeSeconds: savedResumeSeconds(episode)
     });
     retryIncrementalCenc = false;
     retryError = null;
@@ -1111,11 +1098,7 @@ export function createPlayer({
   prevButton.addEventListener('click', () => step(-1));
   nextButton.addEventListener('click', () => step(1));
   qualitySelect.addEventListener('change', () => {
-    if (lastVariants) updateCodecOptions(lastVariants);
-    persistPrefs();
-    if (current) open(current, true, true);
-  });
-  codecSelect.addEventListener('change', () => {
+    if (lastVariants) updateRenditionOptions(lastVariants);
     persistPrefs();
     if (current) open(current, true, true);
   });

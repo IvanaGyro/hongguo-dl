@@ -141,3 +141,37 @@ export function untriedPlaybackRendition(variants, preferences, canPlayType,
 export function sourceQueryForPlayback(quality = 'auto') {
   return { quality: 'auto', codec: 'auto', partial: false };
 }
+
+// One option per advertised quality/codec pair; duplicate CDN URLs are not
+// separate choices. Codec labels are useful only for ambiguous quality tiers.
+export function renditionOptions(variants = []) {
+  const names = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
+  const pairs = new Map();
+  for (const variant of variants) {
+    const quality = qualityId(variant), codec = codecId(variant.codec) || 'auto';
+    if (!quality) continue;
+    const value = renditionValue(quality, codec);
+    pairs.set(value, { value, quality, codec });
+  }
+  return [...pairs.values()].sort((a, b) =>
+    parseInt(b.quality, 10) - parseInt(a.quality, 10) ||
+    ['h264', 'hevc', 'bytevc2', 'auto'].indexOf(a.codec) -
+    ['h264', 'hevc', 'bytevc2', 'auto'].indexOf(b.codec))
+    .map(option => ({ ...option, label: option.quality +
+      ([...pairs.values()].filter(item => item.quality === option.quality).length > 1
+        ? '（' + (names[option.codec] || '自動') + '）' : '') }));
+}
+export function renditionValue(quality = 'auto', codec = 'auto') {
+  return quality === 'auto' && codec === 'auto' ? 'auto' : quality + '|' + codec;
+}
+export function parseRenditionValue(value = 'auto') {
+  const [quality, codec = 'auto'] = String(value || 'auto').split('|');
+  return { quality, codec };
+}
+// Keep the exact pair when a late channel adds another codec. Across episodes,
+// retain the quality and use the first available codec if the old one vanished.
+export function matchingRenditionValue(options, selection = {}) {
+  const exact = renditionValue(selection.quality, selection.codec);
+  return options.find(option => option.value === exact)?.value ||
+    options.find(option => option.quality === selection.quality)?.value || null;
+}

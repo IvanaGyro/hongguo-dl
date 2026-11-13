@@ -98,13 +98,11 @@ try {
     // wait for the dynamic option before asserting that it is selectable.
     await page.waitForFunction(() => Array.from(
       document.querySelector('#player-quality')?.options || [])
-      .some(option => option.value === '1080p'), null, { timeout: 30000 });
-    if (await page.locator('#player-quality').inputValue() !== '1080p')
-      await page.locator('#player-quality').selectOption('1080p');
-    if (await page.locator('#player-codec').inputValue() !== 'hevc')
-      await page.locator('#player-codec').selectOption('hevc');
-    assert.equal(await page.locator('#player-quality').inputValue(), '1080p');
-    assert.equal(await page.locator('#player-codec').inputValue(), 'hevc');
+      .some(option => option.value === '1080p|hevc'), null, { timeout: 30000 });
+    if (await page.locator('#player-quality').inputValue() !== '1080p|hevc')
+      await page.locator('#player-quality').selectOption('1080p|hevc');
+    assert.equal(await page.locator('#player-quality').inputValue(), '1080p|hevc');
+    assert.equal(await page.locator('#player-codec').count(), 0);
     // The same video element receives successive MediaSource objects. Count
     // presented frames without copying the copyrighted video image.
     await page.evaluate(() => {

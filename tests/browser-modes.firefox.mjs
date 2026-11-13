@@ -136,13 +136,12 @@ try {
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-settings').waitFor({ state: 'visible' });
-  await page.locator('#player-quality').selectOption('720p');
-  await page.locator('#player-codec').selectOption('h264');
+  await page.locator('#player-quality').selectOption('720p|h264');
   await page.locator('#player-speed').selectOption('1.25');
   await page.waitForFunction(() => document.querySelector('#player-video')?.playbackRate === 1.25);
   await page.waitForFunction(() =>
     document.querySelector('#player-source-info')?.textContent?.includes('1280×720'));
-  assert.equal(await page.locator('#player-quality option[value="540p"]').isDisabled(), false,
+  assert.equal(await page.locator('#player-quality option[value="540p|bytevc2"]').isDisabled(), false,
     'Player should expose available 540p rendition');
   assert(calls.some(c => c.includes('sid=') && c.includes('vid=') &&
     !c.includes('quality=') && !c.includes('codec=')),
@@ -378,18 +377,13 @@ try {
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
   await page.locator('#mode-play').click();
   await page.locator('#player-settings-toggle').click();
-  await page.locator('#player-quality').selectOption('720p');
-  await page.waitForFunction(() =>
-    document.querySelector('#player-codec option[value="auto"]')?.textContent.includes('ByteVC2/VVC'));
-  await page.waitForFunction(() => document.querySelector('#player-codec option[value="hevc"]')?.disabled,
-    null, { timeout: 8000 });
-  assert.equal(await page.locator('#player-codec option[value="hevc"]').evaluate(el => el.disabled), true,
-    'HEVC must not be offered at VVC-only 720p');
-  assert.equal(await page.locator('#player-quality').inputValue(), '720p',
+  await page.locator('#player-quality').selectOption('720p|bytevc2');
+  assert.equal(await page.locator('#player-codec').count(), 0);
+  assert.equal(await page.locator('#player-quality').inputValue(), '720p|bytevc2',
     'Unsupported known tier must remain selected, not silently become 1080p');
   await page.waitForFunction(() =>
     document.querySelector('#player-status')?.textContent.includes('無法播放'));
-  assert.match(await page.locator('#player-status').textContent(), /720p.*ByteVC2\/VVC/);
+  assert.match(await page.locator('#player-status').textContent(), /720p.*ByteVC2/);
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);
