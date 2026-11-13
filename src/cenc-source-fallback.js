@@ -27,3 +27,19 @@ export function canTryNextCencSource({
   return sameTier[tried] === options[tried] &&
     new Set(sameTier.slice(0, tried + 1).map(v => v.url)).size === tried + 1;
 }
+
+
+// Retry only distinct official HEVC URLs at the original resolution/codec.
+export function sameTierHevcCandidates(variants, { quality = 'auto', codec = 'auto' } = {},
+  tier = null) {
+  if (!tier || tier.codec !== 'hevc' || !tier.quality) return [];
+  const seen = new Set();
+  return candidateRenditions(variants, { quality, codec }).filter(variant => {
+    if (codecId(variant.codec) !== 'hevc' ||
+        qualityId(variant) !== tier.quality ||
+        !variant.contentKey || !variant.url ||
+        seen.has(variant.url)) return false;
+    seen.add(variant.url);
+    return true;
+  });
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canTryNextCencSource } from '../src/cenc-source-fallback.js';
+import { canTryNextCencSource, sameTierHevcCandidates } from '../src/cenc-source-fallback.js';
 
 const hevc = (url, quality = '1080p') =>
   ({ url, codec: 'hevc', quality, contentKey: 'fixture-placeholder' });
@@ -51,4 +51,17 @@ test('old Worker MEDIA_SOURCE_FORBIDDEN can rotate HEVC; not generic MEDIA_HTTP'
     tried: 1, quality: '1080p', codec: 'hevc' };
   assert.equal(canTryNextCencSource({ ...base, code: 'MEDIA_SOURCE_FORBIDDEN' }), true);
   assert.equal(canTryNextCencSource({ ...base, code: 'MEDIA_HTTP' }), false);
+});
+
+
+test('HEVC retry candidates stay at original quality and remove duplicates', () => {
+  const candidates = sameTierHevcCandidates([
+    hevc('https://cdn-a.example/1'), hevc('https://cdn-a.example/1'),
+    hevc('https://cdn-b.example/1'),
+    hevc('https://cdn-c.example/lower', '720p'),
+    bytevc2('https://cdn-d.example/1')
+  ], { quality: 'auto', codec: 'auto' }, { codec: 'hevc', quality: '1080p' });
+  assert.deepEqual(candidates.map(v => v.url), [
+    'https://cdn-a.example/1', 'https://cdn-b.example/1'
+  ]);
 });

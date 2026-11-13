@@ -7,7 +7,7 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
   const streak = previous?.key === key ? (previous.streak || 0) + 1 : 1;
   const attempts = (previous?.attempts || 0) + 1;
   const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
-    'CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'CENC_RANGE_INVALID',
+    'CENC_SOURCE_FORBIDDEN', 'CENC_SOURCE_EXHAUSTED', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'CENC_RANGE_INVALID',
     'CENC_RANGE_UNSUPPORTED'].includes(error.code) &&
     !(retryForbidden && error.code === 'CENC_SOURCE_FORBIDDEN')
     ? 'not-retryable' : streak >= repeatedLimit ? 'repeated'
@@ -26,7 +26,10 @@ export function playbackErrorSummary(error) {
   const messages = {
     PLAYBACK_TIMEOUT: '載入影片逾時', PLAYBACK_ERROR: '影片解碼或串流中斷',
     CENC_RANGE_HTTP: '影片範圍讀取失敗', CENC_RANGE_INVALID: '來源回傳的影片範圍無效',
-    CENC_UNAVAILABLE: '串流初始化失敗', FFMPEG_ERROR: '影片處理工具失敗',
+    CENC_UNAVAILABLE: '串流初始化失敗',
+    CENC_SOURCE_EXHAUSTED: '同畫質來源均拒絕存取或失效',
+    CENC_REMUX_FAILED: '增量封裝器中斷',
+    FFMPEG_ERROR: '影片處理工具失敗',
     ERR_NETWORK: '網路連線失敗', INCOMPLETE: '影片下載不完整',
     EMPTY_MEDIA: '來源沒有影片資料', SOURCE_UNAVAILABLE: '暫時無法取得片源'
   };

@@ -29,3 +29,13 @@ test('HEVC CENC MP4 rejects whole-file playback fallback', () => {
   assert.equal(blockHevcFullFileFallback({ ...video, contentKey: null }), false);
   assert.equal(blockHevcFullFileFallback({ ...video, url: 'https://example.com/x.m3u8' }), false);
 });
+
+
+test('diagnostics show resolution label but redact unsafe strings', () => {
+  const b = createDiagnosticBuffer(() => 0);
+  b.log('source.selected', { quality: '1080p', codec: 'hevc',
+    suspicious: 'https://cdn.example/private' });
+  assert.match(b.text(), /quality=1080p/);
+  assert.match(b.text(), /codec=hevc/);
+  assert.match(b.text(), /suspicious=\[redacted\]/);
+});

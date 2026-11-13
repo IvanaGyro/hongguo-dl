@@ -11,6 +11,7 @@ export function createDiagnosticBuffer(now = () => performance.now()) {
     if (typeof input === 'boolean') return String(input);
     if (typeof input === 'number')
       return Number.isFinite(input) ? String(Math.round(input * 100) / 100) : '?';
+    if (typeof input === 'string' && /^\d{3,4}p$/.test(input)) return input;
     if (typeof input !== 'string' || !SAFE_TOKEN.test(input) ||
         /^(?:https?|bearer|cookie|authorization|token)$/i.test(input) ||
         /[a-f0-9]{24,}/i.test(input)) return '[redacted]';
