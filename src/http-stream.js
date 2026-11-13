@@ -33,7 +33,8 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     try { return await Promise.race([Promise.resolve().then(action), interrupted]); }
     catch (error) {
       check();
-      throw error?.code ? error : fail('CENC_RANGE_HTTP');
+      throw /^CENC_[A-Z_]+$/.test(error?.code || '') || error?.code === 'CANCELED'
+        ? error : fail('CENC_RANGE_HTTP');
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
@@ -92,7 +93,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       if (done) throw fail('CENC_RANGE_HTTP'); // Premature EOF can resume at offset.
       if (!(value instanceof Uint8Array) || value.length > 4 * 1024 * 1024 ||
           offset + value.length > session.end) throw fail('CENC_RANGE_INVALID');
-      if (!value.length) continue;
+      if (!value.length) throw fail('CENC_RANGE_INVALID');
       if (head + length + value.length > bytes.length) {
         bytes.copyWithin(0, head, head + length); head = 0;
       }
@@ -118,8 +119,8 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       };
       const output = recovery ? await recovery.read(once, signal) : await once();
       // Keep a small rewind window, regardless of total episode length.
-      if (length > KEEP) {
-        const trim = length - KEEP;
+      if (end - base > KEEP) {
+        const trim = end - base - KEEP;
         base += trim; head += trim; length -= trim;
       }
       return output;

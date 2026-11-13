@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { hevcCodecStringFromMoov } from '../src/mp4-track-formats.js';
 import { assertHevcInitCodecMatches } from '../src/cenc-init-codec.js';
+import { createHttpStreamReader } from '../src/http-stream.js';
 
 const [modulePath, wasmPath, fixturePath, outputPath, seekSecondsText = '0'] = process.argv.slice(2);
 const seekSeconds = Number(seekSecondsText);
@@ -18,7 +19,23 @@ const key = '00112233445566778899aabbccddeeff';
 let highestRequested = 0, firstMoofAt = null, calls = 0, outputLength = 0;
 let firstMoofHadNonzeroRange = false, nonzeroMediaRange = false;
 const workerWindow = process.env.CENC_VERIFY_WORKER_WINDOW === '1';
-let cacheStart = -1, cacheBytes = new Uint8Array(0), transportWindows = 0;
+let transportWindows = 0;
+const stream = workerWindow ? createHttpStreamReader({ url: 'https://synthetic.invalid/media',
+  fileSize: encrypted.length,
+  fetchImpl: async (_, options) => {
+    const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
+    transportWindows++;
+    let position = start;
+    return new Response(new ReadableStream({ pull(controller) {
+      if (position >= encrypted.length) { controller.close(); return; }
+      const end = Math.min(position + 32768, encrypted.length);
+      controller.enqueue(new Uint8Array(encrypted.subarray(position, end))); position = end;
+    } }), { status: 206, headers: {
+      'Content-Range': `bytes ${start}-${encrypted.length - 1}/${encrypted.length}`,
+      'Content-Length': String(encrypted.length - start)
+    } });
+  }
+}) : null;
 const core = await createCore({
   wasmBinary: readFileSync(wasmPath),
   readRange: async (offset, length) => {
@@ -32,18 +49,7 @@ const core = await createCore({
     if (!workerWindow)
       return new Uint8Array(encrypted.subarray(offset,
         Math.min(encrypted.length, offset + length)));
-    // Mirror the production Worker's 256 KiB AVIO HTTP window cache, including
-    // short final windows. Do not substitute native ffmpeg for pinned WASM.
-    if (offset >= cacheStart &&
-        offset + length <= cacheStart + cacheBytes.byteLength)
-      return cacheBytes.subarray(offset - cacheStart,
-        offset - cacheStart + length);
-    const last = Math.min(encrypted.length, offset + Math.max(length, 256 * 1024));
-    cacheStart = offset;
-    cacheBytes = new Uint8Array(encrypted.subarray(offset, last));
-    transportWindows++;
-    highestRequested = Math.max(highestRequested, last);
-    return cacheBytes.subarray(0, length);
+    return stream.read(offset, length);
   },
   writeChunk: async data => {
     chunks.push(data);
@@ -61,6 +67,7 @@ const result = seekSeconds > 0
     ['number', 'string', 'number'], [encrypted.byteLength, key, seekSeconds], { async: true })
   : await core.ccall('cenc_stream_remux', 'number',
     ['number', 'string'], [encrypted.byteLength, key], { async: true });
+stream?.close();
 const error = core.UTF8ToString(core._cenc_remux_error());
 assert.equal(result, 0, 'CENC streaming failed: ' + error + ' ' + JSON.stringify({
   bridgeError: core.bridgeError, readCalls: calls, readMaxOffset: highestRequested,
@@ -104,6 +111,6 @@ console.log('PASS progressive CENC -> streaming clear fMP4 WASM:', JSON.stringif
   inputBytes: encrypted.byteLength, outputBytes: output.length,
   firstFragmentReadBytes: firstMoofAt, sourceEofAtFirstFragment: false,
   seekSeconds, firstMoofHadNonzeroRange,
-  calls, transportMode: workerWindow ? 'worker-256KiB-window' : 'direct-memory',
+  calls, transportMode: workerWindow ? 'worker-persistent-http' : 'direct-memory',
   transportWindows, moofCount: output.toString('latin1').match(/moof/g)?.length || 0
 }));

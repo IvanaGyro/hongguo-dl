@@ -108,3 +108,15 @@ test('changed ETag prevents stitching different media versions', async () => {
   try { await assert.rejects(stream.read(0, 100000), { code: 'CENC_RANGE_INVALID' }); }
   finally { stream.close(); }
 });
+
+test('large read-ahead packets retain unread bytes instead of reopening HTTP', async () => {
+  let calls = 0;
+  const stream = createHttpStreamReader({ url: 'private', fileSize: data.length,
+    fetchImpl: async () => { calls++; return new Response(data, { status: 206,
+      headers: { 'Content-Range': `bytes 0-${data.length - 1}/${data.length}` } }); } });
+  try {
+    for (let pos = 0; pos < data.length; pos += 65536)
+      assert.deepEqual(await stream.read(pos, 65536), data.slice(pos, pos + 65536));
+    assert.equal(calls, 1);
+  } finally { stream.close(); }
+});
