@@ -9,6 +9,7 @@
 const crypto = require('node:crypto');
 const { gzipSync } = require('node:zlib');
 const { setTimeout: delay } = require('node:timers/promises');
+const { retryEmptyResponse } = require('./empty-response-retry');
 const { registerPlaybackDevice } = require('./playback-device');
 const { signPlayer, Ladon } = require('./playback-signature');
 const { abortError, throwIfAborted, boundedSignal, networkFailure } = require('./request-signal');
@@ -494,38 +495,35 @@ async function fetchAppPlayUrlFresh(vid, options) {
     const request = boundedSignal(options.signal, 12000);
     const { signal } = request;
     try {
-        let response;
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // An upstream 200 with an empty body is transient in practice.
+        // Retry the current signed endpoint once, then the legacy endpoint,
+        // within one 12-second model budget. Never retry 403/429/explicit refusal.
+        const response = await retryEmptyResponse(async attempt => {
             throwIfAborted(signal);
-            // Prefer the current API; only an empty response enables one legacy attempt.
-            const signed = playbackRequest(payload, identity, attempt ? '' : vid);
-            if (attempt) signed.headers.Connection = 'close';
-            try {
-                response = await requestJson(signed.url, { method: signed.method, headers: signed.headers, data: signed.body }, deadline, signal);
-                throwIfAborted(signal);
-                break;
-            } catch (error) {
-                throwIfAborted(signal);
-                if (error.code === 'ERR_CANCELED') throw error;
-                if (attempt || error.code !== 'EMPTY_RESPONSE' || deadline - Date.now() < 1000) throw error;
-                // Keep the legacy attempt even when a fresh registration fails.
-                if (deadline - Date.now() >= 8000) {
-                    try { identity = await registerPlaybackDevice(requestJson, { signal }); }
-                    catch (registrationError) {
-                        throwIfAborted(signal);
-                        if (registrationError.code === 'ERR_CANCELED') throw registrationError;
-                        if (registrationError.code === 'DEVICE_REGISTRATION_FAILED'
-                            && ['BUSINESS_REJECTED', 'HTTP_403', 'HTTP_429'].includes(registrationError.registrationFailure)) throw registrationError;
-                        // Keep the previous identity for other registration failures.
-                    }
+            const legacy = attempt === 2;
+            const signed = playbackRequest(payload, identity, legacy ? '' : vid);
+            if (legacy) signed.headers.Connection = 'close';
+            return requestJson(signed.url, {
+                method: signed.method, headers: signed.headers, data: signed.body
+            }, deadline, signal);
+        }, {
+            deadline, signal, attempts: 3,
+            afterEmpty: async attempt => {
+                // Keep the legacy attempt even when device refresh fails.
+                // Registration must have enough time left; no unconditional
+                // additional registration on every transient empty response.
+                if (attempt !== 1 || deadline - Date.now() < 8000) return;
+                try { identity = await registerPlaybackDevice(requestJson, { signal }); }
+                catch (registrationError) {
+                    throwIfAborted(signal);
+                    if (registrationError.code === 'ERR_CANCELED') throw registrationError;
+                    if (registrationError.code === 'DEVICE_REGISTRATION_FAILED'
+                        && ['BUSINESS_REJECTED', 'HTTP_403', 'HTTP_429'].includes(registrationError.registrationFailure)) throw registrationError;
+                    // A temporary registration problem does not prevent
+                    // using the previous playback identity.
                 }
-                throwIfAborted(signal);
-                if (deadline - Date.now() < 1500) throw error;
-                try { await delay(1000, undefined, { signal }); }
-                catch (waitError) { throwIfAborted(signal); throw waitError; }
-                throwIfAborted(signal);
             }
-        }
+        });
         if (Number(response.Code || response.code || 0) !== 0) throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });
         const entries = response.data?.video_model_data ?? response.data;
         const entry = entries?.[vid];

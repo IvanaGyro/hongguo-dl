@@ -158,10 +158,8 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, codec, quality, channel = 'auto') {
+async function loadSource(sid, vid, channel = 'auto') {
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
-  if (!['auto', 'h264', 'hevc', 'bytevc2'].includes(codec)) throw httpError(400, 'INVALID_CODEC', '不支援的編碼篩選');
-  if (!['auto', '720p', '1080p'].includes(quality)) throw httpError(400, 'INVALID_QUALITY', '不支援的畫質篩選');
   if (!['auto', 'web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
   let webError = '';
@@ -301,8 +299,7 @@ export default {
         else response = asJson(await loadSeries(parsed.seriesId));
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
-          url.searchParams.get('vid') || '', url.searchParams.get('codec') || 'auto',
-          url.searchParams.get('quality') || 'auto',
+          url.searchParams.get('vid') || '',
           url.searchParams.get('channel') || 'auto'));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request);

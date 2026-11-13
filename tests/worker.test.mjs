@@ -120,3 +120,25 @@ test('health advertises independent source channels for client compatibility gat
   assert.equal(response.status, 200);
   assert.equal((await response.json()).sourceChannels, true);
 });
+
+
+test('quality and codec are ignored by /api/source, including legacy callers', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response('<html><body>No public media</body></html>', {
+      status: 200, headers: { 'Content-Type': 'text/html' }
+    });
+  };
+  try {
+    const api = 'https://example.workers.dev/api/source?sid=123&vid=456&channel=web';
+    const fresh = await worker.fetch(new Request(api), {});
+    const old = await worker.fetch(new Request(api + '&codec=not-a-codec&quality=unrecognized'), {});
+    assert.equal(fresh.status, 404);
+    assert.equal(old.status, 404);
+    assert.equal((await fresh.json()).error.code, 'PUBLIC_SOURCE_UNAVAILABLE');
+    assert.equal((await old.json()).error.code, 'PUBLIC_SOURCE_UNAVAILABLE');
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = original; }
+});

@@ -91,7 +91,7 @@ export async function runLiveSmoke({
   const results = [];
   for (const episode of sample) {
     const params = new URLSearchParams({
-      sid: SERIES_ID, vid: episode.vid, quality: 'auto', codec: 'auto'
+      sid: SERIES_ID, vid: episode.vid
     });
     const source = await readJson(
       await get('/api/source?' + params, { Accept: 'application/json' }),

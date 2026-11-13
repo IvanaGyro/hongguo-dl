@@ -84,8 +84,7 @@ for (const episode of episodes) {
   let variants;
   try {
     const source = await getMetadata('/api/source?' +
-      new URLSearchParams({ sid: SID, vid: String(episode.vid),
-        quality: 'auto', codec: 'auto' }));
+      new URLSearchParams({ sid: SID, vid: String(episode.vid) }));
     variants = (source.variants || []).filter(v =>
       /^(hevc|h265|hvc1|hev1|bytevc1)$/i.test(v.codec || '') &&
       !!v.contentKey && /^https:\/\//.test(v.url || '') &&

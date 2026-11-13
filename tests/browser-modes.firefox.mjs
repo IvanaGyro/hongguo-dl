@@ -144,8 +144,9 @@ try {
     document.querySelector('#player-source-info')?.textContent?.includes('1280×720'));
   assert.equal(await page.locator('#player-quality option[value="540p"]').isDisabled(), false,
     'Player should expose available 540p rendition');
-  assert(calls.some(c => c.includes('quality=auto') && c.includes('codec=auto')),
-    'Player must retrieve available variants before choosing local source');
+  assert(calls.some(c => c.includes('sid=') && c.includes('vid=') &&
+    !c.includes('quality=') && !c.includes('codec=')),
+    'Player must request unfiltered sources without quality/codec query parameters');
   await page.locator('#player-settings-toggle').click();
   await page.waitForFunction(() => document.querySelector('#player-video').readyState >= 1);
   // Pagehide must abort the active media source rather than only saving time.

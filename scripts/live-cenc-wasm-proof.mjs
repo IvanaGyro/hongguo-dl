@@ -169,8 +169,7 @@ for (const episode of accessible) {
   let candidates;
   try {
     const data = await getJSON('/api/source?' +
-      new URLSearchParams({ sid: SID, vid: String(episode.vid),
-        quality: 'auto', codec: 'auto' }));
+      new URLSearchParams({ sid: SID, vid: String(episode.vid) }));
     candidates = (data.variants || []).filter(v =>
       /^(hevc|h265|hvc1|hev1|bytevc1)$/i.test(v.codec || '') &&
       !!v.contentKey && /^https:\/\//.test(v.url || '') &&

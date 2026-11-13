@@ -42,7 +42,7 @@ try {
   if(!episode){results.episodes.push({kind:index?'restricted':'unrestricted',error:'no-sample-episode'});output(results);continue;}
   const result={kind:index?'restricted':'unrestricted',index:episode.index,channels:[],probes:[]};
   results.episodes.push(result);output(results);
-  const path='/api/source?sid='+SID+'&vid='+episode.vid+'&quality=auto&codec=auto&channel=';
+  const path='/api/source?sid='+SID+'&vid='+episode.vid+'&channel=';
   const sources=await Promise.allSettled(['app','web'].map(async channel=>({channel,data:await json(path+channel)})));
   const byUrl=new Map();
   for(let j=0;j<sources.length;j++){

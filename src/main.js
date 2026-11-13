@@ -342,10 +342,9 @@ function supportsIndependentSourceChannels() {
   return sourceChannelProbe;
 }
 async function resolveSourceFromNetwork(seriesId, vid) {
-  const quality = 'auto', codec = 'auto';
   const signal = new AbortController().signal;
   const started = performance.now();
-  playbackDiagnostics.log('source.api.request', { quality, codec });
+  playbackDiagnostics.log('source.api.request', { sidLength: String(seriesId).length });
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
@@ -354,7 +353,7 @@ async function resolveSourceFromNetwork(seriesId, vid) {
     });
   }, 2000);
   const endpoint = '/api/source?sid=' + encodeURIComponent(seriesId) +
-    '&vid=' + encodeURIComponent(vid) + '&quality=auto&codec=auto';
+    '&vid=' + encodeURIComponent(vid);
   const requestChannel = async channel => {
     const begin = performance.now();
     playbackDiagnostics.log('source.channel.request', { channel });
@@ -374,8 +373,7 @@ async function resolveSourceFromNetwork(seriesId, vid) {
     }
   };
   try {
-    // Only AUTO benefits from the public URL race. A selected 1080p tier
-    // continues directly to the App API and bypasses the website probe.
+    // The worker returns all variants; quality and codec are selected locally.
     {
       const supported = await supportsIndependentSourceChannels();
       if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
