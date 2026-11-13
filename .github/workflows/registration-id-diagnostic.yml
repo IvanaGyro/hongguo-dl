@@ -1,0 +1,48 @@
+name: Diagnose real anonymous registration IDs without stdout disclosure
+on:
+  push:
+    branches:
+      - experiment/app-isolate-queue-probe-20261113
+    paths:
+      - .github/workflows/registration-id-diagnostic.yml
+      - worker/registration-id-probe.js
+      - scripts/live-registration-id-diagnostic.mjs
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - name: Install project dependencies
+        run: bun ci
+      - name: Run local workerd against REAL registration API
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hongguo-registration-id-diagnostic
+          bunx wrangler dev worker/registration-id-probe.js --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false > /tmp/registration-id-workerd.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in {1..45}; do
+            if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8787/health > /dev/null 2>&1; then
+              ready=1; break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then cat /tmp/registration-id-workerd.log; exit 1; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then cat /tmp/registration-id-workerd.log; exit 1; fi
+          node scripts/live-registration-id-diagnostic.mjs
+      - name: Upload short-lived private-in-log raw ID results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registration-id-raw-diagnostic
+          path: /tmp/hongguo-registration-id-diagnostic/*.json
+          if-no-files-found: warn
+          retention-days: 1
