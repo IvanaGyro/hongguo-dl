@@ -4,11 +4,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
-const input = readFileSync(process.argv[2]);
+const shortInput = readFileSync(process.argv[2]);
+const longInput = readFileSync(process.argv[3]);
+assert(longInput.length > 512 * 1024, 'Long media must exceed two 256 KiB Range windows');
+let input = longInput;
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
 const errors = [], reads = [];
+let deliveredBytes = 0;
 page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => {
   const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
@@ -35,6 +39,7 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   const first = Number(range[1]), last = Math.min(Number(range[2] || input.length - 1), input.length - 1);
   assert(first >= 0 && last >= first && last < input.length);
   reads.push({ first, last });
+  deliveredBytes += last - first + 1;
   return route.fulfill({ status: 206, contentType: 'video/mp4',
     headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${first}-${last}/${input.length}`,
       'Content-Length': String(last - first + 1) }, body: input.subarray(first, last + 1) });
@@ -52,11 +57,32 @@ try {
       video.getVideoPlaybackQuality().totalVideoFrames > 2;
   }, null, { timeout: 90000 });
   assert.match(await page.locator('#player-source-info').textContent(), /增量轉碼/);
+  // The first real decoded browser picture must appear before the whole
+  // long source is delivered, not merely before its last requested offset.
+  const deliveredAtFirstFrame = deliveredBytes;
+  assert(deliveredAtFirstFrame < longInput.length,
+    'First decoded H.264 picture must precede full source-body delivery');
+  const beforeSeek = await page.locator('#player-video').evaluate(video => ({
+    frames: video.getVideoPlaybackQuality().totalVideoFrames,
+    alreadyBuffered: Array.from({ length: video.buffered.length },
+      (_, i) => video.buffered.start(i) <= 24 && video.buffered.end(i) >= 24)
+      .some(Boolean)
+  }));
+  assert.equal(beforeSeek.alreadyBuffered, false, '24s must require an unbuffered Range seek');
+  await page.locator('#player-video').evaluate(video => { video.currentTime = 24; });
+  await page.waitForFunction(previous => {
+    const video = document.querySelector('#player-video');
+    return video.currentTime > 23.5 && video.currentTime < 31 && !video.seeking &&
+      video.readyState >= 2 &&
+      video.getVideoPlaybackQuality().totalVideoFrames > previous + 2;
+  }, beforeSeek.frames, { timeout: 90000 });
   assert(reads.length > 0);
   assert(reads.every(r => r.last - r.first + 1 <= 8 * 1024 * 1024));
   assert.equal(await page.evaluate(() => window.__activeMse), 1);
   await page.locator('#mode-download').click();
   await page.waitForFunction(() => window.__activeMse === 0);
+  // Download jobs use the short fixture to keep five codec tests bounded.
+  input = shortInput;
   // Every requested output goes through the real download queue and worker.
   for (const [index, mode] of ['original', 'h264', 'hevc', 'vvc', 'av1'].entries()) {
     await page.locator('#output-mode').selectOption(mode);
@@ -68,6 +94,8 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ decodedSyntheticBvc2Frames: true, boundedRangeRequests: reads.length,
+    deliveredAtFirstFrame, longSourceBytes: longInput.length,
+    unbufferedSeekAtSeconds: 24,
     outputs: ['original', 'h264', 'hevc', 'vvc', 'av1'], liveMseAfterModeSwitch: 0 }));
 } catch (error) {
   console.error('Synthetic BVC2 browser failure', error.message);
