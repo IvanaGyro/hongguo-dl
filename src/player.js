@@ -515,7 +515,7 @@ export function createPlayer({
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
       if (experimentalBvc2Stream) {
       setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
-      const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
       const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin());
       const url = transport.mode === 'direct' ? source.url : proxyUrl;
       const metadata = {};
@@ -545,7 +545,7 @@ export function createPlayer({
           if (length > 0) markStartupStage('first-media-byte');
           if (total > 0) reportBvc2('讀取 ByteVC2 影片 ' +
             Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）');
-        });
+        }, source.userAgent);
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       reportBvc2('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
       const bvc2Phases = {
@@ -571,7 +571,7 @@ export function createPlayer({
     }
     if (!isHlsUrl(source.url) && !source.contentKey) {
       log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
-      const fallbackProxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      const fallbackProxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
       if (!isApprovedDirectMediaUrl(source.url))
         return { url: fallbackProxyUrl, source, fallbackNotice, variants: quiet ? variants : null };
       const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(),
@@ -639,7 +639,7 @@ export function createPlayer({
       if (!quiet) report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 正在讀取分片清單…');
       bytes = await convertHls(source.url, {
         mode: 'copy', contentKey: source.contentKey, signal,
-        fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, max),
+        fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, max, undefined, source.userAgent),
         segmentProgress: x => report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 分片 ' + x.current + '/' + x.total)
       });
     } else {
@@ -662,7 +662,7 @@ export function createPlayer({
             fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
               : '正在下載整集影片…');
           }
-        });
+        }, source.userAgent);
       fallbackStatus('整集已下載，正在準備影片處理工具…');
       const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
       if (warmupError) throw warmupError;

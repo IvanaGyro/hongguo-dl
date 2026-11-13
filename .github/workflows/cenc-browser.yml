@@ -12,6 +12,7 @@ on:
       - 'src/main.js'
       - 'src/cenc-seek.js'
       - 'src/http-range.js'
+      - 'src/http-stream.js'
       - 'src/retry.js'
       - 'tests/cenc-stream.browser.mjs'
       - 'tests/playback-fallback.browser.mjs'

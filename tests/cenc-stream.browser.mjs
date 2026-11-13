@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { chromium, firefox } from 'playwright';
 
 const input = readFileSync(process.argv[2]);
@@ -187,6 +188,34 @@ await page.addInitScript(() => {
   });
 });
 const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
+// Real HTTP streaming, rather than route.fulfill's whole-response buffering.
+const streamServer = createServer((request, response) => {
+  const match = /^bytes=(\d+)-$/.exec(request.headers.range || '');
+  if (!match) { response.writeHead(416); response.end(); return; }
+  const first = Number(match[1]);
+  const item = { first, last: first - 1, bytes: 0, openEnded: true };
+  mediaRequests.push(item);
+  response.writeHead(206, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+    'Content-Type': 'video/mp4', 'Content-Length': input.length - first,
+    'Content-Range': `bytes ${first}-${input.length - 1}/${input.length}`
+  });
+  let position = first, timer;
+  function send() {
+    if (response.destroyed) return;
+    const next = Math.min(position + 32768, input.length);
+    const ready = response.write(input.subarray(position, next));
+    item.bytes += next - position; item.last = next - 1; position = next;
+    if (position === input.length) { response.end(); return; }
+    if (ready) timer = setTimeout(send, 20);
+    else response.once('drain', () => { timer = setTimeout(send, 20); });
+  }
+  response.on('close', () => clearTimeout(timer));
+  send();
+});
+await new Promise(resolve => streamServer.listen(0, '127.0.0.1', resolve));
+const streamOrigin = 'http://127.0.0.1:' + streamServer.address().port;
 const rapidDiagnosticPhases = [];
 let exercisingRepeatedSeeks = false, rapidPhase = 'not-started';
 // Track the issue #6 diagnostics for reporting, but never exempt transition
@@ -260,7 +289,12 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
     alternateCdnRequests++;
   }
   const first = Number(range[1]);
-  const last = range[2] ? Math.min(Number(range[2]), input.length - 1) : input.length - 1;
+  // A synthetic server cap exercises reconnects/520 recovery separately.
+  // Ordinary playback exercises one genuine, throttled long HTTP response.
+  if (!range[2] && !rangeRetry)
+    return route.continue({ url: streamOrigin + '/media' });
+  const last = range[2] ? Math.min(Number(range[2]), input.length - 1)
+    : Math.min(first + 256 * 1024 - 1, input.length - 1);
   assert(first >= 0 && first <= last && last < input.length);
   if (rangeRetry && transientFailures === 0 && first >= 512 * 1024 &&
       await page.evaluate(() => Boolean(window.__cencFrame))) {
@@ -808,4 +842,6 @@ try {
   }
 } finally {
   await browser.close();
+  streamServer.closeAllConnections();
+  await new Promise(resolve => streamServer.close(resolve));
 }

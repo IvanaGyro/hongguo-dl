@@ -388,7 +388,7 @@ export async function openClearKeyStream({
   if (!mime || !source?.contentKey ||
       (codec !== 'hevc' && !video.canPlayType(mime))) return null;
   aborted(signal);
-  const proxyUrl = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
+  const proxyUrl = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin, source.userAgent);
   const transport = createMediaTransport({ directUrl: source.url, proxyUrl, fetchImpl,
     direct: typeof window !== 'undefined' &&
       !['localhost', '127.0.0.1'].includes(location.hostname),

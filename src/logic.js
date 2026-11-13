@@ -28,9 +28,10 @@ export function apiUrl(path, workerOrigin = '') {
   if (!path.startsWith('/api/')) throw new Error('不允許非 /api/ 的 Worker 路徑');
   return normalizeWorkerOrigin(workerOrigin) + path;
 }
-export function mediaProxyUrl(url, profile = 'web', workerOrigin = '') {
+export function mediaProxyUrl(url, profile = 'web', workerOrigin = '', userAgent = '') {
   return apiUrl('/api/media?url=' + encodeURIComponent(url) +
-    '&profile=' + (profile === 'app' ? 'app' : 'web'), workerOrigin);
+    '&profile=' + (profile === 'app' ? 'app' : 'web') +
+    (profile === 'app' && userAgent ? '&ua=' + encodeURIComponent(userAgent) : ''), workerOrigin);
 }
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return '未知';

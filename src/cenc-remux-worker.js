@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Dedicated Worker: bounded HTTP Range reads -> Librempeg Asyncify AVIO ->
+// Dedicated Worker: persistent HTTP response reads -> Librempeg Asyncify AVIO ->
 // complete clear fMP4 init/media units. Main thread ACK provides backpressure.
 import { createFmp4Assembler } from './fmp4-assembler.js';
-import { readVerifiedRange } from './http-range.js';
+import { createHttpStreamReader } from './http-stream.js';
 import { createMediaTransport, isAcceptedMediaTransportUrl } from './media-transport.js';
 import { createCencRangeRecovery } from './cenc-range-recovery.js';
 import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
 
-const WINDOW = 256 * 1024;
 const MAX_FILE = 260 * 1024 * 1024;
 let started = false, controller = null, pendingAck = null, seq = 0;
 let lastRangeError = null;
@@ -39,7 +38,6 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
     })
   });
   controller = new AbortController();
-  let cacheStart = -1, cacheBytes = new Uint8Array(0);
   let rangeRequests = 0, receivedBytes = 0;
   lastRangeError = null;
   const rangeRecovery = createCencRangeRecovery({
@@ -49,48 +47,31 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining
     })
   });
+  const stream = createHttpStreamReader({ fetchImpl: transport.fetch,
+    url: mediaUrl.href, fileSize, signal: controller.signal, recovery: rangeRecovery,
+    onResponse: fields => self.postMessage({ type: 'stage', stage: 'media-range', ...fields })
+  });
   const readRange = async (start, wanted) => {
-    if (controller.signal.aborted) throw new Error('Canceled');
-    if (!Number.isInteger(start) || start < 0 || start >= fileSize ||
-        !Number.isInteger(wanted) || wanted < 1 || wanted > 1024 * 1024)
-      throw new Error('Invalid AVIO read request');
-    if (start >= cacheStart && start + wanted <= cacheStart + cacheBytes.length)
-      return cacheBytes.subarray(start - cacheStart, start - cacheStart + wanted);
-    const end = Math.min(fileSize, start + Math.max(wanted, WINDOW)) - 1;
-    // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
-    // the requested 256 KiB window even if it lies about Content-Length.
     const fetchStarted = performance.now();
-    let bytes, timing = {};
     try {
-      bytes = await rangeRecovery.read(
-        () => {
-          timing = {};
-          return readVerifiedRange(transport.fetch, mediaUrl.href, start, end,
-            fileSize, controller.signal, undefined, fields => { timing = fields; });
-        },
-        controller.signal
-      );
+      const bytes = await stream.read(start, wanted);
+      rangeRequests++;
+      receivedBytes = stream.stats.receivedBytes;
+      if (rangeRequests <= 4 || rangeRequests % 12 === 0)
+        self.postMessage({ type: 'stage', stage: 'media-range',
+          requests: stream.stats.requests, receivedBytes,
+          fetchMs: Math.round(performance.now() - fetchStarted) });
+      return bytes;
     } catch (error) {
       lastRangeError = {
-        code: /^CENC_[A-Z_]{2,45}$/.test(error?.code || '')
-          ? error.code : 'CENC_RANGE_HTTP',
+        code: /^CENC_[A-Z_]{2,45}$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP',
         status: Number.isInteger(error?.status) ? error.status : 0
       };
       self.postMessage({ type: 'stage', stage: 'media-range-failed',
-        request: rangeRequests + 1, offset: start, bytes: end - start + 1,
-        code: lastRangeError.code, status: lastRangeError.status,
-        fetchMs: Math.round(performance.now() - fetchStarted), ...timing });
+        request: stream.stats.requests, offset: start, bytes: wanted,
+        ...lastRangeError, fetchMs: Math.round(performance.now() - fetchStarted) });
       throw error;
     }
-    rangeRequests++;
-    receivedBytes += bytes.byteLength;
-    if (rangeRequests <= 4 || rangeRequests % 12 === 0)
-      self.postMessage({ type: 'stage', stage: 'media-range',
-        requests: rangeRequests, receivedBytes,
-        fetchMs: Math.round(performance.now() - fetchStarted), ...timing });
-    cacheStart = start;
-    cacheBytes = bytes;
-    return bytes.subarray(0, wanted);
   };
   const assembler = createFmp4Assembler({
     onInit: data => sendUnit('init', data),
@@ -141,6 +122,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       ['number', 'string', 'number'], [fileSize, key, startSeconds], { async: true })
     : await core.ccall('cenc_stream_remux', 'number',
       ['number', 'string'], [fileSize, key], { async: true });
+  stream.close();
   if (ret !== 0) {
     // Only expose the fixed stage name from C; no original URL/key.
     throw new Error(core.UTF8ToString(core._cenc_remux_error()) || 'Remux failed');

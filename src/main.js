@@ -648,9 +648,9 @@ function assertOk(response) {
       data?.error?.message || '媒體來源 HTTP ' + response.status);
   });
 }
-async function fetchBytes(url, profile, signal, max, onRead) {
+async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
   if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
-  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin());
+  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(), fetch, undefined, userAgent);
   const res = await transport.fetch(url, { signal });
   if (!res.ok) { await assertOk(res); }
   const advertised = Number(res.headers.get('content-length') || 0);
@@ -679,7 +679,7 @@ async function fetchBytes(url, profile, signal, max, onRead) {
 }
 async function streamToDestination(job, source, signal) {
   const transport = createMediaTransportForSource(source.url,
-    source.source === 'app' ? 'app' : 'web', requireWorkerOrigin());
+    source.source === 'app' ? 'app' : 'web', requireWorkerOrigin(), fetch, undefined, source.userAgent);
   const res = await transport.fetch(source.url, { signal });
   if (!res.ok) { await assertOk(res); }
   if (!res.body) throw errorWith('EMPTY_MEDIA', '伺服器沒有回傳影片串流');
@@ -766,7 +766,7 @@ async function runJob(job, signal) {
       if (!await bvc2BridgeAvailable())
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
-        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
+        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }), source.userAgent);
       update(job, { status: 'processing', progress: null });
       const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode, signal,
         progress: progress => update(job, { progress }) });
@@ -778,7 +778,7 @@ async function runJob(job, signal) {
       let out = await convertHls(source.url, {
         mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
         fetchBytes: (url, signal, max) => fetchBytes(url, profile, signal, max,
-          n => update(job, { bytes: (job.bytes || 0) + n })),
+          n => update(job, { bytes: (job.bytes || 0) + n }), source.userAgent),
         segmentProgress: segment => update(job, { segment }),
         progress: progress => update(job, { progress })
       });
@@ -796,7 +796,7 @@ async function runJob(job, signal) {
         { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     } else {
       const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
-        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
+        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }), source.userAgent);
       update(job, { status: 'processing', progress: 0 });
       const out = await convertBytes(bytes, {
         mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,

@@ -333,7 +333,7 @@ export async function openCencProgressiveStream({
     if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
     await close();
     const replacement = await openCencProgressiveStream({
-      video, url, fileSize, codec, hasAac, key, signal, onStage,
+      video, url, proxyUrl, fileSize, codec, hasAac, key, signal, onStage,
       startSeconds: seconds, durationSeconds, videoCodecString, bridge, retrySameSource
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');

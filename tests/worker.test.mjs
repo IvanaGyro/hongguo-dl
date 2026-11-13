@@ -165,3 +165,29 @@ test('media proxy exposes upstream-header time on successful and failed requests
     }
   } finally { globalThis.fetch = native; }
 });
+
+test('media proxy uses validated source UA and forwards open-ended Range unchanged', async () => {
+  const original = globalThis.fetch;
+  const ua = 'com.phoenix.read/74532 (Linux; U; Android 16; zh_CN; Pixel 10 Pro) Cronet/TTNetVersion:test';
+  const seen = [];
+  globalThis.fetch = async (_, opts) => {
+    seen.push(opts.headers);
+    return new Response(new Uint8Array(3), { status: 206,
+      headers: { 'Content-Range': 'bytes 10-12/13', 'Content-Length': '3' } });
+  };
+  try {
+    const endpoint = 'https://example.workers.dev/api/media?profile=app&url=' +
+      encodeURIComponent('https://cdn.fqnovelvod.com/a') + '&ua=';
+    const res = await worker.fetch(new Request(endpoint + encodeURIComponent(ua), {
+      headers: { Range: 'bytes=10-' } }), {});
+    assert.equal(res.status, 206);
+    assert.equal(seen[0].get('User-Agent'), ua);
+    assert.equal(seen[0].get('Range'), 'bytes=10-');
+    assert.equal(seen[0].get('Accept-Encoding'), 'identity');
+    for (const bad of ['other-agent', ua + '\r\nCookie: secret', 'com.phoenix.read/1 ' + 'x'.repeat(1024)]) {
+      const result = await worker.fetch(new Request(endpoint + encodeURIComponent(bad)), {});
+      assert.equal(result.status, 400);
+    }
+    assert.equal(seen.length, 1);
+  } finally { globalThis.fetch = original; }
+});

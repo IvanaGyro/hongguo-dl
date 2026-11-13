@@ -180,7 +180,7 @@ async function loadSource(sid, vid, channel = 'auto') {
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
-      contentKey: v.contentKey || null, source: v.source, width: v.width || null,
+      contentKey: v.contentKey || null, source: v.source, userAgent: v.userAgent || null, width: v.width || null,
       height: v.height || null, duration: v.duration || null })), sourceChannel: 'app' };
   } catch (e) {
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
@@ -196,11 +196,15 @@ async function relayMedia(request, timing) {
   let target = safeUrl(urlParam, [...MEDIA_HOSTS, ...API_HOSTS]);
   if (target.hostname === 'hongguoduanju.com' && !target.pathname.startsWith('/video/public/'))
     throw httpError(403, 'HOST_NOT_ALLOWED', '官網僅允許公開影片端點');
+  const suppliedUa = endpoint.searchParams.get('ua');
+  if (suppliedUa !== null && (suppliedUa.length > 1024 ||
+      !/^com\.phoenix\.read\/\d+ [\x20-\x7e]+$/.test(suppliedUa)))
+    throw httpError(400, 'INVALID_MEDIA_UA', '媒體 UA 格式無效');
   const range = request.headers.get('range');
   if (range && !/^bytes=\d*-\d*$/.test(range)) throw httpError(400, 'INVALID_RANGE', 'Range 格式無效');
   for (let i = 0; i < 5; i++) {
     const headers = new Headers({
-      'User-Agent': endpoint.searchParams.get('profile') === 'app' ? APP_UA : WEB_UA,
+      'User-Agent': endpoint.searchParams.get('profile') === 'app' ? suppliedUa || APP_UA : WEB_UA,
       'Referer': target.hostname === 'hongguoduanju.com' ? SITE + '/' : 'https://novelquickapp.com/',
       'Accept': '*/*',
       'Accept-Encoding': 'identity'

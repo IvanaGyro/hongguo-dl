@@ -58,6 +58,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
     const validRange = !range || /^bytes \d+-\d+\/\d+$/.test(
       response.headers.get('content-range') || '');
     if (response.status === 429) return response;
+    if (range === 'bytes=0-' && response.status === 200) return response;
     if ([400, 403, 405, 416].includes(response.status) ||
         (range && (response.status !== 206 || !validRange))) {
       await response.body?.cancel().catch(() => {});
@@ -72,7 +73,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
   return { fetch: fetchMedia, get mode() { return useDirect ? 'direct' : 'proxy'; } };
 }
 export function createMediaTransportForSource(url, profile, workerOrigin,
-  fetchImpl = fetch, onFallback = () => {}) {
+  fetchImpl = fetch, onFallback = () => {}, userAgent = '') {
   return createMediaTransport({ directUrl: url,
-    proxyUrl: mediaProxyUrl(url, profile, workerOrigin), fetchImpl, onFallback });
+    proxyUrl: mediaProxyUrl(url, profile, workerOrigin, userAgent), fetchImpl, onFallback });
 }
