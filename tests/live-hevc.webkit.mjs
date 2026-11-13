@@ -32,6 +32,34 @@ try {
     localStorage.setItem('hongguo-dl-player-preferences-v1', JSON.stringify({
       quality: '1080p', codec: 'hevc', speed: '1', autoNext: false
     }));
+    // Instrument only aggregate SourceBuffer activity. Never inspect or
+    // serialize the copyrighted media bytes, signed URL or CENC key.
+    const stats = { appendCalls: 0, appendedBytes: 0, updateEnds: 0,
+      appendErrors: 0, bufferErrors: 0, buffered: [] };
+    globalThis.__liveHevcMseStats = stats;
+    const proto = globalThis.SourceBuffer?.prototype;
+    if (proto?.appendBuffer) {
+      const original = proto.appendBuffer;
+      const seen = new WeakSet();
+      proto.appendBuffer = function (data) {
+        if (!seen.has(this)) {
+          seen.add(this);
+          this.addEventListener('updateend', () => {
+            stats.updateEnds++;
+            try {
+              stats.buffered = Array.from({ length: this.buffered.length },
+                (_, i) => [Number(this.buffered.start(i).toFixed(3)),
+                  Number(this.buffered.end(i).toFixed(3))]);
+            } catch { /* SourceBuffer may be detached */ }
+          });
+          this.addEventListener('error', () => { stats.bufferErrors++; });
+        }
+        stats.appendCalls++;
+        stats.appendedBytes += data?.byteLength || 0;
+        try { return original.call(this, data); }
+        catch (error) { stats.appendErrors++; throw error; }
+      };
+    }
   });
   await page.goto(APP, { waitUntil: 'domcontentloaded', timeout: 45000 });
   const capabilities = await page.evaluate(probes => {
@@ -73,11 +101,15 @@ try {
         video.requestVideoFrameCallback(count);
       }
     });
-    // If autoplay was blocked, click the actual app's Play button only while
-    // paused. Avoid accidentally pausing a video which has already started.
-    await page.waitForTimeout(2500);
+    // Wait until metadata actually arrives before making a trusted user
+    // gesture: clicking too early on WebKit can miss autoplay restrictions.
+    await page.waitForFunction(() => {
+      const video = document.querySelector('#player-video');
+      const status = document.querySelector('#player-status')?.textContent || '';
+      return video?.readyState >= 1 || /已停止播放|無法播放/.test(status);
+    }, null, { timeout: 60000 }).catch(() => {});
     if (await page.locator('#player-video').evaluate(video =>
-      video.paused && video.readyState > 0)) {
+      video.paused && video.readyState >= 1)) {
       await page.locator('#player-play-pause').click();
     }
     await page.waitForFunction(() => {
@@ -95,11 +127,20 @@ try {
         videoWidth: v?.videoWidth || 0,
         videoHeight: v?.videoHeight || 0,
         readyState: v?.readyState || 0,
+        networkState: v?.networkState ?? null,
+        paused: v?.paused ?? null,
+        seeking: v?.seeking ?? null,
+        duration: Number.isFinite(v?.duration) ? Number(v.duration.toFixed(3)) : null,
+        buffered: v ? Array.from({ length: v.buffered.length }, (_, i) =>
+          [Number(v.buffered.start(i).toFixed(3)),
+            Number(v.buffered.end(i).toFixed(3))]) : [],
         currentTime: Number(v?.currentTime || 0),
+        mse: window.__liveHevcMseStats || null,
         presentedFrames: window.__liveHevcFrames || 0,
         totalVideoFrames: v?.getVideoPlaybackQuality?.().totalVideoFrames ?? null,
         mediaError: v?.error?.code ?? null,
-        statusCategory: /403/.test(status) ? 'SOURCE_403' :
+        statusCategory: /點選影片/.test(status) ? 'NEEDS_PLAY_GESTURE' :
+          /403/.test(status) ? 'SOURCE_403' :
           /429/.test(status) ? 'SOURCE_429' :
           /已停止播放/.test(status) ? 'STOPPED' :
           /無法播放/.test(status) ? 'UNSUPPORTED' :
