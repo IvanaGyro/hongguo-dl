@@ -4,9 +4,8 @@ on:
     branches:
       - experiment/app-isolate-queue-probe-20261113
     paths:
-      - .github/workflows/registration-risk-live.yml
-      - worker/registration-probe.js
-      - scripts/live-registration-window.mjs
+      - experiments/triggers/registration-risk-live.txt
+  workflow_dispatch:
 jobs:
   registration:
     runs-on: ubuntu-latest

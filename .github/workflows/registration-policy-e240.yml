@@ -4,8 +4,8 @@ on:
     branches:
       - experiment/app-isolate-queue-probe-20261113
     paths:
-      - .github/workflows/registration-policy-e240.yml
-      - scripts/live-registration-silent-e240.mjs
+      - experiments/triggers/registration-policy-e240.txt
+  workflow_dispatch:
 jobs:
   observe:
     runs-on: ubuntu-latest

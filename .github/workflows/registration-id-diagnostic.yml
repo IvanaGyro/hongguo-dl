@@ -4,9 +4,8 @@ on:
     branches:
       - experiment/app-isolate-queue-probe-20261113
     paths:
-      - .github/workflows/registration-id-diagnostic.yml
-      - worker/registration-id-probe.js
-      - scripts/live-registration-id-diagnostic.mjs
+      - experiments/triggers/registration-id-diagnostic.txt
+  workflow_dispatch:
 jobs:
   diagnose:
     runs-on: ubuntu-latest

@@ -139,7 +139,7 @@ if(baseline.some(row=>!row.ok)){
     // Includes a 5-second inter-group rest PLUS relative D checkpoints.
     await dRecovery();
   }else{
-    console.log('NO_ZERO_ID_IN_C5: 150 attempts at 2-second intervals all succeeded');
+    console.log('NO_ZERO_ID_IN_C5: 150 attempts at 5-second intervals all succeeded');
   }
 }
 await save();

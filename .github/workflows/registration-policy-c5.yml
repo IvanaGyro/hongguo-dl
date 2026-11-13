@@ -4,8 +4,8 @@ on:
     branches:
       - experiment/app-isolate-queue-probe-20261113
     paths:
-      - .github/workflows/registration-policy-c5.yml
-      - scripts/live-registration-window-c5.mjs
+      - experiments/triggers/registration-policy-c5.txt
+  workflow_dispatch:
 jobs:
   observe:
     runs-on: ubuntu-latest
