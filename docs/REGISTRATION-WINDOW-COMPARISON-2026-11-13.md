@@ -59,3 +59,17 @@ These observations suggest timing- and count-dependent controls may coexist; dis
 | 5s | 150 | 150 | 0 | none | not applicable |
 
 All three runs showing zero IDs at burst #118 had exactly 3 successful baseline requests preceding the 150-request burst. These repeated results strengthen the **120 successful-registration count** hypothesis. The *shape* and *duration* of the zero-ID intervals, however, depend on elapsed time relative to apparent boundary resets, and may involve several overlapping quotas. Current experiments cannot establish a precise window length, enforcement key, or whether failed attempts extend cooldown.
+
+## Server-supplied clock and `new_user` field
+
+The [unintended overlapping 1s diagnostic artifact](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43453602608) captured the numeric upstream `server_time` and `new_user` fields. They are not derived from the GitHub runner's clock.
+
+- Last success before the zero-ID span: server_time **2026-11-13 15:34:52 UTC**, `new_user=1`.
+- Seven zero-ID replies: server_time **15:34:53–15:34:59 UTC**, `new_user=0`.
+- First success after the span: server_time **15:35:00 UTC**, `new_user=1`.
+
+Across all 153 responses in this diagnostic, `new_user=0` coincided with zero IDs and `new_user=1` with valid IDs. This independently supports that the upstream sent a structured non-issuance response, not that JavaScript dropped the IDs. A minute-boundary reset is plausible, but the actual window duration and enforcement key still need controlled study.
+
+## Silent recovery E240
+
+The independent [E240 study](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43454520761) uses an initial 300-second quiet period, then baseline validation, then 150 registrations at one-second spacing, then *240 completely silent seconds* before one probe. The outcome is recorded separately once the run completes. This avoids mixing ongoing polling with silent recovery.
