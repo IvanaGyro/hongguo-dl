@@ -4,6 +4,17 @@ const pending = new Map();
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 self.addEventListener('message', event => {
+  // Pagehide/export cancellation can happen after the stream was transferred
+  // but before the browser asked for the download URL.
+  const canceledId = event.data?.cancel;
+  if (canceledId) {
+    const stale = pending.get(canceledId);
+    if (stale) {
+      pending.delete(canceledId);
+      void stale.stream.cancel().catch(() => {});
+    }
+    return;
+  }
   const { id, filename, stream } = event.data || {};
   if (!/^[a-f0-9-]{20,}$/.test(String(id)) || !stream || typeof stream.getReader !== 'function')
     return;

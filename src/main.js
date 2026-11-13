@@ -707,6 +707,7 @@ async function startBulk(type) {
       currentStatus: id => jobs.find(j => j.id === id)?.status || 'missing',
       signal,
       saveArchive: (stream, filename) => triggerArchiveDownload(stream, filename, {
+        signal,
         onFallback: () => {
           $('bulk-status').textContent = '改用記憶體 ZIP 模式（上限 240 MiB）';
         }
