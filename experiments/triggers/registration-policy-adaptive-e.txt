@@ -1,0 +1,5 @@
+Run adaptive E real registration recovery study.
+Initial base = 240 seconds. First trial = 180 seconds.
+If 180 fails, remain silent 60 more seconds and verify at 240.
+Do not start next round until recovery is observed.
+Run requested on 2026-11-14.
