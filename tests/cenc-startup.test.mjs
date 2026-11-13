@@ -141,12 +141,16 @@ test('HEVC seeks preserve codec and failed workers revoke URLs', async t => {
     stream = await previous.seekTo(seconds);
     assert.equal(stream.mime, expectedMime, 'Seek lost the exact hvcC profile');
     assert.equal(workers.at(-2).terminated, true);
+    assert(!workers.at(-2).messages.some(message => message.type === 'cancel'),
+      'Teardown must terminate directly without resuming canceled AVIO reads');
     assert.equal(workers.at(-1).messages[0].startSeconds, seconds);
     assert.equal(revoked.length, minted.length - 1,
       'Seek retained a previous CENC Object URL');
   }
   workers.at(-1).onerror({ preventDefault() {} });
   assert.equal(workers.at(-1).terminated, true);
+  assert(!workers.at(-1).messages.some(message => message.type === 'cancel'),
+    'Failure cleanup must also terminate without racing a cancel message');
   assert.deepEqual(revoked, minted, 'Worker error retained an Object URL');
   await stream.close();
   assert.deepEqual(revoked, minted, 'close after failure double-revoked an URL');
