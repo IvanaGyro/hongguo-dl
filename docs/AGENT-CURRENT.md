@@ -1,26 +1,24 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 73）
+# Hongguo DL — 目前狀態（2026-11-13，階段 78：真實播放五輪驗收）
 
-> **工程規範**：直接提交 `main`，不建立 PR。新改動應有針對性測試，區分 pending／success／failure；不記錄 signed URLs、金鑰或真實私有媒體。每階段更新 AGENT-PROGRESS，保持交接短版。
+> **優先工作入口**：[REAL-PLAYBACK-ACCEPTANCE.md](REAL-PLAYBACK-ACCEPTANCE.md)；真實影片能否播放的證據高於合成 CI。所有工程直接提交 `main`、不開 PR；不得在 repo 或 log 保存簽章影片 URL、CENC key、Cookie 或真實影片片段。
 
-## 近期可證實結果
+## 最高優先結論
 
-- **階段 73：批次 ZIP 匯出 Service Worker 啟動／ACK 可取消**：[4d34056](https://github.com/IvanaGyro/hongguo-dl/commit/4d340566b0536dff867ce389f96d0c49d4032831)：`triggerArchiveDownload` 改接收 `AbortSignal`，在 SW register、ready、controllerchange、MessageChannel ACK 等待及 fallback 讀取時都能中止；已移交但未開始下載的 SW ZIP 記錄可透過 `{cancel:id}` 刪除；**取消不得觸發記憶體 fallback 或下載 anchor**。新增 `tests/archive-download.test.mjs`（故意阻塞 SW.ready、SW ACK 的取消回歸）。[主 CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) **completed/success**；[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) **completed/success**（含既有 60 集 ZIP、MP4 concat、延遲 source abort E2E），[Pages #43336436625](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436625) success。[CENC Browser #43336436548](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436548) 最後查詢尚未給出 job 結論。未修改影音編碼器與 ZIP 格式。
+**現有部署站對真實紅果《nova：新星》第 1 集：FAIL，沒有成功呈現影格或讓播放時間前進。** 這是本輪最重要的新實證，不是 synthetic CENC 的成功。真實來源 API 正常顯示 1080p encrypted HEVC（2 份候選）與 720/540/480/360p encrypted ByteVC2（各 2 份候選）。第 1 集 360p 瀏覽器實測最後收到 **media HTTP 403**；GitHub Actions bounded HEVC 206 metadata probe 2 候選都未取得合格 206、0 筆上游 HTTP status，失敗於傳輸/逾時階段。不能因此推論「ByteVC2 解碼器壞掉」，也不能推論「真實 HEVC 播放成功」。
 
-- **階段 72：下載取得片源 API 也傳遞 AbortSignal + 真實導覽測試**：[2c334e0](https://github.com/IvanaGyro/hongguo-dl/commit/2c334e079079e6c8ddd57d8d9c6ac307c60cc63a) 修正 `src/main.js:runJob` 原先呼叫 `getSource` 少傳 `signal` 的問題；新增 `tests/queue-pagehide.firefox.mjs`：延遲 `/api/source` 模擬在途請求，驗證 synthetic pagehide 確實觸發 AbortError、佇列保留 `INTERRUPTED`、BFCache 模擬返回後不自動重試、**只有使用者點擊重試才新發送 source**；接著執行真正的 `about:blank` 導覽並 `goBack()`，驗證返回後佇列不復活。測試記錄 `pageshow.persisted`，可能是 BFCache，也可能是 reload，兩者須區分；**不宣稱一定實際命中 BFCache**。Firefox CI workflow 已納入新 E2E。**[Firefox #43335942046](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942046) completed/success**：合成延遲 API 的 abort、手動重試、真正歷史導覽均 PASS；`pageshow.persisted=false`，**實際是 reload，不能宣稱 BFCache hit**。[主 CI #43335942065](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942065) success；CENC Browser #43335941895 需另確認。
+## 本輪五階段（74–78）
 
-- **階段 71：下載佇列 pagehide 生命週期修正**：[04c60c4](https://github.com/IvanaGyro/hongguo-dl/commit/04c60c4b6df8a5fd218f07979573bea76d3c383b) 新增 `src/queue-lifecycle.js` 可測試的集中清理：abort active jobs、停止 retry timers、abort bulk export；`src/main.js` pagehide 將未完成項目標記 `INTERRUPTED` 並持久化，`pump` 在頁面暫停期間不啟新工作、BFCache 返回後不自動重試。補 `tests/queue-lifecycle.test.mjs` 覆蓋五種 busy 狀態及 idempotence，並防止 abort 後的 late success/error 覆寫狀態。**此版 [主 CI #43333897868](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897868) completed/success、[Pages #43333897778](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897778) success**；[Firefox #43333897837](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897837) 與 [CENC Browser #43333897775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897775) fast/long 現已全數 completed/success。這是隊列主程式關閉改動，無解碼器修改。
+1. **階段74 真實 1080p/auto 畫面實測**：部署頁顯示《nova：新星》共 60 集（前 5 集 available），第一集至少 20s 內無影格、0:00/0:00、播放器顯示 ByteVC2 實驗轉碼。[Browser 實測記錄](https://agent.tinyfish.ai/runs/2f5dc5e8-f69f-49e6-b7e5-3ba0f62c0d65)。
+2. **階段75 真實 HEVC 206 bounded probe**：[3184c85](https://github.com/IvanaGyro/hongguo-dl/commit/3184c85815868ae3299ef177586967a4d2f59f9d) 日誌加入安全的 HTTP status/count；[live run #43339207034](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339207034) **FAIL**（2 候選、0 success、0 status、名目 131072 bytes／2 requests）。不能聲稱源站 HTTP 403，因為這輪沒有收到任何 HTTP status。
+3. **階段76 ByteVC2 真實階段診斷**：[1b8b080](https://github.com/IvanaGyro/hongguo-dl/commit/1b8b080b5bb90a146b7d9922a627de6d43186755) 顯示整集 bytes 下載 %、WASM loading/ready、transcoding（無虛構%）、finalizing；[CI #43339401291](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339401291)、[Firefox #43339401187](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339401187) success。**只增可觀測性，不代表已能串流播放**。
+4. **階段77 真實 360p ByteVC2 實播**：[Browser 實測記錄](https://agent.tinyfish.ai/runs/35c95408-2dd2-4e25-9977-573cd58caa70)：**FAIL**，完整觀測到 MEDIA_HTTP HTTP 403，曾顯示整集下載 90% 但始終 0:00／無影格，5 次重試停止。這次證明媒體代理/上游 CDN 無法提供可用影片，**不能斷定所有影片均如此**。
+5. **階段78 錯誤分類／回歸**：[a74869f](https://github.com/IvanaGyro/hongguo-dl/commit/a74869f4500c16c9cb07d9845958098492102e85) Worker 將上游 403/429 分類為 media forbidden/rate limited；[63a2733](https://github.com/IvanaGyro/hongguo-dl/commit/63a27334dd6d8eaef17b3618e75a74c3cebf6adb) 前端也能將**舊 Worker** 的 generic MEDIA_HTTP 403/429 映射為明確原因。429 非可重試；403 仍遵守原有候選/重試策略。[CI #43340041117](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43340041117)、[Pages #43340041383](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43340041383) completed/success。**Worker 原始碼更新沒有證據表明已部署 Cloudflare**，但 Pages 前端與舊 Worker 相容。
 
-- **階段 70**：[2652b17](https://github.com/IvanaGyro/hongguo-dl/commit/2652b17e23f73119dc5354e73b1874c9aa843045) 修正播放頁 `pagehide`：儲存進度、取消預取、主動 `disposeSource()`（終止 CENC Worker／Range／MSE URL），並透過 token 防止舊 callback 復活。BFCache `pageshow.persisted` 返回時重開同一集且保持暫停、保留 1.25× 等設定。Firefox 瀏覽器測試新增合成 `pagehide/pageshow` 驗證。**Firefox #43333339704 和 CENC Browser fast #43333339682 已 completed/success**，long 也已 completed/success；主 CI #43333339692、Pages #43333339698 completed/success。
-- **前一個完整 CENC Browser 實證**：[Browser #43302492613](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43302492613) fast/long 都 completed/success：Chromium/Firefox 初次與 5 個遠距 Seek、90% reload、3 次 mode cycles 後實際 AAC PCM 有聲，55s 跳轉保持 1.25×；Chromium 有 8 個 MOV 診斷僅發生於過渡階段，steady/PCM 無警訊，Firefox 為 0；120s pause Range 9→9、300s/1800s 合成片完整播畢並有界 MSE。
-- **MOV 訊息**：轉為獨立 [Issue #6](https://github.com/IvanaGyro/hongguo-dl/issues/6)，附重現，暫不再擴充 AAC 路徑。
-- **WASM proof**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) 70s H264/AAC 7、35、55、63s seek、FFmpeg `-xerror` 解碼及 direct vs 256KiB HTTP window clear-fMP4 byte parity PASS；1080p synthetic HEVC 的 WASM→FFmpeg 正例已通過。
+## 下一個工作重點（不可跳過）
 
-## 後續優先
+- **P0 真實媒體存取**：取得使用者有權使用而且返回有效 206/Content-Range 的真實來源；若官方 CDN 回 403，先辨別是否舊簽章、存取限制、Cloudflare egress/區域、或原站防盜鏈，**無證據不得猜**、不得嘗試繞過限制。不要再花大量時間只測 synthetic AAC。
+- **P1 真實 HEVC**：在有 HEVC MSE 的實際 Windows/Android 裝置上驗 metadata、CENC 解密、EOF 前第一影格和音訊；不要把 Linux Chromium 不支援 HEVC 說成 remux 壞。
+- **P2 ByteVC2 真正起播**：目前只能整集下載→同步單執行緒 WASM→H264，**不是 progressive streaming**；沒有合法 bitstream 真實解碼正例。未驗證解碼器前不要宣稱 ByteVC2 已支援。
+- **產品限制**：如 CDN HTTP403，應明確標 SOURCE_FORBIDDEN 而非 decoder fail；真實 Android Firefox 大型 ZIP 和 BFCache 仍未驗。
 
-- 核對階段73 Firefox archive download/ZIP E2E 和 CENC Browser 結果；若失敗，先看確切 log 修正，不降低原有測試門檻。
-- stage71 已處理下載佇列 pagehide／active jobs／重試計時器／批次匯出。下一步應找另一個可觀測、與影音解碼無關的需求缺口；不要為了測試數量而擴張已通過的項目。
-- 目前 **NOT TESTED**：可合法取得 HTTP 206 的真實紅果 HEVC CENC、Windows／Android 裝置 HEVC MSE 實播與 AAC、真正 ByteVC2 bitstream 成功解碼／CPU/RAM。CI 合成正例不可代替這些驗收。
-
-詳盡進度：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)、[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。
-
-**文件更新不是停止條件。**
+歷史完整日誌：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)；[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。**CI PASS 不等於真實播放 PASS。**

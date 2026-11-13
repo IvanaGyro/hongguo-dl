@@ -45,6 +45,11 @@
 
 | 批次 ZIP 匯出 Service Worker 註冊／ready／controllerchange／ACK 階段的 pagehide abort；取消後不得 fallback 或自動下載 | Node mock SW.ready/ACK 永久 pending，AbortController + ZIP streaming SW cancel message | **PASS（單元 + 既有 Firefox ZIP 匯出）；真實 SW in-flight abort 尚未驗** | [main 4d34056](https://github.com/IvanaGyro/hongguo-dl/commit/4d340566b0536dff867ce389f96d0c49d4032831)、[CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) success；[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) completed/success；Firefox job 證明 60 集 ZIP 舊流程仍成功，**但未實際打斷 SW ACK**。無 Android Firefox 真實 60 集中途取消正例 |
 
+| 真實紅果《nova：新星》第一集在部署網站直接出現影格並可播放 | 公開第一集（encrypted HEVC 1080p / ByteVC2 360p），live browser | **FAIL（真實播放，沒有第一影格）** | [五輪驗收](REAL-PLAYBACK-ACCEPTANCE.md)；[auto browser](https://agent.tinyfish.ai/runs/2f5dc5e8-f69f-49e6-b7e5-3ba0f62c0d65) 第 1 集 0:00 無畫面；[360p browser](https://agent.tinyfish.ai/runs/35c95408-2dd2-4e25-9977-573cd58caa70) 0:00 無畫面、media HTTP403。不能斷言 ByteVC2 decoder 壞 |
+| 真實 encrypted HEVC 的 bounded HTTP206 / moov / hvcC | GitHub Actions Linux，已公開合法第 1 集兩個候選、每 request <=1MiB、總 <=3MiB | **FAIL（blocked / 無合法 206）** | [live run #43339207034](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339207034)：2 個候選、0 筆 206、0 筆 HTTP status、transport/probe Error；非已確認 403，且未實際測 HEVC decoder |
+| ByteVC2 實際整片下載 / WASM / transcode 階段可見，不能用虛構進度代表起播 | Node Worker mock phase + Firefox 常規 browser regression | **PASS（診斷／既有流程）；真實 ByteVC2 解碼仍 FAIL/NOT VERIFIED** | [main 1b8b080](https://github.com/IvanaGyro/hongguo-dl/commit/1b8b080b5bb90a146b7d9922a627de6d43186755)、[CI #43339401291](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43339401291) success。需實際解出 frame 才能標播放 PASS |
+| 媒體 HTTP403/429 區分 CDN 來源拒絕與影音解碼失敗 | Worker synthetic 403/429、舊 Worker MEDIA_HTTP 403/429 分類測試 | **PASS（單元與 Pages）；403 媒體仍不可讀** | [main a74869f](https://github.com/IvanaGyro/hongguo-dl/commit/a74869f4500c16c9cb07d9845958098492102e85)、[main 63a2733](https://github.com/IvanaGyro/hongguo-dl/commit/63a27334dd6d8eaef17b3618e75a74c3cebf6adb)、[CI #43340041117](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43340041117) success；Worker 部署未驗證 |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
