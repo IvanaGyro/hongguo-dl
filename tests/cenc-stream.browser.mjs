@@ -184,6 +184,12 @@ const canceledSeekMovError = /^\[mov,mp4,m4a,3gp,3g2,mj2 @ 0x[0-9a-f]+\] (?:subs
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
   const text = message.text();
+  // Chromium reports the deliberately rejected fixture request independently
+  // of the application's caught 403. Exempt only that exact transport error.
+  if (cdnRetry && message.type() === 'error' &&
+      /^Failed to load resource: the server responded with a status of 403\b/.test(text) &&
+      new URL(message.location().url, 'http://127.0.0.1').searchParams.get('url') ===
+        'https://denied.fqnovelvod.com/cenc-progressive.mp4') return;
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {
