@@ -40,7 +40,7 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
       'Content-Length': String(last - first + 1) }, body: input.subarray(first, last + 1) });
 });
 try {
-  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789`);
+  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789&bvc2_stream=experimental`);
   // The controls exist in static HTML before the application attaches handlers.
   await page.waitForFunction(() => document.querySelector('#series-title')
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
