@@ -5,6 +5,9 @@ on:
     paths:
       - 'tests/live-hevc.webkit.mjs'
       - '.github/workflows/live-hevc-webkit.yml'
+      - 'src/cenc-remux.js'
+      - 'src/cenc-source-fallback.js'
+      - 'src/mse-start-gap.js'
   workflow_dispatch:
 concurrency:
   group: real-hevc-webkit-${{ github.ref }}
