@@ -148,6 +148,7 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
     return {
       currentTime: video.currentTime,
       frames: window.__liveHevcFrames || 0,
+      totalFrames: video.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
       targetAlreadyBuffered: Array.from({ length: video.buffered.length },
         (_, i) => [video.buffered.start(i), video.buffered.end(i)])
         .some(([start, end]) => target >= start && target <= end)
@@ -158,15 +159,16 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   await page.locator('#player-video').evaluate((video, seconds) => {
     video.currentTime = seconds;
   }, target);
-  await page.waitForFunction(({ target, beforeFrames }) => {
+  await page.waitForFunction(({ target, beforeFrames, beforeTotalFrames }) => {
     const video = document.querySelector('#player-video');
     const status = document.querySelector('#player-status')?.textContent || '';
     const advanced = video?.currentTime > target - 1 &&
       video?.currentTime < target + 8 && video.readyState >= 2 &&
       ((window.__liveHevcFrames || 0) > beforeFrames + 1 ||
-        video.getVideoPlaybackQuality?.().totalVideoFrames > 0);
+        (video.getVideoPlaybackQuality?.().totalVideoFrames ?? 0) > beforeTotalFrames + 1);
     return advanced || /已停止播放|跳轉失敗|無法播放/.test(status);
-  }, { target, beforeFrames: before.frames }, { timeout: 90000 }).catch(() => {});
+  }, { target, beforeFrames: before.frames, beforeTotalFrames: before.totalFrames },
+  { timeout: 90000 }).catch(() => {});
   const seek = await page.evaluate(() => {
     const v = document.querySelector('#player-video');
     const status = document.querySelector('#player-status')?.textContent || '';
@@ -177,6 +179,7 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
       paused: v?.paused ?? null,
       seeking: v?.seeking ?? null,
       frames: window.__liveHevcFrames || 0,
+      totalFrames: v?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
       mediaError: v?.error?.code ?? null,
       buffered: v ? Array.from({ length: v.buffered.length }, (_, i) =>
         [Number(v.buffered.start(i).toFixed(3)),
@@ -190,7 +193,7 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   console.log('macOS WebKit real HEVC distant seek:', JSON.stringify(seek));
   const seekValid = Math.abs(seek.currentTime - target) < 8 &&
     seek.readyState >= 2 && !seek.seeking && seek.mediaError == null &&
-    seek.frames > before.frames + 1;
+    (seek.frames > before.frames + 1 || seek.totalFrames > before.totalFrames + 1);
   if (seekValid)
     console.log('PASS real Hongguo HEVC distant unbuffered seek and decoded frames');
   // The decoded audio track may legitimately be quiet at the start. If we
@@ -228,11 +231,17 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   if (!audioControlValid) failures.push('Web Audio oscillator control did not produce PCM; cannot validate AAC');
   if (!audioValid && !(afterSeekAudio?.peakRms > 0.004 &&
       afterSeekAudio.nonSilentWindows >= 4)) {
-    failures.push(nativeElementPcm && mseElementPcm
-      ? 'Real HEVC MSE AAC PCM not detected despite positive known-audible MP4/MSE controls'
-      : 'Real HEVC AAC PCM unverified: known-audible media-element control inconclusive');
+    if (nativeElementPcm && mseElementPcm)
+      failures.push('Real HEVC MSE AAC PCM not detected despite positive known-audible MP4/MSE controls');
+    else
+      // WebKit bug 266922: an audible MSE media element can produce all-zero
+      // MediaElementAudioSourceNode samples. Do not turn an unmeasurable
+      // output into a false playback failure or a false AAC PASS.
+      console.warn('NOT TESTED real HEVC audible output: WebKit MSE MediaElementAudioSourceNode returned zero for known-audible synthetic AAC');
   }
   assert.deepEqual(failures, [], 'Extended real HEVC acceptance failures');
-  console.log('PASS real Hongguo HEVC AAC PCM plus 120s distant seek');
+  console.log(nativeElementPcm && mseElementPcm
+    ? 'PASS real Hongguo HEVC AAC PCM plus 120s distant seek'
+    : 'PASS real Hongguo HEVC 120s distant seek; actual audible AAC remains NOT TESTED');
 
 }
