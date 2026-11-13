@@ -107,14 +107,11 @@ test('upstream HTTP 429 is classified as rate limiting without retrying in Worke
 });
 
 
-test('source channel rejects invalid modes or unsupported web-only filters without upstream fetch', async () => {
+test('source channel rejects invalid modes before upstream fetch', async () => {
   const api = 'https://example.workers.dev/api/source?sid=123&vid=456';
   const bad = await worker.fetch(new Request(api + '&channel=other'), {});
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).error.code, 'INVALID_SOURCE_CHANNEL');
-  const invalidWeb = await worker.fetch(new Request(api + '&channel=web&quality=1080p'), {});
-  assert.equal(invalidWeb.status, 400);
-  assert.equal((await invalidWeb.json()).error.code, 'INVALID_SOURCE_CHANNEL');
 });
 
 

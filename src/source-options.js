@@ -125,10 +125,8 @@ export function playbackRendition(variants, preferences = {}, canPlayType, attem
 }
 
 
-// The Worker tries a 4.5-second website HTML probe before App playback when
-// both filters are 'auto'. Explicit 1080p playback does not need that public
-// unknown-quality probe; the existing 1080p API filter takes the App route.
-// A targeted response is partial and must not disable other quality options.
+// Worker source responses are always unfiltered; the browser owns the quality
+// and codec decisions. The App/Web race still avoids the legacy serial probe.
 // A late second channel can insert higher-quality variants before the first
 // source in sorting order. Retry an untried URL, not an index in a new list.
 export function untriedPlaybackRendition(variants, preferences, canPlayType,
@@ -141,7 +139,5 @@ export function untriedPlaybackRendition(variants, preferences, canPlayType,
 }
 
 export function sourceQueryForPlayback(quality = 'auto') {
-  return quality === '1080p'
-    ? { quality: '1080p', codec: 'auto', partial: true }
-    : { quality: 'auto', codec: 'auto', partial: false };
+  return { quality: 'auto', codec: 'auto', partial: false };
 }

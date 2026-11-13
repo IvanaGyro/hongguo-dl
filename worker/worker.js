@@ -164,10 +164,8 @@ async function loadSource(sid, vid, codec, quality, channel = 'auto') {
   if (!['auto', '720p', '1080p'].includes(quality)) throw httpError(400, 'INVALID_QUALITY', '不支援的畫質篩選');
   if (!['auto', 'web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
-  if (channel === 'web' && (codec !== 'auto' || quality !== 'auto'))
-    throw httpError(400, 'INVALID_SOURCE_CHANNEL', '網頁版來源僅支援自動畫質與編碼');
   let webError = '';
-  if (channel !== 'app' && codec === 'auto' && quality === 'auto') {
+  if (channel !== 'app') {
     try {
       const html = await fetchLimited(SITE + '/player/' + sid + '/' + vid, { timeout: 4500 });
       const media = findPublicMedia(html, sid, vid);
@@ -178,10 +176,11 @@ async function loadSource(sid, vid, codec, quality, channel = 'auto') {
         '目前沒有已確認可直接讀取的公開網頁片源');
   }
   try {
-    const result = await fetchAppPlayUrl(vid, { quality });
-    const variants = (result.variants || [result]).filter(v => codec === 'auto' ||
-      (codec === 'hevc' ? /^(hevc|h265|hvc1|hev1|bytevc1)$/.test(v.codec) : v.codec === codec || codec === 'h264' && /^(h264|avc|avc1)$/.test(v.codec)));
-    if (!variants.length) throw httpError(404, 'CODEC_UNAVAILABLE', '本集沒有符合 ' + codec + ' 的片源');
+    // Source metadata is complete. Quality and codec are a client-side
+    // selection policy, not a Worker concern.
+    const result = await fetchAppPlayUrl(vid, { quality: 'auto' });
+    const variants = result.variants || [result];
+    if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
       contentKey: v.contentKey || null, source: v.source, width: v.width || null,
       height: v.height || null, duration: v.duration || null })), sourceChannel: 'app' };

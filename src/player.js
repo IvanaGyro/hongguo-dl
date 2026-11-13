@@ -333,10 +333,8 @@ export function createPlayer({
       ? sameTierHevcCandidates(lastVariants, { quality, codec }, cencRetryTier) : [];
     const usedInCycle = attempt - sourceCycleStart;
     const withinCycle = priorCandidates.length > 0 && usedInCycle < priorCandidates.length;
-    const freshEnough = Date.now() - lastVariantsAt < 30000;
     const sameList = Boolean(sameEpisode && attempt > 0 &&
-      (cencRetryTier ? withinCycle && freshEnough
-        : attempt < lastVariants.length && freshEnough));
+      (cencRetryTier ? withinCycle : attempt < lastVariants.length));
     if (!quiet && cencRetryTier && sameEpisode && attempt > 0 && !sameList) {
       if (sourceRefreshCount >= 1) {
         log('source.list.exhausted', {
@@ -357,9 +355,22 @@ export function createPlayer({
       : episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList ? { variants: lastVariants }
-        : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal);
+        : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
+          { refresh: !quiet && attempt > 0 && !sameList });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
+    // A public unknown-quality URL cannot satisfy an explicit rendition
+    // request. Await the other query only when the initial source lacks it.
+    if (list.lateVariants && (quality !== 'auto' || codec !== 'auto') &&
+        !variants.some(v => (quality === 'auto' || qualityId(v) === quality) &&
+          (codec === 'auto' || codecId(v.codec) === codec))) {
+      const extra = await list.lateVariants;
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      const seen = new Set(variants.map(v => v.url));
+      for (const v of extra || []) if (v?.url && !seen.has(v.url)) {
+        variants.push(v); seen.add(v.url);
+      }
+    }
     log('source.list.ready', {
       variants: variants.length, fromCache: sameList,
       elapsedMs: ageMs()

@@ -26,6 +26,8 @@ import { recentSeries, rememberSeries, watchRecords, playbackKey } from './libra
 import { createPlayer } from './player.js';
 import { createPlaybackDiagnostics } from './playback-diagnostics.js';
 import { createMediaTransportForSource } from './media-transport.js';
+import { createEpisodeSourceStore } from './episode-source-store.js';
+import { initialDownloadQualityEpisode, downloadQualityOptions, hasExactDownloadQuality } from './download-quality-options.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -100,6 +102,12 @@ let exportSelected = new Set();
 try { exportSelected = new Set(JSON.parse(localStorage.getItem(EXPORT_STORE) || '[]')); }
 catch { /* browser restrictions */ }
 const mediaCache = new MediaCache();
+let downloadQualitySeriesId = null, downloadQualitySampleVid = null, sampleRequestToken = 0;
+const sourceStore = createEpisodeSourceStore((sid, vid) =>
+  resolveSourceFromNetwork(sid, vid), (sid, vid, variants) => {
+    if (String(series?.seriesId) === String(sid) && vid === downloadQualitySampleVid)
+      renderDownloadQualityChoices(variants);
+  });
 function persistExportSelection() {
   try { localStorage.setItem(EXPORT_STORE, JSON.stringify([...exportSelected])); }
   catch { /* no persistent selection */ }
@@ -285,6 +293,7 @@ function showSeries(result, fromHistory = false) {
   player?.stop();
   series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
   selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
+  void loadDownloadQualitySample(series);
   $('series-title').textContent = series.title || '未命名短劇';
   document.title = (series.title || '短劇') + ' · Hongguo DL';
   $('series').hidden = false;
@@ -332,7 +341,7 @@ function supportsIndependentSourceChannels() {
   }
   return sourceChannelProbe;
 }
-async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal) {
+async function resolveSourceFromNetwork(seriesId, vid) {
   const started = performance.now();
   playbackDiagnostics.log('source.api.request', { quality, codec });
   // Expose slow Worker/API resolution while the promise is still pending.
@@ -342,9 +351,9 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
       elapsedMs: performance.now() - started
     });
   }, 2000);
+  const quality = 'auto', codec = 'auto';
   const endpoint = '/api/source?sid=' + encodeURIComponent(seriesId) +
-    '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
-    '&codec=' + encodeURIComponent(codec);
+    '&vid=' + encodeURIComponent(vid) + '&quality=auto&codec=auto';
   const requestChannel = async channel => {
     const begin = performance.now();
     playbackDiagnostics.log('source.channel.request', { channel });
@@ -366,7 +375,7 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
   try {
     // Only AUTO benefits from the public URL race. A selected 1080p tier
     // continues directly to the App API and bypasses the website probe.
-    if (quality === 'auto' && codec === 'auto') {
+    if (true) {
       const supported = await supportsIndependentSourceChannels();
       if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
       playbackDiagnostics.log('source.api.independent', { supported });
@@ -390,12 +399,6 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
         sources.flatMap(item => item.variants || []));
       return { ...winner.data, lateVariants };
     }
-    const data = await requestChannel('app');
-    playbackDiagnostics.log('source.api.response', {
-      elapsedMs: performance.now() - started, channel: 'app',
-      variants: data?.variants?.length || 0
-    });
-    return data;
   } catch (error) {
     playbackDiagnostics.log('source.api.failed', {
       elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN'
@@ -403,6 +406,39 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
     throw error;
   } finally {
     clearInterval(heartbeat);
+  }
+}
+// Quality and codec arguments remain accepted for older call sites but are
+// intentionally not forwarded: all selection happens in the frontend.
+async function getSource(seriesId, vid, quality = 'auto', codec = 'auto',
+  signal, { refresh = false, complete = false } = {}) {
+  return sourceStore.get(seriesId, vid, { signal, refresh, complete });
+}
+function renderDownloadQualityChoices(variants) {
+  const select = $('quality');
+  const previous = select.value;
+  const choices = downloadQualityOptions(variants);
+  select.replaceChildren(new Option('最佳可取得', 'auto'),
+    ...choices.map(q => new Option(q, q)));
+  if (choices.includes(previous)) select.value = previous;
+  if (downloadQualitySeriesId === String(series?.seriesId))
+    select.title = choices.length ? '以第一個可能受限制集數取得的畫質為準；其他集數若不符合會個別報錯'
+      : '這個集數尚未提供可辨識的畫質';
+}
+async function loadDownloadQualitySample(target) {
+  const sequence = ++sampleRequestToken;
+  downloadQualitySeriesId = String(target.seriesId || '');
+  const episode = target.kind === 'series'
+    ? initialDownloadQualityEpisode(target.episodes) : null;
+  downloadQualitySampleVid = episode?.vid || null;
+  $('quality').replaceChildren(new Option('最佳可取得', 'auto'));
+  if (!episode) return;
+  try {
+    const data = await getSource(target.seriesId, episode.vid, 'auto', 'auto');
+    if (sequence !== sampleRequestToken || series?.seriesId !== target.seriesId) return;
+    renderDownloadQualityChoices(data.variants);
+  } catch {
+    // No quality is invented when the sample episode has no source.
   }
 }
 async function lookupIds(ids) {
@@ -695,6 +731,7 @@ async function streamToDestination(job, source, signal) {
   }
 }
 async function runJob(job, signal) {
+  const mediaFailed = /^(?:MEDIA_|CENC_SOURCE_FORBIDDEN|CENC_RANGE_HTTP|CENC_RATE_LIMITED|CENC_RANGE_INVALID)/.test(job.errorCode || '');
   update(job, { status: 'resolving', attempts: job.attempts + 1, bytes: 0, totalBytes: 0, error: '', errorCode: '' });
   try {
     const cachedEntry = ['original', 'copy'].includes(job.mode)
@@ -710,8 +747,11 @@ async function runJob(job, signal) {
     }
     const data = job.vid === 'direct'
       ? { variants: [{ url: job.directUrl, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await getSource(job.seriesId, job.vid, 'auto', 'auto', signal);
+      : await getSource(job.seriesId, job.vid, 'auto', 'auto', signal,
+        { complete: true, refresh: mediaFailed });
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
+    if (!hasExactDownloadQuality(data.variants, job.quality))
+      throw errorWith('QUALITY_UNAVAILABLE', '本集沒有 ' + job.quality + ' 畫質，請改選其他畫質');
     // Retry with another advertised URL while preserving the selected tier.
     const source = renditionForAttempt(data.variants,
       { quality: job.quality, codec: job.codec }, job.attempts - 1);
