@@ -55,6 +55,8 @@
 | 真實紅果 HEVC CENC → pinned Librempeg WASM clear fMP4，第一個片段在來源 EOF 前、FFmpeg HEVC/AAC strict decode | GitHub Actions；真實《nova：新星》第 1 集 1080p，資料/片段僅在 runner /tmp；HEVC 1920×1080 + AAC | **PASS（真實 WASM bitstream／FFmpeg 解碼；非 Browser）** | [Real WASM #43344492452](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43344492452) success：35×206/3×403；input 8,277,562 bytes、output 8,099,216 bytes、56 fragments、第一個 fragment 755,303 bytes before EOF；FFmpeg `-xerror` HEVC 12 frames + AAC 3 秒解碼成功；未留影片 artifact |
 | 真實紅果 HEVC MSE 在 Browser 顯示第一影格、AAC 有聲、Seek/EOF | 自動化 browser HEVC + AAC / Main10 MSE 不支援；需 Windows/Android 有 HEVC 解碼能力實機 | **NOT TESTED（此 browser MSE 不支援 HEVC）** | [Browser codec diagnostics](https://agent.tinyfish.ai/runs/f0d73805-8310-485f-8975-1197331a691f) `MediaSource.isTypeSupported=false` for HEVC+AAC/Main10+AAC，H264+AAC true；必須在支援精確 hvcC MIME 的裝置做真正影格／音訊實測，不能把 FFmpeg PASS 當 Browser PASS |
 
+| 真實紅果 HEVC 1080p 在 macOS Apple Silicon WebKit MSE 首影格與時間前進（僅支援時才執行） | GitHub macos-15 M1；WebKit Playwright，正式部署前端/Worker；不觸碰 BVC2 | **PENDING（階段82；不可視為 PASS）** | [macOS WebKit #43345639384](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43345639384) 初查 in_progress，需以最終日誌 `PASS` 或 `NOT TESTED` 判斷；Linux/headless browser HEVC MSE false 不代表所有裝置不支援 |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
