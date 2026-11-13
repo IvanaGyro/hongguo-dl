@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { retryEmptyResponse } = require('./empty-response-retry');
+const { retryEmptyResponse } = require('../worker/vendor/empty-response-retry');
 const empty = () => Object.assign(new Error('Upstream HTTP 200 empty'), {code:'EMPTY_RESPONSE',status:200});
 const fail = (code,status) => Object.assign(new Error(code),{code,status});
 const noop = async()=>{};

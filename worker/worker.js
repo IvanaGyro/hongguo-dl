@@ -176,7 +176,7 @@ async function loadSource(sid, vid, channel = 'auto') {
   try {
     // Source metadata is complete. Quality and codec are a client-side
     // selection policy, not a Worker concern.
-    const result = await fetchAppPlayUrl(vid, { quality: 'auto' });
+    const result = await fetchAppPlayUrl(vid);
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,

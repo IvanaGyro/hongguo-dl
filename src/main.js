@@ -344,7 +344,7 @@ function supportsIndependentSourceChannels() {
 async function resolveSourceFromNetwork(seriesId, vid) {
   const signal = new AbortController().signal;
   const started = performance.now();
-  playbackDiagnostics.log('source.api.request', { sidLength: String(seriesId).length });
+  playbackDiagnostics.log('source.api.request', {});
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
