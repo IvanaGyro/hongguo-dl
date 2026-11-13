@@ -13,6 +13,7 @@ import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
+import { canTryNextCencSource } from './cenc-source-fallback.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -552,6 +553,20 @@ export function createPlayer({
           loading = false;
           setStatus('無法播放 · ' + parsed.message);
           return;
+        }
+        // A CDN may reject one freshly signed HEVC variant while another
+        // variant supplied by the same official source API returns 206.
+        // Limit retries to distinct candidates at the SAME quality and codec;
+        // never broaden to ByteVC2, lower quality, or unlimited 403 retries.
+        if (canTryNextCencSource({
+          code: parsed.code, variants: lastVariants,
+          variantsVid: lastVariantsVid, episodeVid: episode.vid,
+          tried: sourceAttempt, quality: qualitySelect.value,
+          codec: codecSelect.value
+        })) {
+          retryIncrementalCenc = true; // keep the bounded MSE/Range path
+          setStatus('目前 HEVC 媒體來源拒絕存取，嘗試同畫質其他候選來源…');
+          continue;
         }
         errors = recordFailure(errors, parsed, 5);
         failure = errors;
