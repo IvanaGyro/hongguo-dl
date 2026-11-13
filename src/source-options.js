@@ -5,7 +5,7 @@ export function codecId(value) {
   const v = String(value || '').toLowerCase();
   if (['h264', 'avc', 'avc1'].includes(v)) return 'h264';
   if (['h265', 'hevc', 'hvc1', 'hev1', 'bytevc1'].includes(v)) return 'hevc';
-  if (v === 'bytevc2') return 'bytevc2';
+  if (['bytevc2', 'bvc2'].includes(v)) return 'bytevc2';
   return '';
 }
 export function qualityId(variant) {

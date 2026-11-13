@@ -1,12 +1,21 @@
 name: BVC2 Librempeg WASM feasibility (experimental)
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/bvc2-stream-download-codecs']
     paths:
       - '.github/workflows/bvc2-wasm-probe.yml'
       - 'scripts/build-bvc2-wasm-transcode.sh'
       - 'scripts/bvc2-transcoder.c'
+      - 'scripts/bvc2-avio.h'
+      - 'scripts/patch-bvc2-mov.py'
+      - 'scripts/build-video-encoders.sh'
+      - 'scripts/patch-x265-single-thread.py'
+      - 'scripts/vendor/libvvenc.c'
       - 'scripts/bvc2-wasm-bundle.mjs'
+      - 'scripts/verify-video-outputs.mjs'
+      - 'scripts/synthetic-bvc2.mjs'
+      - 'scripts/build-native-vvc-verifier.sh'
+      - 'tests/bvc2-stream.browser.mjs'
   workflow_dispatch:
 concurrency:
   group: bvc2-wasm-${{ github.ref }}
@@ -17,7 +26,7 @@ permissions:
 jobs:
   decoder-probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     container:
       image: emscripten/emsdk:3.1.74
     steps:
@@ -25,7 +34,7 @@ jobs:
       - name: Install native pkg-config for Librempeg x264 dependency detection
         run: |
           apt-get update -qq
-          apt-get install -y pkg-config ffmpeg >/dev/null
+          apt-get install -y pkg-config ffmpeg cmake python3 git >/dev/null
       - name: Validate Emscripten toolchain
         run: |
           emcc --version | head -n 1
@@ -57,14 +66,43 @@ jobs:
             assert.match(core.UTF8ToString(core._bvc2_last_error()), /not ByteVC2/);
             console.log("PASS BVC2 decoder rejects normal H.264 video");
           '
+      - name: Build native VVC verifier for older distro FFmpeg
+        run: bash scripts/build-native-vvc-verifier.sh /tmp/hongguo-bvc2-transcode
+      - name: Verify real encoded synthetic video and async fMP4 transport
+        env:
+          SYNTHETIC_BVC2_PATH: /tmp/hongguo-synthetic-bvc2.mp4
+          VVC_FFMPEG: /tmp/hongguo-bvc2-transcode/native/librempeg-cb1f8f3eef84999e61b27e2d44664858179bc240/ffmpeg
+          VVC_FFPROBE: /tmp/hongguo-bvc2-transcode/native/librempeg-cb1f8f3eef84999e61b27e2d44664858179bc240/ffprobe
+        run: node scripts/verify-video-outputs.mjs /tmp/hongguo-bvc2-transcode/dist
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
+      - name: Browser acceptance for ByteVC2 framing and five download modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun ci
+          bun add --dev --no-save playwright@1.58.0
+          bunx playwright install --with-deps chromium
+          node scripts/bvc2-wasm-bundle.mjs publish /tmp/hongguo-bvc2-transcode/dist
+          VITE_BASE_PATH=/hongguo-dl/ bun run build
+          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/bvc2-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/hongguo-dl/ >/dev/null; then break; fi
+            sleep 1
+          done
+          node tests/bvc2-stream.browser.mjs /tmp/hongguo-synthetic-bvc2.mp4
       # Generated artifacts are committed only after the Node.js ABI check.
       # A real ByteVC2 frame fixture is still required for acceptance tests;
       # the web UI displays the converter as an experimental fallback.
-      - name: Publish browser WASM bundle on main
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Publish verified browser WASM bundle on the source branch
+        if: success() && github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -83,18 +121,20 @@ jobs:
             echo "Published browser assets already match the verified build"
           else
             git commit -m "build(bvc2): publish JS/WASM with pinned source manifest"
-            git fetch origin main
-            git rebase origin/main
+            git fetch origin "$SOURCE_BRANCH"
+            git rebase "origin/$SOURCE_BRANCH"
             # Compilation may have started before a later C/source change.
             # Reject stale compiled binaries rather than rebasing them over
             # new source files.
             node scripts/bvc2-wasm-bundle.mjs verify
-            git push origin HEAD:main
+            git push origin "HEAD:$SOURCE_BRANCH"
+            if [[ "$SOURCE_BRANCH" == main ]]; then
             curl --fail --silent --show-error --request POST \
               --header "Authorization: Bearer ${GH_TOKEN}" \
               --header "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/pages.yml/dispatches" \
               -d '{"ref":"main"}'
+            fi
           fi
       - uses: actions/upload-artifact@v4
         if: always()

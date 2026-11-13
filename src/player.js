@@ -10,8 +10,9 @@ import { recordFailure, playbackFailureMessage } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
-import { openClearKeyStream } from './clear-key.js';
-import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
+import { probeCencKid, openClearKeyStream } from './clear-key.js';
+import { openCencProgressiveStream } from './cenc-remux.js';
+import { bvc2BridgeAvailable } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -23,7 +24,7 @@ function loadPrefs(storage) {
 function printableSource(source) {
   const names = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
   return [
-    (source.outputCodec ? 'ByteVC2 → H.264（WASM 實驗性轉碼）' : names[source.codec] || source.codec || ''),
+    (source.outputCodec ? 'ByteVC2 → H.264（WASM 實驗性串流）' : names[source.codec] || source.codec || ''),
     source.width && source.height ? source.width + '×' + source.height : source.quality || '',
     source.duration ? Math.round(source.duration) + ' 秒' : ''
   ].filter(Boolean).join(' · ');
@@ -59,7 +60,7 @@ export function createPlayer({
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
   const mseSupport = mime => typeof MediaSource !== 'undefined' &&
     Boolean(MediaSource.isTypeSupported?.(mime));
-  const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2/VVC' };
+  const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
   video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
@@ -206,7 +207,7 @@ export function createPlayer({
   // is actually decoded/buffered. Otherwise a delayed seeking event can
   // accidentally start a second Worker and discard the first one.
   async function waitForCencResume(seconds, signal, stream) {
-    if (stream?.kind !== 'cenc-remux' || seconds <= 0.5) return;
+    if (!['cenc-remux', 'bvc2-transcode'].includes(stream?.kind) || seconds <= 0.5) return;
     const target = clampStreamSeek(seconds, stream.durationSeconds || video.duration);
     if (target === null) return;
     await new Promise((resolve, reject) => {
@@ -325,21 +326,22 @@ export function createPlayer({
       // Do not transcode a whole second episode during playback. Prefetch
       // metadata now; take over when the user actually switches episodes.
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
-      setStatus('讀取 ByteVC2 影片…');
-      const started = performance.now();
-      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
-        (length) => { if (length > 0) markStartupStage('first-media-byte'); });
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      setStatus('Librempeg ByteVC2 → H.264 實驗性轉碼中…');
-      const transcoded = await transcodeBvc2(raw,
-        { contentKey: source.contentKey, signal });
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      console.info('[Hongguo playback] E' + episode.index + ' ByteVC2 解密轉碼：' +
-        Math.round(performance.now() - started) + 'ms');
-      const playable = new Blob([transcoded], { type: 'video/mp4' });
-      const outputSource = { ...source, outputCodec: 'h264' };
-      cache.put(key, playable, outputSource);
-      return { blob: playable, source: outputSource, fallbackNotice, variants: null };
+      setStatus('建立 ByteVC2 → H.264 串流…');
+      const url = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      const metadata = {};
+      await probeCencKid(url, signal, fetch, metadata);
+      if (!metadata.fileSize || metadata.fragmented)
+        throw errorWith('BVC2_ERROR', 'ByteVC2 串流需要可讀取索引的 MP4 來源');
+      const native = await openCencProgressiveStream({
+        video, url, fileSize: metadata.fileSize, codec: 'h264', hasAac: metadata.hasAac,
+        key: source.contentKey || '', signal, bridge: 'bvc2',
+        durationSeconds: metadata.movieDurationSeconds || source.duration || null,
+        startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
+          metadata.movieDurationSeconds || source.duration || null) || 0
+      });
+      if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
+      return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
+        fallbackNotice, variants: null };
     }
     if (!isHlsUrl(source.url) && !source.contentKey)
       return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
@@ -457,7 +459,8 @@ export function createPlayer({
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
     if (resolved.native) sourceInfo.textContent +=
-      resolved.native.kind === 'cenc-remux' ? ' · 增量解密轉封裝（MSE）'
+      resolved.native.kind === 'bvc2-transcode' ? ' · ByteVC2 → H.264 增量轉碼（MSE，實驗性）'
+      : resolved.native.kind === 'cenc-remux' ? ' · 增量解密轉封裝（MSE）'
       : resolved.native.kind === 'mse' ? ' · 原生串流解密（MSE）'
       : ' · 原生串流解密（MP4）';
     const containerCodec = resolved.source?.outputCodec || codecId(resolved.source?.codec);

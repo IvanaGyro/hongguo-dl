@@ -131,6 +131,7 @@ function saveJobs() {
   } catch { /* Browser storage may be disabled. */ }
 }
 function update(job, fields) {
+  if (fields.status === 'processing' && job.status !== 'processing') job.processingStarted = Date.now();
   Object.assign(job, fields);
   schedulePaint();
   if (Date.now() - lastPersisted > 900 || ['completed', 'failed', 'canceled'].includes(fields.status)) saveJobs();
@@ -175,19 +176,25 @@ function renderQueue() {
     const busy = ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const chosen = exportSelected.has(job.id);
     const progress = job.status === 'completed' ? 100 :
+      job.status === 'processing' ? (Number.isFinite(job.progress) ? Math.min(99, Math.round(job.progress * 100)) : 0) :
       job.totalBytes > 0 ? Math.min(100, Math.round(100 * (job.bytes || 0) / job.totalBytes)) : 0;
     const retryDetail = job.status === 'retrying'
       ? '連續失敗 ' + (job.errorStreak || 1) + '/3' : '';
     const bytesDetail = ['downloading', 'processing'].includes(job.status) && job.bytes > 0
       ? formatBytes(job.bytes) + (job.totalBytes ? ' / ' + formatBytes(job.totalBytes) : '') : '';
-    const progressDetail = job.segment ? '分片 ' + job.segment.current + '/' + job.segment.total
-      : job.status === 'processing' && Number.isFinite(job.progress)
-        ? Math.round(job.progress * 100) + '%' : '';
-    const detail = [retryDetail, bytesDetail, progressDetail].filter(Boolean).join(' · ');
+    const progressDetail = job.status === 'processing' && Number.isFinite(job.progress)
+      ? '處理 ' + Math.round(job.progress * 100) + '%'
+      : job.segment ? '分片 ' + job.segment.current + '/' + job.segment.total : '';
+    const elapsed = job.status === 'processing' && job.processingStarted
+      ? Math.round((Date.now() - job.processingStarted) / 1000) : 0;
+    const timeDetail = elapsed > 0 ? '已處理 ' + elapsed + ' 秒' +
+      (job.progress > 0.02 && job.progress < 0.99
+        ? '，估計剩餘 ' + Math.round(elapsed * (1 - job.progress) / job.progress) + ' 秒' : '') : '';
+    const detail = [retryDetail, bytesDetail, progressDetail, timeDetail].filter(Boolean).join(' · ');
     const selectedOptions = [
       job.quality !== 'auto' && job.quality,
       job.codec !== 'auto' && job.codec?.toUpperCase(),
-      job.mode === 'h264' ? '轉 H.264' : job.mode === 'copy' ? '無損封裝' : ''
+      ({ h264: '轉 H.264', hevc: '轉 H.265', vvc: '轉 VVC', av1: '轉 AV1', copy: '無損封裝' })[job.mode] || '原始編碼'
     ].filter(Boolean);
     const displayTitle = episodeDisplayTitle(job);
     let action = '';
@@ -584,7 +591,8 @@ async function streamToDestination(job, source, signal) {
       } catch (error) {
         throw errorWith('STORAGE_QUOTA', '瀏覽器暫存空間不足：' + error.message);
       }
-      if (/\.mp4$/i.test(name) && job.mode !== 'h264')
+      if (/\.mp4$/i.test(name) && ['original', 'copy'].includes(job.mode) &&
+          codecId(source.codec) !== 'bytevc2')
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec), blob);
       update(job, { fileName: name, stored: true, onDisk: false,
         sourceCodec: source.codec, sourceWidth: source.width, sourceHeight: source.height });
@@ -597,8 +605,10 @@ async function streamToDestination(job, source, signal) {
 async function runJob(job, signal) {
   update(job, { status: 'resolving', attempts: job.attempts + 1, bytes: 0, totalBytes: 0, error: '', errorCode: '' });
   try {
-    const cached = job.mode === 'h264' ? null :
-      mediaCache.get(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec));
+    const cachedEntry = ['original', 'copy'].includes(job.mode)
+      ? mediaCache.getEntry(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec)) : null;
+    // A playback transcode must never satisfy an original-codec download.
+    const cached = cachedEntry?.source?.outputCodec ? null : cachedEntry?.blob;
     if (cached) {
       update(job, { status: 'downloading', bytes: cached.size, totalBytes: cached.size });
       await saveProcessed(cached, episodeFileName(job, '.mp4'), job);
@@ -620,31 +630,38 @@ async function runJob(job, signal) {
     const requiresFfmpeg = hls || !!source.contentKey || job.mode !== 'original';
     if (!requiresFfmpeg) {
       await streamToDestination(job, source, signal);
-    } else if (!hls && codecId(source.codec) === 'bytevc2' && job.mode === 'h264') {
+    } else if (!hls && (codecId(source.codec) === 'bytevc2' || ['hevc', 'vvc', 'av1'].includes(job.mode))) {
       if (!await bvc2BridgeAvailable())
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
         (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
       update(job, { status: 'processing', progress: null });
-      const out = await transcodeBvc2(raw, { contentKey: source.contentKey, signal });
+      const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode, signal,
+        progress: progress => update(job, { progress }) });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
       await saveProcessed(out, outputFileName(job, source, true), job,
-        { ...source, codec: 'h264' });
+        { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     } else if (hls) {
       update(job, { status: 'processing' });
-      const out = await convertHls(source.url, {
+      let out = await convertHls(source.url, {
         mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
         fetchBytes: (url, signal, max) => fetchBytes(url, profile, signal, max,
           n => update(job, { bytes: (job.bytes || 0) + n })),
         segmentProgress: segment => update(job, { segment }),
         progress: progress => update(job, { progress })
       });
+      if (['hevc', 'vvc', 'av1'].includes(job.mode)) {
+        update(job, { status: 'processing', progress: 0 });
+        out = await transcodeBvc2(out, { mode: job.mode, signal,
+          progress: progress => update(job, { progress }) });
+      }
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      if (job.mode !== 'h264') {
+      if (['original', 'copy'].includes(job.mode)) {
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
           new Blob([out], { type: 'video/mp4' }));
       }
-      await saveProcessed(out, outputFileName(job, source, true), job, source);
+      await saveProcessed(out, outputFileName(job, source, true), job,
+        { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     } else {
       const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
         (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }));
@@ -654,11 +671,12 @@ async function runJob(job, signal) {
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      if (job.mode !== 'h264') {
+      if (['original', 'copy'].includes(job.mode)) {
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
           new Blob([out], { type: 'video/mp4' }));
       }
-      await saveProcessed(out, outputFileName(job, source, true), job, source);
+      await saveProcessed(out, outputFileName(job, source, true), job,
+        { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     }
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
     update(job, { status: 'completed', error: '', errorCode: '', progress: 1 });

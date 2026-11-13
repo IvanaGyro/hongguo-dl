@@ -6,7 +6,7 @@
 
 - 逐集選取、批次佇列（同時 1–3 集）、下載百分比與位元組、HLS 分片數、取消、重試、錯誤代碼與原因。
 - 播放模式使用 **Video.js 10（`@videojs/html@10.3.0`）** 的播放／暫停、時間軸、靜音、手勢及全螢幕元件；保留專案自訂的上一集／下一集、畫質／編碼、續播、自動下一集與支援時的子母畫面。集數格以整塊背景表示觀看進度。
-- 播放來源的畫質和編碼**逐集依實際 metadata 連動**。測試影集第 30 集的 1080p 為加密 HEVC，720p/540p/480p/360p 為加密 ByteVC2。**ByteVC2 與標準 VVC/H.266 不相容**，不能由瀏覽器的 `vvc1` 支援判斷。若 Librempeg WASM 資產未部署，當使用者已選定存在但只有 ByteVC2 的 720p 等畫質時，會保留所選畫質、停用不存在的 HEVC 編碼選項，並明確提示無法播放，**不再靜默改選 1080p**；若資產已部署，則在獨立 Worker 嘗試 CENC MP4 → ByteVC2 解碼 → x264 編碼成 H.264 MP4，保留實際來源畫質標籤並顯示輸出轉碼資訊。**後者仍屬實驗功能，尚未完成真實 ByteVC2 影格驗證。**
+- 播放來源的畫質和編碼**逐集依實際 metadata 連動**。測試影集第 30 集的 1080p 為加密 HEVC，720p/540p/480p/360p 為加密 ByteVC2。**ByteVC2 與標準 VVC/H.266 不相容**，不能由瀏覽器的 `vvc1` 支援判斷。若 Librempeg WASM 資產未部署，當使用者已選定存在但只有 ByteVC2 的 720p 等畫質時，會保留所選畫質、停用不存在的 HEVC 編碼選項，並明確提示無法播放，**不再靜默改選 1080p**；若資產已部署，則在獨立 Worker 以有界 HTTP Range 讀取 CENC MP4 → ByteVC2 解碼 → x264 編碼 → H.264 fMP4/MSE 串流，保留實際來源畫質標籤並顯示輸出轉碼資訊。**後者仍屬實驗功能，尚未完成真實 ByteVC2 影格驗證。**
 - **CENC 一般加密 MP4 增量播放（實驗性）**：精簡 Librempeg WASM 透過 HTTP Range 的自訂 AVIO 逐段讀取並解密，保留原有 H.264/HEVC、AAC 壓縮封包，重新封裝為 clear fMP4，經 MSE 播放；不是重新編碼。已在 Chromium 與 Firefox 的合成 H.264/AAC 加密一般 MP4 上確認**第一個影格在來源未下載完時呈現、持續播放超過 1.5 秒**；並在 Node.js WASM 中驗證合成 HEVC/AAC 完整輸出可解碼。**合成素材**已在 Chromium／Firefox 驗證第 7／35／63 秒等未緩衝位置往返 Seek、重新整理續播與播放／下載模式切換；Chromium 合成 300 秒影片完整播畢，MSE 緩衝最大約 78 秒。1920×1080 HEVC/AAC 合成加密樣本已確認 WASM 無損轉封裝與 FFmpeg 解碼。**真實紅果 1080p HEVC 的瀏覽器影格／音訊、Android Firefox、作業系統與 GPU 記憶體仍待驗證**。已分段加密 fMP4 繼續走原生 EME/MSE；在容器／編碼允許時保留既有 FFmpeg.wasm 備援，但 CDN HTTP 403/429、錯誤 206 範圍及其他明確來源失效**不得降級整檔下載**。
 - **自動下一集預取**：僅在播放中、接近片尾時準備**下一集一集**（依觀察到的起播耗時調整，約提前 45–90 秒，短片依比例縮短）。若目前走原生加密串流，下一集只預取片源 metadata，**不會偷偷先下載完整下一集**；傳統 FFmpeg 路徑才會在 32 MiB 讀取上限內預轉換。節省數據模式會停用預取，跳集／關閉自動連播會取消。
 - 下載模式提供選集佇列、逐集手動儲存、從佇列勾選多集匯出單一 ZIP 或 MP4 無損合併；ZIP 可混合影集，MP4 合併僅接受相容的同一影集。
@@ -99,17 +99,33 @@ Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_
 
 - 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單、1080p HEVC／720p ByteVC2 來源，並以限量 HTTP Range 確認可取得第一集加密 HEVC MP4 索引（完整 `moov`、無 `mvex`）。**合成加密一般 MP4 的 Librempeg WASM 增量播放、跨未緩衝 Range Seek、reload 續播及 Chromium 300 秒播放已獨立驗證；未完成的是紅果真實 HEVC 首影格、Android Firefox 硬體解碼、以及設備 RAM/GPU 高水位。**
 - 單集 Blob staging 上限 300 MiB；FFmpeg.wasm 來源讀取／HLS 分片 staging 上限約 320 MiB；ZIP 的 Blob 備援限 240 MiB；MP4 無損合併總輸入限 160 MiB。下載儲存途徑只有未加密且無需轉碼的原始串流能直接串流寫入資料夾，**不能保證 60 集可無損合併成一個 MP4**。
-- [ByteVC2 WASM 實驗](docs/bvc2-wasm.md)：已成功建置約 **4.9 MiB** 的單執行緒 Librempeg `bvc2` 解碼與 x264 編碼核心，並完成 Node.js 實際載入、ABI 檢查及錯誤輸入拒絕測試。瀏覽器播放及下載 H.264 的程式已具備可取消的 Worker 路徑；**但尚未以權限允許的真實 ByteVC2 MP4 驗證成功解密、輸出影格、音訊同步、速度與記憶體**。ByteVC2 現階段需要先下載完整 MP4 再轉碼，不屬於低延遲分段串流；Android Firefox 實機效能未知。沒有 WASM 時仍會明確提示或回退。來源沒有可靠音軌／字幕 metadata 時不顯示虛構選項。
+- [ByteVC2 WASM 實驗](docs/bvc2-wasm.md)：已成功建置約 **20 MiB** 的單執行緒 Librempeg `bvc2` 解碼與 x264 編碼核心，並完成 Node.js 實際載入、ABI 檢查及錯誤輸入拒絕測試。瀏覽器播放及下載 H.264 的程式已具備可取消的 Worker 路徑；**但尚未以權限允許的真實 ByteVC2 MP4 驗證成功解密、輸出影格、音訊同步、速度與記憶體**。ByteVC2 播放改用 Asyncify AVIO Range 讀取與 H.264 fMP4/MSE，支援背壓、取消與索引跳轉；下載轉碼仍在 MEMFS 內保存完整輸入／輸出，輸入上限 260 MiB。Android Firefox 實機效能未知。沒有 WASM 時仍會明確提示或回退。來源沒有可靠音軌／字幕 metadata 時不顯示虛構選項。
 - 不支援 DRM 授權、直播 HLS、斷點續傳或使用者登入。重新載入頁面會中斷下載；不會保存已簽章媒體 URL 或影片密鑰。
 - HLS 清單資源辨識、標籤 URI 改寫與分片上限檢查在 `src/hls-playlist.js`，不執行網路 I/O；`src/ffmpeg.js` 再依解析結果下載、去重與暫存分片，進度按照清單中的**邏輯分片數**計算。
 - 不接受任意網域的反向代理請求。Worker 驗證 HTTPS 網址與每次重新導向，使用者 Cookie 與授權標頭不會被透傳。
 
 ## ByteVC2 核心與效能驗證
 
-`public/bvc2/bvc2-core.mjs`、`bvc2-core.wasm`、`manifest.json` 由 `.github/workflows/bvc2-wasm-probe.yml` 從固定的 Librempeg 和 x264 原始碼重現建置（不透過第三方轉碼服務）。建置 workflow 的 ABI smoke test 通過後才發佈核心。網頁初次載入不會下載大型 ByteVC2 核心；只有選到 ByteVC2 片源才會嘗試載入。WASM 使用單執行緒與獨立 Worker，可取消，但仍會在使用者裝置上消耗 CPU。
+`public/bvc2/bvc2-core.mjs`、`bvc2-core.wasm`、`manifest.json` 由 `.github/workflows/bvc2-wasm-probe.yml` 從固定的 Librempeg、x264、x265、libaom 和 VVenC 原始碼重現建置（不透過第三方轉碼服務）。建置 workflow 的 ABI smoke test 通過後才發佈核心。網頁初次載入不會下載大型 ByteVC2 核心；選到 ByteVC2 片源或 H.265／AV1／標準 VVC 下載轉碼時才載入。WASM 使用單執行緒與獨立 Worker，可取消，但仍會在使用者裝置上消耗 CPU。
 
-> **尚未驗收**：真實 ByteVC2 解碼畫面／音畫同步、真實紅果 1080p HEVC 瀏覽器播放、Android Firefox HEVC 解碼，以及 30–60 分鐘 RAM／GPU 記憶體高水位。**已通過**的是合成 Chromium／Firefox 跨未緩衝區 Seek、reload 續播、播放／下載模式切換及 Chromium 300 秒 MSE 緩衝回收。ByteVC2 的 WASM 全檔轉碼與本次 CENC 增量重封裝是不同功能，不可混為一談。
+> **尚未驗收**：真實 ByteVC2 解碼畫面／音畫同步、真實紅果 1080p HEVC 瀏覽器播放、Android Firefox HEVC 解碼，以及 30–60 分鐘 RAM／GPU 記憶體高水位。**已通過**的是合成 Chromium／Firefox 跨未緩衝區 Seek、reload 續播、播放／下載模式切換及 Chromium 300 秒 MSE 緩衝回收。ByteVC2 的增量解碼／重編碼與 H.264/HEVC 的增量無損重封裝使用獨立 Worker 與核心。
 
 ## 授權與第三方來源
 
 本專案及衍生檔案採 GPL-3.0-only。 `worker/vendor/` 修改自 [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama) 的播放取源模組；FFmpeg.wasm 於建置時取得，並遵循相關授權。詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和 [LICENSE](LICENSE)。
+
+## 下載輸出與處理進度
+
+「來源編碼」篩選上游實際提供的片源；「輸出」可選原編碼、H.264、H.265、標準 VVC/H.266、AV1。
+原編碼在來源加密時只解密／重新封裝，不重編碼；ByteVC2 以自己的 `bvc2` / `bv2C` 保留，並非標準 VVC。
+上游常見的 720p 以下 ByteVC2、1080p HEVC 分布仍以逐集 metadata 為準。
+
+H.265 使用單執行緒 x265、AV1 使用 libaom、標準 VVC 使用 VVenC。轉碼在本機 Worker 執行，
+保留第一條 AAC 音軌；慢速裝置或長影片可能需要較久，佇列顯示下載與轉碼各自的進度、已耗秒數與估計剩餘時間。
+切換至轉碼階段後，進度條依實際處理影片時間更新，不會因輸入已下載完成而提前顯示 100%。
+下載轉碼仍有 260 MiB 輸入與 1 GiB WASM 線性記憶體上限；大量集數依序處理、分別匯出或使用 ZIP。
+
+離線驗證：`node scripts/verify-video-outputs.mjs` 產生合成加密 H.264/AAC，檢查四種實際編碼、完整影格、
+AAC 時間軸、原編碼 packet hash，以及 Asyncify Range → fMP4。另以標準 VVC 畫格合成 `bvc2`/`bv2C`
+封裝來驗證 BVC2 解碼器與原編碼 round-trip；**這不代表已驗收真實 BTY2 片源或 Android 效能**。
+CI 另外以 `tests/bvc2-stream.browser.mjs` 驗證合成 BVC2 封裝的 MSE 畫格、模式切換清理與五種下載輸出。

@@ -5,9 +5,9 @@ import { errorWith } from './logic.js';
 import { runBvc2WorkerJob } from './bvc2-job.js';
 import { retryableAvailability } from './retryable-availability.js';
 
-const CORE = new URL(import.meta.env.BASE_URL + 'bvc2/bvc2-core.wasm', location.href);
-const MANIFEST = new URL(import.meta.env.BASE_URL + 'bvc2/manifest.json', location.href);
 const checkBvc2Assets = retryableAvailability(async () => {
+  const CORE = new URL((import.meta.env?.BASE_URL || '/') + 'bvc2/bvc2-core.wasm', location.href);
+  const MANIFEST = new URL((import.meta.env?.BASE_URL || '/') + 'bvc2/manifest.json', location.href);
   const [wasm, manifest] = await Promise.all([
     fetch(CORE, { method: 'HEAD' }),
     fetch(MANIFEST, { method: 'HEAD', cache: 'no-store' })
@@ -29,7 +29,7 @@ export async function bvc2BridgeAvailable() {
   return checkBvc2Assets();
 }
 
-export function transcodeBvc2(bytes, { contentKey = null, signal } = {}) {
+export function transcodeBvc2(bytes, { contentKey = null, mode = 'h264', progress, signal } = {}) {
   if (!(bytes instanceof Uint8Array) || !bytes.length)
     return Promise.reject(errorWith('EMPTY_MEDIA', '沒有 ByteVC2 媒體資料'));
   if (contentKey && !/^[0-9a-f]{32}$/i.test(contentKey))
@@ -39,7 +39,7 @@ export function transcodeBvc2(bytes, { contentKey = null, signal } = {}) {
   if (signal?.aborted)
     return Promise.reject(errorWith('CANCELED', '已取消 ByteVC2 轉碼'));
   return runBvc2WorkerJob(bytes, {
-    contentKey, signal,
+    contentKey, mode, progress, signal,
     createWorker: () => new Worker(new URL('./bvc2-worker.js', import.meta.url),
       { type: 'module' })
   });

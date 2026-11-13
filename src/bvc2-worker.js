@@ -29,13 +29,17 @@ self.onmessage = async ({ data }) => {
     ]);
     await verifyBvc2RuntimeBundle(manifest, moduleBytes, wasmBinary);
     const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
-    core = await createModule({ wasmBinary });
+    core = await createModule({ wasmBinary,
+      onProgress: progress => self.postMessage({ type: 'progress', progress }) });
     if (core._bvc2_decoder_available() !== 1)
       throw new Error('WASM 未包含 BVC2 解碼器與 x264 編碼器');
     const input = '/input.mp4', output = '/output.mp4';
     core.FS.writeFile(input, new Uint8Array(data.bytes));
-    const run = core.cwrap('bvc2_transcode', 'number', ['string', 'string', 'string']);
-    const code = run(input, output, data.key || '');
+    const modes = { original: 0, copy: 0, h264: 4, av1: 2, vvc: 3, hevc: 5 };
+    if (!Object.hasOwn(modes, data.mode)) throw new Error('不支援的輸出編碼');
+    const code = await core.ccall('bvc2_convert', 'number',
+      ['string', 'string', 'string', 'number'],
+      [input, output, data.key || '', modes[data.mode]], { async: true });
     if (code !== 0) {
       const message = core.UTF8ToString(core._bvc2_last_error());
       throw new Error(message || '轉碼結束碼 ' + code);

@@ -8,6 +8,11 @@ import { resolve } from 'node:path';
 export const BVC2_FILES = ['bvc2-core.mjs', 'bvc2-core.wasm'];
 export const BVC2_INPUTS = [
   'scripts/bvc2-transcoder.c',
+  'scripts/bvc2-avio.h',
+  'scripts/patch-bvc2-mov.py',
+  'scripts/build-video-encoders.sh',
+  'scripts/patch-x265-single-thread.py',
+  'scripts/vendor/libvvenc.c',
   'scripts/build-bvc2-wasm-transcode.sh'
 ];
 export const BVC2_DIR = resolve('public/bvc2');
@@ -18,6 +23,8 @@ const valid = value => /^[0-9a-f]{64}$/.test(value || '');
 export function makeBvc2Manifest(directory = BVC2_DIR) {
   return {
     schema: 1,
+    api: 2,
+    encoders: 'x264+x265-3.4+aom-3.12.1+vvenc-1.13.1',
     kind: 'experimental-bvc2-x264',
     emsdk: '3.1.74',
     librempegCommit: 'cb1f8f3eef84999e61b27e2d44664858179bc240',
@@ -33,7 +40,7 @@ export function verifyBvc2Manifest(directory = BVC2_DIR,
   path = BVC2_MANIFEST) {
   const stored = JSON.parse(readFileSync(path, 'utf8'));
   const actual = makeBvc2Manifest(directory);
-  for (const name of ['schema', 'kind', 'emsdk', 'librempegCommit', 'x264Commit'])
+  for (const name of ['schema', 'api', 'encoders', 'kind', 'emsdk', 'librempegCommit', 'x264Commit'])
     if (stored[name] !== actual[name])
       throw new Error('BVC2 manifest provenance mismatch: ' + name);
   for (const group of ['files', 'inputs']) {

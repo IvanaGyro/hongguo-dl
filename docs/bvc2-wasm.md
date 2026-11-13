@@ -87,3 +87,18 @@ node scripts/verify-bvc2-fixture.mjs /path/to/authorized-bvc2.mp4
 腳本會呼叫同一版公開的 BVC2→H.264 WASM，確認解碼後影片真實有可解碼畫格、FFmpeg 完整解碼、列出 codec、解析度、audio track、轉碼秒數和 Node RSS；**若輸出含 AAC，另檢查 ffprobe 的影音 start_time/duration（起點與終點時間差均須 ≤1.5 秒），缺少時間資訊或嚴重偏差會拒絕 PASS**。這只是容器時間軸的基本檢查，不能證明每個畫格的音畫同步、正確色彩或真實 ByteVC2 一定能解。清除暫存明文；不會網路下載來源，也不會記錄 signed URL/金鑰。
 
 **剩餘硬性 PASS 條件**：取得授權真實 ByteVC2 bitstream 後，在 Node native/WASM 和 Android Firefox/Windows 實際播放端驗證首影格、A/V 同步、速度和 RAM 高水位，再決定是否將 whole-file MEMFS 路徑替換為 AVIO streaming / H.264 fMP4 輸出。**目前禁止宣稱實驗性 BVC2 已達正式播放要求。**
+
+## API 2：增量播放與五種下載輸出
+
+新增 `bvc2_stream(size,key,start)`，透過 Asyncify AVIO 讀取有界 Range，輸出 H.264/AAC fMP4。
+Worker 使用 256 KiB 讀取快取、完整 fragment assembler 與 ACK 背壓；主執行緒沿用 MSE 緩衝回收、取消與索引跳轉。
+下載使用 `bvc2_convert(in,out,key,mode)`，可保留原編碼或轉 H.264、H.265、AV1、標準 VVC。
+
+此版補齊原 pin 缺少的 `bv2C` MOV 讀取／寫入與 `bvc2` MP4 mux tag；不會將 ByteVC2 冒充 `vvc1`。
+編碼 packet duration 缺失時補上每幀 duration，避免 MP4 edit list 省略最後一幀；進度依來源 track duration 回報。
+x265 改為明確單執行緒同步路徑（無 pool/WPP/lookahead），避免在非 pthread WASM 等待不存在的編碼執行緒。
+libaom/VVenC 使用純量版本，WASM C stack 配置 5 MiB，線性記憶體仍限 1 GiB。
+
+`verify-video-outputs.mjs` 使用合成影片驗證實際編碼、AAC、完整影格、進度與串流；
+`synthetic-bvc2.mjs` 的 BVC2 封裝測試只使用標準 VVC picture data，不能代表專有 BTY2 實際 bitstream 已驗收。
+真實紅果 BVC2 片源、目標裝置速度與記憶體高水位仍須另行驗證。上述舊版 whole-file 播放限制只適用 API 1。
