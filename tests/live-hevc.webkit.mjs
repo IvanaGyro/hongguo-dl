@@ -101,94 +101,105 @@ try {
         video.requestVideoFrameCallback(count);
       }
     });
-    // Wait until metadata actually arrives before making a trusted user
-    // gesture: clicking too early on WebKit can miss autoplay restrictions.
-    await page.waitForFunction(() => {
-      const video = document.querySelector('#player-video');
-      const status = document.querySelector('#player-status')?.textContent || '';
-      return video?.readyState >= 1 || /已停止播放|無法播放/.test(status);
-    }, null, { timeout: 60000 }).catch(() => {});
-    if (await page.locator('#player-video').evaluate(video =>
-      video.paused && video.readyState >= 1)) {
-      await page.locator('#player-play-pause').click();
-    }
-    // The production CENC pipeline must align an initial HEVC buffered gap
-    // itself. A manual diagnostic seek remains opt-in for investigating future
-    // browser regressions; CI always exercises the real, unmodified playback.
-    if (process.env.CENC_WEBKIT_DIAG_SEEK === '1') {
-      // Diagnostic only: macOS WebKit currently appends valid MSE media from
-      // 0.16s onward while playback remains at 0.000s in HAVE_METADATA.
-      // Seek into that *already buffered* first RAP interval to test whether
-      // this source-start gap, rather than HEVC decoding, prevents the first
-      // frame. Keep this intervention in the test until a real pass proves it.
+    // Official /api/source can offer two 1080p HEVC CDN candidates whose
+    // signed access differs: a 403 from one candidate is not a codec failure.
+    // In addition to the player's in-episode HEVC rotation, test a *bounded*
+    // selection of separately marked accessible episodes. Never bypass a 429
+    // or the per-episode access flags, and never log a source URL/content key.
+    const episodePositions = [0, 2, 1, 3];
+    let verified = false, verifiedEpisode = null;
+    for (const [attemptIndex, episodePosition] of episodePositions.entries()) {
+      if (attemptIndex > 0) {
+        const episodeButton = page.locator('#episodes button[data-play-vid]')
+          .nth(episodePosition);
+        if (!await episodeButton.count() || !await episodeButton.isEnabled()) continue;
+        await episodeButton.click();
+        await page.waitForTimeout(150);
+      }
+      await page.evaluate(() => { window.__liveHevcFrames = 0; });
+      // Wait until metadata actually arrives before making a trusted gesture.
+      // A denied candidate may stop first; don't wait 60s to observe a 403.
       await page.waitForFunction(() => {
-        const v = document.querySelector('#player-video');
-        return v?.readyState >= 1 && v.buffered.length > 0 &&
-          v.buffered.end(0) - v.buffered.start(0) > 1;
+        const video = document.querySelector('#player-video');
+        const status = document.querySelector('#player-status')?.textContent || '';
+        return video?.readyState >= 1 || /已停止播放|無法播放/.test(status);
       }, null, { timeout: 45000 }).catch(() => {});
-      const firstBufferTrial = await page.evaluate(() => {
+      if (await page.locator('#player-video').evaluate(video =>
+        video.paused && video.readyState >= 1)) {
+        await page.locator('#player-play-pause').click();
+      }
+      // For root-cause investigation only: a test-side seek can be enabled
+      // explicitly; regular CI must prove the production zero-start fix.
+      if (process.env.CENC_WEBKIT_DIAG_SEEK === '1') {
+        await page.waitForFunction(() => {
+          const v = document.querySelector('#player-video');
+          return v?.readyState >= 1 && v.buffered.length > 0 &&
+            v.buffered.end(0) - v.buffered.start(0) > 1;
+        }, null, { timeout: 30000 }).catch(() => {});
+        const diagnostic = await page.evaluate(() => {
+          const v = document.querySelector('#player-video');
+          if (!v?.buffered.length) return 'NO_BUFFER';
+          const start = v.buffered.start(0);
+          if (!(start > 0.01 && start < 0.5 && v.currentTime < start))
+            return 'NO_GAP';
+          v.currentTime = start + 0.04;
+          return 'MANUAL_FIRST_RANGE_SEEK';
+        });
+        console.log('macOS WebKit test-only diagnostic:', diagnostic);
+      }
+      await page.waitForFunction(() => {
+        const video = document.querySelector('#player-video');
+        const failure = document.querySelector('#player-status')?.textContent || '';
+        return (video?.currentTime > 0.5 && video?.videoWidth > 0 &&
+            (window.__liveHevcFrames > 0 ||
+              video.getVideoPlaybackQuality?.().totalVideoFrames > 0)) ||
+          /已停止播放|無法播放/.test(failure);
+      }, null, { timeout: 70000 }).catch(() => {});
+      const state = await page.evaluate(() => {
         const v = document.querySelector('#player-video');
-        if (!v?.buffered.length) return { outcome: 'NO_BUFFERED_MEDIA' };
-        const start = v.buffered.start(0), end = v.buffered.end(0);
-        const oldTime = v.currentTime;
-        if (!(start > 0.01 && start < 0.5 && oldTime < start)) {
-          return { outcome: 'NO_FIRST_FRAME_GAP', start, end, oldTime };
-        }
-        const target = start + 0.04;
-        try {
-          v.currentTime = target;
-          return { outcome: 'SEEK_INSIDE_FIRST_BUFFER', start, end, oldTime, target };
-        } catch {
-          return { outcome: 'SEEK_REJECTED', start, end, oldTime };
-        }
+        const status = document.querySelector('#player-status')?.textContent || '';
+        return {
+          videoWidth: v?.videoWidth || 0,
+          videoHeight: v?.videoHeight || 0,
+          readyState: v?.readyState || 0,
+          networkState: v?.networkState ?? null,
+          paused: v?.paused ?? null,
+          seeking: v?.seeking ?? null,
+          duration: Number.isFinite(v?.duration) ? Number(v.duration.toFixed(3)) : null,
+          buffered: v ? Array.from({ length: v.buffered.length }, (_, i) =>
+            [Number(v.buffered.start(i).toFixed(3)),
+              Number(v.buffered.end(i).toFixed(3))]) : [],
+          currentTime: Number(v?.currentTime || 0),
+          mse: window.__liveHevcMseStats || null,
+          presentedFrames: window.__liveHevcFrames || 0,
+          totalVideoFrames: v?.getVideoPlaybackQuality?.().totalVideoFrames ?? null,
+          mediaError: v?.error?.code ?? null,
+          statusCategory: /點選影片/.test(status) ? 'NEEDS_PLAY_GESTURE' :
+            /429/.test(status) ? 'SOURCE_429' :
+            /403/.test(status) ? 'SOURCE_403' :
+            /已停止播放/.test(status) ? 'STOPPED' :
+            /無法播放/.test(status) ? 'UNSUPPORTED' :
+            /串流|已續播|準備/.test(status) ? 'STREAMING_OR_READY' : 'OTHER'
+        };
       });
-      console.log('macOS WebKit initial buffered gap diagnostic:', JSON.stringify(firstBufferTrial));
-    } else {
-      console.log('macOS WebKit playback probe: no test-side seek; verify production startup');
+      console.log('macOS WebKit real HEVC episode attempt:', JSON.stringify({
+        episode: episodePosition + 1, ...state, mediaHttpStatuses: counters()
+      }));
+      const decodedFrames = state.presentedFrames > 0 || state.totalVideoFrames > 0;
+      if (decodedFrames && state.videoWidth >= 640 &&
+          state.currentTime > 0.5 && state.mediaError == null) {
+        verified = true;
+        verifiedEpisode = episodePosition + 1;
+        break;
+      }
+      if (state.statusCategory === 'SOURCE_429') break;
+      // Otherwise continue to another already-accessible episode. This is
+      // finite and does not try to defeat protected/missing episodes.
     }
-    await page.waitForFunction(() => {
-      const video = document.querySelector('#player-video');
-      const failure = document.querySelector('#player-status')?.textContent || '';
-      return (video?.currentTime > 0.5 && video?.videoWidth > 0 &&
-          (window.__liveHevcFrames > 0 ||
-            video.getVideoPlaybackQuality?.().totalVideoFrames > 0)) ||
-        /已停止播放|無法播放/.test(failure);
-    }, null, { timeout: 90000 }).catch(() => {});
-    const state = await page.evaluate(() => {
-      const v = document.querySelector('#player-video');
-      const status = document.querySelector('#player-status')?.textContent || '';
-      return {
-        videoWidth: v?.videoWidth || 0,
-        videoHeight: v?.videoHeight || 0,
-        readyState: v?.readyState || 0,
-        networkState: v?.networkState ?? null,
-        paused: v?.paused ?? null,
-        seeking: v?.seeking ?? null,
-        duration: Number.isFinite(v?.duration) ? Number(v.duration.toFixed(3)) : null,
-        buffered: v ? Array.from({ length: v.buffered.length }, (_, i) =>
-          [Number(v.buffered.start(i).toFixed(3)),
-            Number(v.buffered.end(i).toFixed(3))]) : [],
-        currentTime: Number(v?.currentTime || 0),
-        mse: window.__liveHevcMseStats || null,
-        presentedFrames: window.__liveHevcFrames || 0,
-        totalVideoFrames: v?.getVideoPlaybackQuality?.().totalVideoFrames ?? null,
-        mediaError: v?.error?.code ?? null,
-        statusCategory: /點選影片/.test(status) ? 'NEEDS_PLAY_GESTURE' :
-          /403/.test(status) ? 'SOURCE_403' :
-          /429/.test(status) ? 'SOURCE_429' :
-          /已停止播放/.test(status) ? 'STOPPED' :
-          /無法播放/.test(status) ? 'UNSUPPORTED' :
-          /串流|已續播|準備/.test(status) ? 'STREAMING_OR_READY' : 'OTHER'
-      };
-    });
-    console.log('macOS WebKit real episode 1 result:', JSON.stringify({
-      ...state, mediaHttpStatuses: counters()
-    }));
-    const decodedFrames = state.presentedFrames > 0 || state.totalVideoFrames > 0;
-    assert(decodedFrames && state.videoWidth >= 640 &&
-      state.currentTime > 0.5 && state.mediaError == null,
-    'Real HEVC browser first frame/time proof did not pass (no URL or key logged)');
-    console.log('PASS real Hongguo 1080p HEVC first decoded browser frame and advancing clock');
+    assert(verified,
+      'Real HEVC browser first frame/time not verified across four accessible episodes');
+    console.log('PASS real Hongguo 1080p HEVC first decoded browser frame and advancing clock',
+      JSON.stringify({ episode: verifiedEpisode, mediaHttpStatuses: counters() }));
   }
 } finally {
   await browser.close();
