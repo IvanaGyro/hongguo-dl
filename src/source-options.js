@@ -129,6 +129,17 @@ export function playbackRendition(variants, preferences = {}, canPlayType, attem
 // both filters are 'auto'. Explicit 1080p playback does not need that public
 // unknown-quality probe; the existing 1080p API filter takes the App route.
 // A targeted response is partial and must not disable other quality options.
+// A late second channel can insert higher-quality variants before the first
+// source in sorting order. Retry an untried URL, not an index in a new list.
+export function untriedPlaybackRendition(variants, preferences, canPlayType,
+  triedUrls, canTranscodeBvc2 = false, isMseTypeSupported = null) {
+  const candidates = (variants || []).filter(variant =>
+    variant?.url && !triedUrls?.has(variant.url));
+  if (!candidates.length) return null;
+  return playbackRendition(candidates, preferences, canPlayType, 0,
+    canTranscodeBvc2, isMseTypeSupported);
+}
+
 export function sourceQueryForPlayback(quality = 'auto') {
   return quality === '1080p'
     ? { quality: '1080p', codec: 'auto', partial: true }

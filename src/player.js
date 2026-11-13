@@ -8,7 +8,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback } from './source-options.js';
+import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
@@ -47,6 +47,7 @@ export function createPlayer({
   let streamFailure = null;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let lastVariantsPartial = false;
+  let pendingSourceExpansion = null, triedSourceUrls = new Set();
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
   let retryIncrementalCenc = false, retryError = null;
@@ -318,6 +319,12 @@ export function createPlayer({
       return { blob: entry.blob, source: entry.source || { codec, quality, source: 'cache' } };
     }
     report(attempt ? '正在選取其他 CDN／更新影片來源…' : '正在取得影片來源…');
+    if (!quiet && attempt > 0 && !cencRetryTier &&
+        pendingSourceExpansion?.vid === episode.vid) {
+      report('正在等待另一種來源查詢結果…');
+      await pendingSourceExpansion.promise;
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+    }
     // This API may return 10 variants but only two HEVC URLs at 1080p.
     // Rotate just those candidates; refresh signed URLs once when exhausted.
     const sameEpisode = !quiet && lastVariants && lastVariantsVid === episode.vid;
@@ -378,7 +385,7 @@ export function createPlayer({
       // has already started. Merge it for future quality changes and retries,
       // but never restart or replace a healthy active MediaSource.
       if (list.lateVariants) {
-        void list.lateVariants.then(extras => {
+        const expansion = list.lateVariants.then(extras => {
           if (signal.aborted || lastVariants !== variants ||
               lastVariantsVid !== episode.vid || !extras?.length) return;
           const seen = new Set(variants.map(item => item.url));
@@ -395,6 +402,9 @@ export function createPlayer({
             updateCodecOptions(variants);
           }
         }).catch(() => {});
+        pendingSourceExpansion = { vid: episode.vid, promise: expansion };
+      } else {
+        pendingSourceExpansion = null;
       }
       // Persisted codec preferences can belong to another episode's tier.
       // Use the now-enabled selection, rather than rejecting a stale codec.
@@ -411,8 +421,13 @@ export function createPlayer({
       : variants;
     const candidateIndex = !quiet && cencRetryTier
       ? Math.max(0, attempt - sourceCycleStart) : attempt;
-    const resolved = playbackRendition(selectableVariants,
+    let resolved = playbackRendition(selectableVariants,
       { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport);
+    if (!quiet && !cencRetryTier && triedSourceUrls.size) {
+      const next = untriedPlaybackRendition(selectableVariants,
+        { quality, codec }, mimeSupport, triedSourceUrls, canTranscodeBvc2, mseSupport);
+      if (next?.source) resolved = next;
+    }
     const source = resolved.source;
     log('source.selected', {
       quality: source ? qualityId(source) || 'unknown' : 'none',
@@ -433,6 +448,7 @@ export function createPlayer({
         ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
         '。ByteVC2 須部署 Librempeg WASM 轉碼器；HEVC 需瀏覽器支援。');
     }
+    if (!quiet) triedSourceUrls.add(source.url);
     let fallbackNotice = '';
     if (resolved.fallback) {
       const original = quality;
@@ -822,6 +838,8 @@ export function createPlayer({
     current = episode;
     failure = null;
     sourceAttempt = 0;
+    pendingSourceExpansion = null;
+    triedSourceUrls = new Set();
     sourceCycleStart = 0;
     sourceRefreshCount = 0;
     cencRetryTier = null;

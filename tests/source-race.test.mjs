@@ -52,3 +52,16 @@ test('empty source result is treated as failure, not the winning response', asyn
   ]);
   assert.equal(result.winner.route, 'app');
 });
+
+
+test('late App candidates can be selected without retrying the earlier web URL', async () => {
+  const { untriedPlaybackRendition } = await import('../src/source-options.js');
+  const variants = [
+    { url: 'https://cdn.example/public', codec: 'unknown', quality: 'public' },
+    { url: 'https://cdn.example/hevc', codec: 'hevc', quality: '1080p',
+      contentKey: 'fixture', width: 1920, height: 1080 }
+  ];
+  const selected = untriedPlaybackRendition(variants, { quality: 'auto', codec: 'auto' },
+    () => 'probably', new Set(['https://cdn.example/public']), false);
+  assert.equal(selected.source.url, 'https://cdn.example/hevc');
+});
