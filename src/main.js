@@ -315,6 +315,13 @@ async function apiJson(route, signal) {
 async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal) {
   const started = performance.now();
   playbackDiagnostics.log('source.api.request', { quality, codec });
+  // Expose slow Worker/API resolution while the promise is still pending.
+  const heartbeat = setInterval(() => {
+    if (signal?.aborted) return;
+    playbackDiagnostics.log('source.api.waiting', {
+      elapsedMs: performance.now() - started
+    });
+  }, 2000);
   try {
     const data = await apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
       '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
@@ -328,6 +335,8 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
       elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN'
     });
     throw error;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 async function lookupIds(ids) {

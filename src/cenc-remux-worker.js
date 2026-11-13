@@ -43,8 +43,17 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
     // the requested 256 KiB window even if it lies about Content-Length.
     const fetchStarted = performance.now();
-    const bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
-      fileSize, controller.signal);
+    let bytes;
+    try {
+      bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
+        fileSize, controller.signal);
+    } catch (error) {
+      self.postMessage({ type: 'stage', stage: 'media-range-failed',
+        request: rangeRequests + 1,
+        code: /^[A-Z_]{2,45}$/.test(error?.code || '') ? error.code : 'RANGE_ERROR',
+        fetchMs: Math.round(performance.now() - fetchStarted) });
+      throw error;
+    }
     rangeRequests++;
     receivedBytes += bytes.byteLength;
     if (rangeRequests <= 4 || rangeRequests % 12 === 0)
