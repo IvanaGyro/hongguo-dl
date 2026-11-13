@@ -43,7 +43,7 @@
 
 | Download queue 的 `/api/source` 進行中 API 請求收到 AbortSignal；pagehide 與真正瀏覽器導航返回後不自動重試 | Firefox Playwright 人工延遲 `/api/source` + `PageTransitionEvent` + `page.goto('about:blank') / goBack()` | **PASS（真實導覽／模擬延遲 fetch；BFCache 未命中）** | [main 2c334e0](https://github.com/IvanaGyro/hongguo-dl/commit/2c334e079079e6c8ddd57d8d9c6ac307c60cc63a)；[Firefox #43335942046](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942046) 已 completed/success，job 日誌 `pageshow.persisted=false`，**goBack 是 reload、BFCache 未命中**；不可將合成延遲 API 視為真實 CDN 正例 |
 
-| 批次 ZIP 匯出 Service Worker 註冊／ready／controllerchange／ACK 階段的 pagehide abort；取消後不得 fallback 或自動下載 | Node mock SW.ready/ACK 永久 pending，AbortController + ZIP streaming SW cancel message | **PASS（單元）；真實 Firefox SW in-flight abort 尚未驗** | [main 4d34056](https://github.com/IvanaGyro/hongguo-dl/commit/4d340566b0536dff867ce389f96d0c49d4032831)、[CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) success；[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) 執行中。無 Android Firefox 真實 60 集中途取消正例 |
+| 批次 ZIP 匯出 Service Worker 註冊／ready／controllerchange／ACK 階段的 pagehide abort；取消後不得 fallback 或自動下載 | Node mock SW.ready/ACK 永久 pending，AbortController + ZIP streaming SW cancel message | **PASS（單元 + 既有 Firefox ZIP 匯出）；真實 SW in-flight abort 尚未驗** | [main 4d34056](https://github.com/IvanaGyro/hongguo-dl/commit/4d340566b0536dff867ce389f96d0c49d4032831)、[CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) success；[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) completed/success；Firefox job 證明 60 集 ZIP 舊流程仍成功，**但未實際打斷 SW ACK**。無 Android Firefox 真實 60 集中途取消正例 |
 
 ## 固定驗證指令
 
