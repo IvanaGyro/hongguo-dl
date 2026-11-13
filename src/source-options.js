@@ -123,3 +123,14 @@ export function playbackRendition(variants, preferences = {}, canPlayType, attem
     ? { source: alternatives[Math.max(0, attempt) % alternatives.length], fallback: true }
     : { source: null, fallback: false };
 }
+
+
+// The Worker tries a 4.5-second website HTML probe before App playback when
+// both filters are 'auto'. Explicit 1080p playback does not need that public
+// unknown-quality probe; the existing 1080p API filter takes the App route.
+// A targeted response is partial and must not disable other quality options.
+export function sourceQueryForPlayback(quality = 'auto') {
+  return quality === '1080p'
+    ? { quality: '1080p', codec: 'auto', partial: true }
+    : { quality: 'auto', codec: 'auto', partial: false };
+}

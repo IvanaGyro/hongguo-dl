@@ -8,7 +8,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
+import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
@@ -46,6 +46,7 @@ export function createPlayer({
   let sourceCycleStart = 0, sourceRefreshCount = 0, cencRetryTier = null;
   let streamFailure = null;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
+  let lastVariantsPartial = false;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
   let retryIncrementalCenc = false, retryError = null;
@@ -91,7 +92,7 @@ export function createPlayer({
     } catch { /* storage might be disabled */ }
   }
   function setStatus(value) { status.textContent = value; }
-  function updateCodecOptions(variants) {
+  function updateCodecOptions(variants, partial = lastVariantsPartial) {
     const available = availableRenditions(variants);
     const atQuality = codecsAtQuality(variants, qualitySelect.value);
     for (const option of codecSelect.options) {
@@ -107,7 +108,7 @@ export function createPlayer({
     for (const option of qualitySelect.options) {
       if (option.value !== 'auto') {
         const candidates = (variants || []).filter(v => qualityId(v) === option.value);
-        option.disabled = available.qualities.length > 0 && !candidates.length;
+        option.disabled = !partial && available.qualities.length > 0 && !candidates.length;
         option.textContent = option.value + (candidates.length &&
           candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey) && !canTranscodeBvc2
             ? '（ByteVC2，尚無可用 WASM）' : '');
@@ -343,11 +344,12 @@ export function createPlayer({
       });
       report('正在重新取得同畫質影片來源…');
     }
+    const sourceQuery = sourceQueryForPlayback(quality);
     const list = options.variants?.length ? { variants: options.variants }
       : episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList ? { variants: lastVariants }
-        : await sourceFor(seriesId, episode.vid, 'auto', 'auto', signal);
+        : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal);
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
     log('source.list.ready', {
@@ -370,6 +372,7 @@ export function createPlayer({
       lastVariants = variants;
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
+      lastVariantsPartial = sourceQuery.partial;
       updateCodecOptions(variants);
       // Persisted codec preferences can belong to another episode's tier.
       // Use the now-enabled selection, rather than rejecting a stale codec.
@@ -611,6 +614,7 @@ export function createPlayer({
       lastVariants = prepared.variants;
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
+      lastVariantsPartial = sourceQueryForPlayback(qualitySelect.value).partial;
       updateCodecOptions(prepared.variants);
       if (prepared.fallbackNotice) {
         const actual = qualityId(prepared.source);
@@ -809,6 +813,7 @@ export function createPlayer({
     if (lastVariantsVid !== episode.vid) {
       lastVariants = null;
       lastVariantsVid = null;
+      lastVariantsPartial = false;
     }
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
