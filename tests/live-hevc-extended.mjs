@@ -3,7 +3,7 @@
 // raw PCM, video data, cookies, content keys or downloaded files are logged.
 import assert from 'node:assert/strict';
 
-export async function verifyRealHevcAudioAndSeek(page) {
+export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   // This is Web Audio PCM from the actual decoded MSE media element, NOT
   // ffprobe metadata or FFmpeg-only bitstream acceptance. Use a trusted
   // Playwright click to unlock AudioContext on browsers requiring activation.
@@ -126,11 +126,18 @@ export async function verifyRealHevcAudioAndSeek(page) {
     audio.nonSilentWindows >= 4 && audio.playableTimeAdvanced > 2 &&
     audio.mediaError == null;
   const audioControlValid = Number(audio.controlPeakRms || 0) > 0.01;
+  const nativeElementPcm = Boolean(mediaControl?.native?.mediaPcmMeasured);
+  const mseElementPcm = Boolean(mediaControl?.mse?.mediaPcmMeasured);
   console.log('macOS WebKit Web Audio control:', JSON.stringify({
     oscillatorProducesPCM: audioControlValid,
+    knownAudibleNativeMp4PCM: nativeElementPcm,
+    knownAudibleH264MsePCM: mseElementPcm,
     mediaProducesPCM: audioValid,
     interpretation: !audioControlValid ? 'WEB_AUDIO_SINK_UNVERIFIED'
-      : audioValid ? 'REAL_AAC_PCM_PASS' : 'MEDIA_PCM_SILENT_OR_UNSUPPORTED'
+      : audioValid ? 'REAL_AAC_PCM_PASS'
+      : !nativeElementPcm ? 'MEDIA_ELEMENT_CAPTURE_NOT_VALIDATED'
+      : !mseElementPcm ? 'MSE_AUDIO_CAPTURE_NOT_VALIDATED'
+      : 'REAL_HEVC_MSE_PCM_NOT_DETECTED_DESPITE_VALID_CONTROLS'
   }));
 
   // The player must perform an indexed unbuffered seek, not pretend to seek
@@ -141,6 +148,7 @@ export async function verifyRealHevcAudioAndSeek(page) {
     return {
       currentTime: video.currentTime,
       frames: window.__liveHevcFrames || 0,
+      totalFrames: video.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
       targetAlreadyBuffered: Array.from({ length: video.buffered.length },
         (_, i) => [video.buffered.start(i), video.buffered.end(i)])
         .some(([start, end]) => target >= start && target <= end)
@@ -151,15 +159,16 @@ export async function verifyRealHevcAudioAndSeek(page) {
   await page.locator('#player-video').evaluate((video, seconds) => {
     video.currentTime = seconds;
   }, target);
-  await page.waitForFunction(({ target, beforeFrames }) => {
+  await page.waitForFunction(({ target, beforeFrames, beforeTotalFrames }) => {
     const video = document.querySelector('#player-video');
     const status = document.querySelector('#player-status')?.textContent || '';
     const advanced = video?.currentTime > target - 1 &&
       video?.currentTime < target + 8 && video.readyState >= 2 &&
       ((window.__liveHevcFrames || 0) > beforeFrames + 1 ||
-        video.getVideoPlaybackQuality?.().totalVideoFrames > 0);
+        (video.getVideoPlaybackQuality?.().totalVideoFrames ?? 0) > beforeTotalFrames + 1);
     return advanced || /已停止播放|跳轉失敗|無法播放/.test(status);
-  }, { target, beforeFrames: before.frames }, { timeout: 90000 }).catch(() => {});
+  }, { target, beforeFrames: before.frames, beforeTotalFrames: before.totalFrames },
+  { timeout: 90000 }).catch(() => {});
   const seek = await page.evaluate(() => {
     const v = document.querySelector('#player-video');
     const status = document.querySelector('#player-status')?.textContent || '';
@@ -170,6 +179,7 @@ export async function verifyRealHevcAudioAndSeek(page) {
       paused: v?.paused ?? null,
       seeking: v?.seeking ?? null,
       frames: window.__liveHevcFrames || 0,
+      totalFrames: v?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
       mediaError: v?.error?.code ?? null,
       buffered: v ? Array.from({ length: v.buffered.length }, (_, i) =>
         [Number(v.buffered.start(i).toFixed(3)),
@@ -183,7 +193,7 @@ export async function verifyRealHevcAudioAndSeek(page) {
   console.log('macOS WebKit real HEVC distant seek:', JSON.stringify(seek));
   const seekValid = Math.abs(seek.currentTime - target) < 8 &&
     seek.readyState >= 2 && !seek.seeking && seek.mediaError == null &&
-    seek.frames > before.frames + 1;
+    (seek.frames > before.frames + 1 || seek.totalFrames > before.totalFrames + 1);
   if (seekValid)
     console.log('PASS real Hongguo HEVC distant unbuffered seek and decoded frames');
   // The decoded audio track may legitimately be quiet at the start. If we
@@ -220,9 +230,18 @@ export async function verifyRealHevcAudioAndSeek(page) {
   if (!seekValid) failures.push('Real HEVC 120s remote seek / decoded frames did not pass');
   if (!audioControlValid) failures.push('Web Audio oscillator control did not produce PCM; cannot validate AAC');
   if (!audioValid && !(afterSeekAudio?.peakRms > 0.004 &&
-      afterSeekAudio.nonSilentWindows >= 4))
-    failures.push('Real HEVC AAC PCM not detected at beginning or at 120s');
+      afterSeekAudio.nonSilentWindows >= 4)) {
+    if (nativeElementPcm && mseElementPcm)
+      failures.push('Real HEVC MSE AAC PCM not detected despite positive known-audible MP4/MSE controls');
+    else
+      // WebKit bug 266922: an audible MSE media element can produce all-zero
+      // MediaElementAudioSourceNode samples. Do not turn an unmeasurable
+      // output into a false playback failure or a false AAC PASS.
+      console.warn('NOT TESTED real HEVC audible output: WebKit MSE MediaElementAudioSourceNode returned zero for known-audible synthetic AAC');
+  }
   assert.deepEqual(failures, [], 'Extended real HEVC acceptance failures');
-  console.log('PASS real Hongguo HEVC AAC PCM plus 120s distant seek');
+  console.log(nativeElementPcm && mseElementPcm
+    ? 'PASS real Hongguo HEVC AAC PCM plus 120s distant seek'
+    : 'PASS real Hongguo HEVC 120s distant seek; actual audible AAC remains NOT TESTED');
 
 }
