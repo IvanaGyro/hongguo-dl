@@ -148,6 +148,7 @@ export async function openCencProgressiveStream({
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
   let finished = false, initialStartChecked = false;
+  let mediaFragments = 0, mediaBytes = 0;
   // Real progressive HEVC can have its first common audio/video buffered
   // range start a few hundred milliseconds after zero (e.g. 0.16s).
   // Per MSE's readyState rules, a media clock at 0 then remains stuck at
@@ -178,6 +179,7 @@ export async function openCencProgressiveStream({
   const fail = cause => {
     if (closed || failed) return;
     failed = true;
+    onStage('mse.failed', { reason: cause || 'unknown' });
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
     worker.terminate();
@@ -239,13 +241,18 @@ export async function openCencProgressiveStream({
   worker.onmessage = ({ data }) => {
     if (closed || failed || !data) return;
     if (data.type === 'stage') {
-      if (['wasm-download', 'wasm-verify', 'wasm-start', 'first-fragment'].includes(data.stage))
-        onStage(data.stage);
+      if (['wasm-download', 'wasm-verify', 'wasm-start', 'first-fragment',
+        'media-range'].includes(data.stage))
+        onStage(data.stage, data.stage === 'media-range' ? {
+          requests: data.requests, receivedBytes: data.receivedBytes,
+          fetchMs: data.fetchMs
+        } : {});
       return;
     }
     if (data.type === 'error') return fail('wasm-remux');
     if (data.type === 'done') {
       finished = true;
+      onStage('mse.done', { fragments: mediaFragments, bytes: mediaBytes });
       void queued.then(() => {
         if (!closed && !failed && ms.readyState === 'open' && !buffer?.updating)
           ms.endOfStream();
@@ -275,7 +282,24 @@ export async function openCencProgressiveStream({
       }
       if (!buffer) throw new Error('Missing MSE initialization');
       await append(new Uint8Array(data.bytes));
-      if (data.type === 'media') alignFirstBuffer();
+      if (data.type === 'media') {
+        mediaFragments++;
+        mediaBytes += data.bytes.byteLength;
+        if (mediaFragments <= 3 || mediaFragments % 12 === 0) {
+          let bufferEnd = 0;
+          try {
+            if (buffer.buffered.length)
+              bufferEnd = buffer.buffered.end(buffer.buffered.length - 1);
+          } catch { /* buffer changed during teardown */ }
+          onStage('mse.media-appended', {
+            fragments: mediaFragments, bytes: mediaBytes,
+            time: video.currentTime, bufferEnd
+          });
+        }
+        alignFirstBuffer();
+      } else {
+        onStage('mse.init-appended', { bytes: data.bytes.byteLength });
+      }
       await waitBufferHeadroom(video, buffer, internal.signal);
       if (!closed && !failed) worker.postMessage({ type: 'ack', id: data.id });
     }).catch(error => fail(error?.code === 'HEVC_INIT_MISMATCH'

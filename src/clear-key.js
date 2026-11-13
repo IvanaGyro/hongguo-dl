@@ -60,7 +60,9 @@ export function cencKidFromMoov(data) {
 function aborted(signal) {
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
 }
-async function rangeFetch(url, start, bytes, signal, fetchImpl) {
+async function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe = () => {}) {
+  const started = performance.now();
+  onProbe('range.request', { offset: start, bytes });
   aborted(signal);
   if (!Number.isSafeInteger(start) || start < 0 || bytes > MAX_MOOV ||
       bytes < 8 || !Number.isSafeInteger(start + bytes))
@@ -73,6 +75,7 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
     });
   } catch {
     aborted(signal);
+    onProbe('range.fetch-failed', { elapsedMs: performance.now() - started });
     // Fetch errors may embed private/signed URLs: only publish a fixed stage.
     throw errorWith('CENC_RANGE_HTTP', 'HTTP Range 連線失敗');
   }
@@ -80,6 +83,7 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
     await res.body?.cancel().catch(() => {});
     aborted(signal);
   }
+  onProbe('range.response', { status: res.status, elapsedMs: performance.now() - started });
   if (res.status !== 206) {
     await res.body?.cancel().catch(() => {});
     // Preserve HTTP failure semantics instead of reporting an HEVC decoder
@@ -142,17 +146,22 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl) {
   const output = new Uint8Array(count);
   let offset = 0;
   for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
+  onProbe('range.complete', {
+    bytes: count, elapsedMs: performance.now() - started
+  });
   return { data: output, fileSize: Number(match[3]) };
 }
 
-export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null) {
+export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
+  onProbe = () => {}) {
   let offset = 0;
   const tried = new Set();
   for (let probe = 0; probe < MAX_RANGES; probe++) {
     aborted(signal);
     if (tried.has(offset)) return null;
     tried.add(offset);
-    const { data, fileSize } = await rangeFetch(mediaUrl, offset, HEADER_SIZE, signal, fetchImpl);
+    const { data, fileSize } = await rangeFetch(mediaUrl, offset, HEADER_SIZE,
+      signal, fetchImpl, onProbe);
     const boxes = mp4Boxes(data, offset);
     if (probe === 0 && boxes[0]?.type !== 'ftyp') return null;
     for (const box of boxes) {
@@ -162,7 +171,8 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
           'MP4 索引超過 8 MiB 有界串流安全限制，不能改用整檔下載');
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
-        : (await rangeFetch(mediaUrl, box.offset, box.size, signal, fetchImpl)).data;
+        : (await rangeFetch(mediaUrl, box.offset, box.size,
+          signal, fetchImpl, onProbe)).data;
       if (metadata) {
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
@@ -356,6 +366,7 @@ export async function openClearKeyStream({
   // Only report a stage and an error type. Media URLs and content keys are
   // deliberately excluded from diagnostics (even on failures).
   const declined = (stage, error = null) => {
+    onStage('cenc.declined', { reason: stage, code: error?.code || 'none' });
     console.info('[Hongguo EME] native stream unavailable:', stage,
       error?.name || '');
     return null;
@@ -371,7 +382,10 @@ export async function openClearKeyStream({
   const metadata = {};
   onStage('metadata');
   let kid;
-  try { kid = await probeCencKid(url, signal, fetchImpl, metadata); }
+  try {
+    kid = await probeCencKid(url, signal, fetchImpl, metadata,
+      (stage, fields) => onStage(stage, fields));
+  }
   catch (error) {
     // A rejected/broken HTTP Range is a source/network failure, not a
     // demux/decode failure. Never turn it into a whole-file FFmpeg fallback.
@@ -381,6 +395,12 @@ export async function openClearKeyStream({
       throw error;
     return declined('mp4-range-or-kid-probe', error);
   }
+  onStage('metadata.probed', {
+    hasKid: Boolean(kid), fragmented: Boolean(metadata.fragmented),
+    fileBytes: metadata.fileSize || 0, hasAac: Boolean(metadata.hasAac),
+    duration: metadata.movieDurationSeconds || 0,
+    codec: metadata.videoCodec || 'unknown'
+  });
   if (!kid) return declined('no-cenc-kid');
   if (metadata.videoCodec &&
       (codec === 'hevc' && !['hvc1', 'hev1'].includes(metadata.videoCodec) ||
@@ -400,13 +420,16 @@ export async function openClearKeyStream({
           metadata.movieDurationSeconds || source.duration || null) ?? 0
       });
       if (remux) {
+        onStage('cenc.route', { kind: 'progressive-remux' });
         console.info('[Hongguo CENC] playback route: progressive-remux-to-mse');
         return remux;
       }
     } catch (error) {
       if (signal?.aborted) throw error;
+      onStage('cenc.remux-failed', { code: error?.code || 'UNKNOWN' });
       console.info('[Hongguo CENC] remux preparation unavailable:', error?.name || 'Error');
     }
+    onStage('cenc.remux-unavailable', { codec });
   }
   // Already-fragmented CENC remains encrypted and is delivered through EME.
   // When the local remux binary is not deployed, retain the existing fallback.
@@ -457,6 +480,7 @@ export async function openClearKeyStream({
     aborted(signal);
     const mse = metadata.fragmented
       ? openCencMse({ video, mime, url, signal, fetchImpl }) : null;
+    onStage('cenc.route', { kind: mse ? 'eme-mse' : 'eme-progressive' });
     console.info('[Hongguo EME] playback route:', mse ? 'mse-fmp4' : 'progressive-mp4');
     return {
       url: mse?.url || url, kind: mse?.kind || 'progressive',

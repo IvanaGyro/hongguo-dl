@@ -31,6 +31,7 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     throw new Error('Invalid media proxy endpoint');
   controller = new AbortController();
   let cacheStart = -1, cacheBytes = new Uint8Array(0);
+  let rangeRequests = 0, receivedBytes = 0;
   const readRange = async (start, wanted) => {
     if (controller.signal.aborted) throw new Error('Canceled');
     if (!Number.isInteger(start) || start < 0 || start >= fileSize ||
@@ -41,8 +42,15 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     const end = Math.min(fileSize, start + Math.max(wanted, WINDOW)) - 1;
     // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
     // the requested 256 KiB window even if it lies about Content-Length.
+    const fetchStarted = performance.now();
     const bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
       fileSize, controller.signal);
+    rangeRequests++;
+    receivedBytes += bytes.byteLength;
+    if (rangeRequests <= 4 || rangeRequests % 12 === 0)
+      self.postMessage({ type: 'stage', stage: 'media-range',
+        requests: rangeRequests, receivedBytes,
+        fetchMs: Math.round(performance.now() - fetchStarted) });
     cacheStart = start;
     cacheBytes = bytes;
     return bytes.subarray(0, wanted);
