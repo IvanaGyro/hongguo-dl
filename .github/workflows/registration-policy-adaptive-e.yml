@@ -1,4 +1,4 @@
-name: "Registration policy E - adaptive 180s vs 240s silent recovery"
+name: "Registration policy E - adaptive recovery (150s first, 180s base)"
 on:
   push:
     branches:
