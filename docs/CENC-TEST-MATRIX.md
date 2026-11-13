@@ -49,6 +49,9 @@
 
 | CENC 55s unbuffered MSE 遠距 Seek 保持 UI 指定 1.25× | Chromium／Firefox，70s H264/AAC 合成，重新建 MSE URL 後斷言 video.playbackRate/defaultPlaybackRate | **PENDING（階段 68）** | [main 9ef5bf9](https://github.com/IvanaGyro/hongguo-dl/commit/9ef5bf90074e6a60a1303ef8eb7c0619c440b9d4)，新增 1.25× Browser assertion；需等真正 fast PASS |
 
+| 離開播放頁時停止現在的 CENC Worker、HTTP Range、MSE URL，BFCache 返回暫停續播 | Firefox mock H264/1.25×，synthetic pagehide/pageshow；Chromium/Firefox CENC fast | **PASS（事件模擬／CENC fast）；真實 BFCache 未驗** | [main 2652b17](https://github.com/IvanaGyro/hongguo-dl/commit/2652b17e23f73119dc5354e73b1874c9aa843045)，[Firefox #43333339704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339704) success、[Browser fast #43333339682](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339682) success；synthetic events 並非真實前進/返回歷史導覽 |
+| 離開頁面中止 download queue、retry timers、bulk export；BFCache 返回不自動啟工作 | Node unit lifecycle + 既有 Firefox 下載／ZIP／MP4 全流程 | **PASS（單元與既有 Firefox）；實際下載中 BFCache 未驗** | [main 04c60c4](https://github.com/IvanaGyro/hongguo-dl/commit/04c60c4b6df8a5fd218f07979573bea76d3c383b)、[CI #43333897868](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897868) success、[Firefox #43333897837](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897837) success；下載一半導航事件尚未測 |
+
 ## 固定驗證指令
 
 - 通用單元與建置：`bun ci && bun run test && VITE_BASE_PATH=/hongguo-dl/ bun run build`。
