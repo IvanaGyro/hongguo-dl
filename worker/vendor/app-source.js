@@ -434,6 +434,9 @@ async function requestJson(url, options, deadline, signal) {
         if (bytes.byteLength > 2 * 1024 * 1024) throw Object.assign(new Error('App 回應過大'), { code: 'INVALID_RESPONSE' });
         const raw = new TextDecoder().decode(bytes);
         if (!raw.trim()) throw Object.assign(new Error('App 接口返回空響應（HTTP 200）'), { code: 'EMPTY_RESPONSE', status: 200 });
+        // Optional local diagnostic hook, used only by registration-ID experiments.
+        // Never log the raw response; callers can selectively capture ID fields.
+        options?.onResponseRawJson?.(raw);
         const normalized = preserveFields.length ? preserveLargeJsonIntegers(raw, preserveFields) : raw;
         const parsed = jsonBody(normalized);
         if (!parsed || typeof parsed !== 'object') throw Object.assign(new Error('App 接口未返回有效數據'), { code: 'INVALID_RESPONSE' });
