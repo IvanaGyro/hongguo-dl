@@ -107,6 +107,8 @@ async function silence(label,ms){
 const r=await fetch(BASE+'/health');
 if(!r.ok||(await r.json()).ok!==true)throw new Error('Registration workerd is unavailable');
 console.log('E240 silent recovery: real upstream registration only; no playback/source/CDN.');
+// Independent quiet reset before this new run, avoiding leftover state from C5.
+await silence('pre-experiment-300s',300000);
 const baseline=await fixedRate('A-baseline-10s',3,10000);
 if(baseline.some(row=>!row.ok)){
   console.log('HALT: baseline already restricted; cannot establish independent E240 trigger');
