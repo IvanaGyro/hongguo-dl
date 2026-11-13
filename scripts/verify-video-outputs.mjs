@@ -58,6 +58,18 @@ try {
   }
   const bvc = syntheticBvc2(join(dir, 'vvc3.mp4'));
   if (process.env.SYNTHETIC_BVC2_PATH) writeFileSync(process.env.SYNTHETIC_BVC2_PATH, bvc);
+  // Repeat already-encoded VVC samples with stream copy: no expensive second
+  // encoding pass. The browser's 256 KiB Range window must not cover this
+  // representative long media input in one request.
+  const longVvc = join(dir, 'vvc-long.mp4');
+  execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error',
+    '-stream_loop', '11', '-i', join(dir, 'vvc3.mp4'), '-c', 'copy',
+    '-movflags', '+faststart', '-y', longVvc]);
+  const longBvc = syntheticBvc2(longVvc);
+  assert(longBvc.length > 512 * 1024,
+    'Long BVC2 fixture must exceed two 256 KiB media prefetch windows');
+  if (process.env.SYNTHETIC_BVC2_LONG_PATH)
+    writeFileSync(process.env.SYNTHETIC_BVC2_LONG_PATH, longBvc);
   // Test the dedicated BVC2 decoder and lossless original-codec muxer using
   // synthetic bvc2/bv2C framing, with no proprietary media or upstream keys.
   for (const mode of [0, 4]) {
@@ -82,16 +94,20 @@ try {
   }
   // Same async input/output ABI as BVC2 playback, tested with a decodable
   // synthetic H.264 input. This validates transport, not BVC2 conformance.
-  for (const [streamBytes, streamKey, framing] of [[raw, key, 'h264-cenc'], [bvc, '', 'synthetic-bvc2']]) {
+  for (const [streamBytes, streamKey, framing] of [[raw, key, 'h264-cenc'], [longBvc, '', 'long-synthetic-bvc2']]) {
   for (const start of [0, 5.4]) {
     const units = [], reads = [];
     let highWater = 0, firstMediaReadEnd = null;
+    let deliveredBytes = 0, deliveredAtFirstMedia = null;
     const assembler = createFmp4Assembler({ onInit: b => units.push(b), onMedia: b => {
-      firstMediaReadEnd ??= highWater; units.push(b);
+      firstMediaReadEnd ??= highWater;
+      deliveredAtFirstMedia ??= deliveredBytes;
+      units.push(b);
     } });
     const core = await createModule({ wasmBinary,
       readRange: async (offset, count) => {
         reads.push({ offset, count });
+        deliveredBytes += Math.min(count, Math.max(0, streamBytes.length - offset));
         highWater = Math.max(highWater, Math.min(streamBytes.length, offset + count));
         assert(count <= 32768);
         return streamBytes.subarray(offset, offset + count);
@@ -103,11 +119,16 @@ try {
     assert.equal(ret, 0, core.UTF8ToString(core._bvc2_last_error()));
     assembler.finish();
     assert(units.length >= 2);
-    if (start === 0 && framing === 'h264-cenc') assert(firstMediaReadEnd < streamBytes.length, 'First fragment precedes complete source consumption');
+    if (start === 0) {
+      assert(deliveredAtFirstMedia < streamBytes.length,
+        framing + ': first complete fMP4 fragment must precede full body delivery');
+      if (framing === 'h264-cenc')
+        assert(firstMediaReadEnd < streamBytes.length);
+    }
     const path = join(dir, 'stream-' + start + '.mp4');
     writeFileSync(path, Buffer.concat(units));
     ffmpeg(['-xerror', '-i', path, '-f', 'null', '-']);
-    console.log(JSON.stringify({ streaming: true, start, units: units.length, reads: reads.length, firstMediaReadEnd, sourceBytes: streamBytes.length, framing }));
+    console.log(JSON.stringify({ streaming: true, start, units: units.length, reads: reads.length, firstMediaReadEnd, deliveredAtFirstMedia, sourceBytes: streamBytes.length, framing }));
   }
   }
 } finally { rmSync(dir, { recursive: true, force: true }); }
