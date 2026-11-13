@@ -313,6 +313,22 @@ async function apiJson(route, signal) {
     data?.error?.message || '請求失敗（HTTP ' + response.status + '）');
   return data;
 }
+// Old production Workers may not have the independent web/App channels yet.
+// Check the versioned health flag once per Worker origin instead of doubling
+// slow legacy /api/source requests. Warm this up as early as possible.
+let sourceChannelProbeOrigin = '';
+let sourceChannelProbe = null;
+function supportsIndependentSourceChannels() {
+  const url = apiRoute('/api/health');
+  if (url !== sourceChannelProbeOrigin || !sourceChannelProbe) {
+    sourceChannelProbeOrigin = url;
+    sourceChannelProbe = fetch(url, { headers: { Accept: 'application/json' } })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => data?.sourceChannels === true)
+      .catch(() => false);
+  }
+  return sourceChannelProbe;
+}
 async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal) {
   const started = performance.now();
   playbackDiagnostics.log('source.api.request', { quality, codec });
@@ -348,6 +364,17 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
     // Only AUTO benefits from the public URL race. A selected 1080p tier
     // continues directly to the App API and bypasses the website probe.
     if (quality === 'auto' && codec === 'auto') {
+      const supported = await supportsIndependentSourceChannels();
+      if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+      playbackDiagnostics.log('source.api.independent', { supported });
+      if (!supported) {
+        const data = await apiJson(endpoint, signal);
+        playbackDiagnostics.log('source.api.response', {
+          elapsedMs: performance.now() - started, channel: 'legacy',
+          variants: data?.variants?.length || 0
+        });
+        return data;
+      }
       const { winner, later } = await raceSourceQueries([
         { route: 'web', run: () => requestChannel('web') },
         { route: 'app', run: () => requestChannel('app') }
@@ -836,6 +863,7 @@ $('codec-diag-copy').addEventListener('click', async () => {
 $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
+void supportsIndependentSourceChannels().catch(() => {});
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),

@@ -116,3 +116,10 @@ test('source channel rejects invalid modes or unsupported web-only filters witho
   assert.equal(invalidWeb.status, 400);
   assert.equal((await invalidWeb.json()).error.code, 'INVALID_SOURCE_CHANNEL');
 });
+
+
+test('health advertises independent source channels for client compatibility gating', async () => {
+  const response = await worker.fetch(new Request('https://example.workers.dev/api/health'), {});
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).sourceChannels, true);
+});

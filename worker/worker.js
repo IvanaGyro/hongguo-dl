@@ -289,7 +289,9 @@ export default {
     }
 
     try {
-      if (url.pathname === '/api/health') return withCors(asJson({ ok: true, runtime: 'cloudflare-worker' }), allowed);
+      if (url.pathname === '/api/health') return withCors(asJson({
+        ok: true, runtime: 'cloudflare-worker', sourceChannels: true
+      }), allowed);
       if (request.method !== 'GET' && request.method !== 'HEAD')
         throw httpError(405, 'METHOD_NOT_ALLOWED', '不支援的 HTTP 方法');
       let response;
