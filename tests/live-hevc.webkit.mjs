@@ -212,6 +212,11 @@ try {
     if (process.env.CENC_WEBKIT_EXTENDED === '1') {
       const { verifyRealHevcAudioAndSeek } = await import('./live-hevc-extended.mjs');
       await verifyRealHevcAudioAndSeek(page, mediaControl);
+      if (process.env.CENC_WEBKIT_JOURNEY === '1') {
+        const { verifyRealHevcReloadAndEof } =
+          await import('./live-hevc-journey.mjs');
+        await verifyRealHevcReloadAndEof(page);
+      }
     }
   }
 } finally {
