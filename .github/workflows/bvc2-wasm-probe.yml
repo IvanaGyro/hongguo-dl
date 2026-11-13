@@ -83,6 +83,7 @@ jobs:
       - name: Verify real encoded synthetic video and async fMP4 transport
         env:
           SYNTHETIC_BVC2_PATH: /tmp/hongguo-synthetic-bvc2.mp4
+          SYNTHETIC_BVC2_LONG_PATH: /tmp/hongguo-synthetic-bvc2-long.mp4
           VVC_FFMPEG: /tmp/hongguo-bvc2-transcode/native/librempeg-cb1f8f3eef84999e61b27e2d44664858179bc240/ffmpeg
           VVC_FFPROBE: /tmp/hongguo-bvc2-transcode/native/librempeg-cb1f8f3eef84999e61b27e2d44664858179bc240/ffprobe
         run: node scripts/verify-video-outputs.mjs /tmp/hongguo-bvc2-transcode/dist
@@ -116,7 +117,7 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/hongguo-dl/ >/dev/null; then break; fi
             sleep 1
           done
-          node tests/bvc2-stream.browser.mjs /tmp/hongguo-synthetic-bvc2.mp4
+          node tests/bvc2-stream.browser.mjs /tmp/hongguo-synthetic-bvc2.mp4 /tmp/hongguo-synthetic-bvc2-long.mp4
       # Generated artifacts are committed only after the Node.js ABI check.
       # A real ByteVC2 frame fixture is still required for acceptance tests;
       # the web UI displays the converter as an experimental fallback.
