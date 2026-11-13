@@ -52,6 +52,19 @@ export async function verifyRealHevcAudioAndSeek(page) {
     const probe = window.__hevcAudioProbe || {};
     const video = document.querySelector('#player-video');
     const before = video.currentTime;
+    // Capture only media-element state and audio-track presence, never samples.
+    const mediaState = {
+      muted: video.muted, volume: video.volume,
+      audioTracks: video.audioTracks?.length ?? null,
+      hasAudio: typeof video.webkitAudioDecodedByteCount === 'number'
+        ? video.webkitAudioDecodedByteCount > 0 : null,
+      audioDecodedBytes: typeof video.webkitAudioDecodedByteCount === 'number'
+        ? video.webkitAudioDecodedByteCount : null,
+      readyState: video.readyState, paused: video.paused,
+      bufferedSeconds: video.buffered.length
+        ? Number((video.buffered.end(video.buffered.length - 1) -
+          video.buffered.start(0)).toFixed(3)) : 0
+    };
     if (!probe.analyser || probe.context?.state !== 'running') {
       return { contextState: probe.context?.state || 'unavailable',
         trustedClick: Boolean(window.__hevcAudioTrustedClick),
@@ -101,7 +114,8 @@ export async function verifyRealHevcAudioAndSeek(page) {
       trustedClick: Boolean(window.__hevcAudioTrustedClick),
       peakRms, nonSilentWindows, controlPeakRms,
       playableTimeAdvanced: Number((video.currentTime - before).toFixed(3)),
-      mediaError: video.error?.code ?? null
+      mediaError: video.error?.code ?? null,
+      mediaState
     };
   });
   console.log('macOS WebKit real HEVC/AAC decoded PCM:', JSON.stringify(audio));
