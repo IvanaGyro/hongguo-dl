@@ -659,3 +659,14 @@
 - **驗收狀態**：本輪查詢主 [CI #43333339692](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339692) 與 [Pages #43333339698](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339698) success；[Firefox #43333339704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339704) 與 [CENC Browser #43333339682](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339682) 當時 in_progress，尚不能把新 handler 標為 Browser PASS。
 - **原本完整正例**：[Browser #43302492613](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43302492613) fast/long success，包括 Chromium/Firefox 實際 AAC PCM after 5 seeks/3 cycles、120s pause、300/1800s synthetic 完播；8 個 transition-only Chromium MOV 訊息另見 [Issue #6](https://github.com/IvanaGyro/hongguo-dl/issues/6)，本階段沒有更動 decoder。
 - **下一步**：確認新 Firefox smoke 後，調查下載佇列主程式 `src/main.js` 的 pagehide 是否終止 active jobs、retry timer 與 bulk controller。避免因重複 lifecycle hooks 製造新問題，僅針對已知缺口加入最小修正與驗收。
+
+
+## 階段 71 — 2026-11-13 下載佇列 pagehide：停止 active、retry、bulk 並禁止背景啟動新任務
+
+- **具體缺口**：原 `src/main.js` 沒有針對 `pagehide` 取消正在執行的下載、重試計時器或 ZIP/MP4 批次匯出；`pump()` 在下載 promise settled 後仍會啟動下一個 queued job。瀏覽器 BFCache 可能保留 JS 任務，因此「離開/關閉 client 就停止」不能只靠頁面被銷毀。
+- **直接提交 main**：[04c60c4b6df8a5fd218f07979573bea76d3c383b](https://github.com/IvanaGyro/hongguo-dl/commit/04c60c4b6df8a5fd218f07979573bea76d3c383b) 修改 `src/main.js`，新增純邏輯 `src/queue-lifecycle.js` 與 `tests/queue-lifecycle.test.mjs`。新的 `interruptQueueOnPageHide` 統一清除 retry timers、abort active controllers 與 bulkController，且將 `queued/resolving/downloading/processing/retrying` 的佇列項目標記 `INTERRUPTED` 並立即寫入儲存。其他 `failed/completed/canceled` 不更動。
+- **不中途自動重試**：`pageSuspended` 讓 `pump()` 在 pagehide/ BFCache suspended 階段直接返回；`pageshow.persisted` 只解除閘門並更新 UI，**不自動 pump**；使用者可手動重試失敗項目。
+- **取消競態**：`runJob` 針對 cache 與正常完成都在最後確認 AbortSignal，若 `pagehide` 已標記 `failed/INTERRUPTED`，晚到的 `CANCELED` catch 不再覆蓋，避免將「頁面離開」誤寫成「使用者取消」。
+- **最小單元正例**：新測試覆蓋五種未完成狀態、兩個 active controller、兩個 retry timer、一個 bulk controller，檢查全部被 abort/clear，已完成與已取消項目不變；重複清理 idempotent。沒有修改 AAC/MSE/FFmpeg/ByteVC2 核心。
+- **新 HEAD CI**：[主 CI #43333897868](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897868) **completed/success**、[Pages #43333897778](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897778) **success**；[Firefox FFmpeg.wasm #43333897837](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897837)／[CENC Browser #43333897775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897775) 最後查詢未完成。瀏覽器沒有特地模擬「下載到一半進 BFCache」的完整 E2E，此項仍是限制；不能只靠主 CI 推論所有瀏覽器的網路時序均驗證。
+- **下一步**：收到後續 Firefox/CENC 結論再精確更新；如測試 FAIL 讀單次 log，別擴大為無關 codec 變更。另尋擇有具體重現/測試、但不破壞已通過路徑的產品問題。
