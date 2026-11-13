@@ -12,7 +12,7 @@ import { availableRenditions, codecsAtQuality, playbackRendition, codecId, quali
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
-import { bvc2BridgeAvailable } from './bvc2.js';
+import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -55,6 +55,11 @@ export function createPlayer({
     console.info('[Hongguo startup] E' + current.index + ' ' + stage + ': ' +
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
+  // Proprietary BTY2 decoding is unverified. Enable experimental progressive
+  // playback only through an explicit per-page opt-in; retain the established
+  // whole-file WASM fallback for normal users.
+  const experimentalBvc2Stream = new URLSearchParams(location.search)
+    .get('bvc2_stream') === 'experimental';
   const mimeSupport = mime => video.canPlayType(mime);
   // Source selection uses a provisional HEVC probe; openClearKeyStream later
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
@@ -326,7 +331,34 @@ export function createPlayer({
       // Do not transcode a whole second episode during playback. Prefetch
       // metadata now; take over when the user actually switches episodes.
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
-      setStatus('建立 ByteVC2 → H.264 串流…');
+      if (!experimentalBvc2Stream) {
+        const warn = text => setStatus('⚠ ByteVC2 尚未驗證真實增量解碼；採整集下載／轉碼備援 · ' + text);
+        warn('正在下載影片…');
+        let received = 0;
+        const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
+          (length, total) => {
+            received += length;
+            if (length > 0) markStartupStage('first-media-byte');
+            if (!signal.aborted && total > 0)
+              warn('下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%');
+          });
+        if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+        warn('正在載入解碼工具並轉碼整集…');
+        const converted = await transcodeBvc2(raw, {
+          contentKey: source.contentKey, signal, mode: 'h264',
+          progress: value => {
+            if (!signal.aborted)
+              warn('ByteVC2 → H.264 轉碼 ' + Math.round(100 * value) + '%');
+          }
+        });
+        if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+        const outputSource = { ...source, outputCodec: 'h264' };
+        const playable = new Blob([converted], { type: 'video/mp4' });
+        cache.put(key, playable, outputSource);
+        return { blob: playable, source: outputSource, fallbackNotice,
+          fullFileFallback: true, variants: null };
+      }
+      setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
       const url = mediaProxyUrl(source.url, profile, getWorkerOrigin());
       const metadata = {};
       await probeCencKid(url, signal, fetch, metadata);
