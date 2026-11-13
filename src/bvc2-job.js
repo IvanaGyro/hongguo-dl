@@ -3,7 +3,7 @@
 // so cancellation, transfer and startup failures can be regression tested.
 import { errorWith } from './logic.js';
 
-export function runBvc2WorkerJob(bytes, { contentKey = '', signal, onProgress, createWorker }) {
+export function runBvc2WorkerJob(bytes, { contentKey = '', mode = 'h264', progress, onProgress, signal, createWorker }) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -35,11 +35,10 @@ export function runBvc2WorkerJob(bytes, { contentKey = '', signal, onProgress, c
     };
     worker.onmessage = ({ data }) => {
       if (done) return;
-      // Phase messages are informational; never resolve or terminate a job
-      // before the Worker provides a nonempty playable MP4.
       if (data?.type === 'progress') {
         if (['wasm-loading', 'wasm-ready', 'transcoding', 'finalizing'].includes(data.phase))
           onProgress?.(data.phase);
+        if (Number.isFinite(data.progress)) progress?.(Math.max(0, Math.min(1, data.progress)));
         return;
       }
       if (!data?.ok) {
@@ -56,7 +55,7 @@ export function runBvc2WorkerJob(bytes, { contentKey = '', signal, onProgress, c
     const owned = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength &&
       bytes.buffer instanceof ArrayBuffer ? bytes : bytes.slice();
     try {
-      worker.postMessage({ bytes: owned.buffer, key: contentKey }, [owned.buffer]);
+      worker.postMessage({ bytes: owned.buffer, key: contentKey, mode }, [owned.buffer]);
     } catch {
       // postMessage can throw synchronously (e.g. structured-clone failure).
       // Always terminate the Worker and detach the abort listener on failure.

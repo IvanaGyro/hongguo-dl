@@ -81,6 +81,21 @@ test('failure to construct Worker is converted to a stable error', async () => {
   }), /無法建立/);
 });
 
+test('progress events keep the worker alive and preserve requested download encoding', async () => {
+  const { worker, createWorker } = create();
+  const progress = [];
+  const job = runBvc2WorkerJob(Uint8Array.of(1), {
+    createWorker, mode: 'vvc', progress: value => progress.push(value)
+  });
+  assert.equal(worker.posted[0].data.mode, 'vvc');
+  worker.onmessage({ data: { type: 'progress', progress: 0.25 } });
+  worker.onmessage({ data: { type: 'progress', progress: NaN } });
+  assert.deepEqual(progress, [0.25]);
+  assert.equal(worker.terminated, false);
+  worker.onmessage({ data: { ok: true, bytes: Uint8Array.of(5).buffer } });
+  await job;
+  assert.equal(worker.terminated, true);
+});
 
 test('ByteVC2 progress phases do not finish a job before valid media arrives', async () => {
   const { worker, createWorker } = create();

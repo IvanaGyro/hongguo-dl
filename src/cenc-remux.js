@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Encrypted progressive MP4 -> clear fMP4 over MSE.
 // Works with a dedicated pinned Librempeg WASM; never buffers an entire episode.
+import { bvc2BridgeAvailable } from './bvc2.js';
 import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
 import { retryableAvailability } from './retryable-availability.js';
@@ -102,15 +103,15 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  */
 export async function openCencProgressiveStream({
   video, url, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, videoCodecString = null
+  startSeconds = 0, durationSeconds = null, videoCodecString = null, bridge = 'cenc'
 }) {
-  if (!/^[a-f0-9]{32}$/i.test(key || '')) return null;
+  if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
     throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
   const videoCodec = codec === 'hevc' ?
     (/^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/.test(
       videoCodecString || '') ? videoCodecString : null) :
-    codec === 'h264' ? 'avc1.42E01E' : null;
+    codec === 'h264' ? (bridge === 'bvc2' ? 'avc1.42C01F' : 'avc1.42E01E') : null;
   if (!videoCodec) return null;
   const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
     (hasAac ? ', mp4a.40.2' : '') + '"';
@@ -123,7 +124,7 @@ export async function openCencProgressiveStream({
       !(MediaSource.isTypeSupported?.(mime) ||
         (alternateMime && MediaSource.isTypeSupported?.(alternateMime))) ||
       (codec !== 'hevc' && !video.canPlayType(mime)) ||
-      !await cencRemuxAvailable()) return null;
+      !await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable())) return null;
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
 
   const ms = new MediaSource();
@@ -136,9 +137,9 @@ export async function openCencProgressiveStream({
   };
   let worker;
   try {
-    worker = new Worker(new URL('./cenc-remux-worker.js', import.meta.url), {
-      type: 'module'
-    });
+    worker = bridge === 'bvc2'
+      ? new Worker(new URL('./bvc2-stream-worker.js', import.meta.url), { type: 'module' })
+      : new Worker(new URL('./cenc-remux-worker.js', import.meta.url), { type: 'module' });
   } catch {
     // No stream object was returned, so no caller can close this URL for us.
     revokeObjectUrl();
@@ -294,12 +295,12 @@ export async function openCencProgressiveStream({
     await close();
     const replacement = await openCencProgressiveStream({
       video, url, fileSize, codec, hasAac, key, signal,
-      startSeconds: seconds, durationSeconds, videoCodecString
+      startSeconds: seconds, durationSeconds, videoCodecString, bridge
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;
   };
-  return { url: objectUrl, kind: 'cenc-remux',
+  return { url: objectUrl, kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
     close, seekTo, get mime() { return mime; },
     durationSeconds, finished: () => finished };
 }

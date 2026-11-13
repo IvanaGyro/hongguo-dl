@@ -1,15 +1,22 @@
 {
   "schema": 1,
+  "api": 2,
+  "encoders": "x264+x265-3.4+aom-3.12.1+vvenc-1.13.1",
   "kind": "experimental-bvc2-x264",
   "emsdk": "3.1.74",
   "librempegCommit": "cb1f8f3eef84999e61b27e2d44664858179bc240",
   "x264Commit": "33cac6b77d5b9259c552156013a817ab23119612",
   "files": {
-    "bvc2-core.mjs": "558918fedb89029902f16bea59c10dd9b6212fb90aeb44fe5beacf4328f0ff2a",
-    "bvc2-core.wasm": "d973444cab34f419a7e17a85eae007a83229d80ce7d142db05bf653e4645ca05"
+    "bvc2-core.mjs": "23fa6930da9d844e8924905b080ebab13bb6235387fb35e293cff6bc37f151b3",
+    "bvc2-core.wasm": "1e96f3418d304329db780f84a29309d8f4d6b6788d78c0c5980d35dc3eb11ad9"
   },
   "inputs": {
-    "scripts/bvc2-transcoder.c": "40e7b55cd336c1f5d935e0a5a90c0d4c07975b09dc2da032ec66293f2df00ec3",
-    "scripts/build-bvc2-wasm-transcode.sh": "f4d0afedc9f5c3f51ee8e859994b2585ebf1e4da40cf583caf36f918c985a95f"
+    "scripts/bvc2-transcoder.c": "0e94d4426697db1a68f9d45b354fb3d8e03e2982028302faa9295bda90b26027",
+    "scripts/bvc2-avio.h": "42f771947112733d6e48faa0948f4a6dd4023e50a9b4a572139ad663c69b20ed",
+    "scripts/patch-bvc2-mov.py": "bc527a9da819bec2b172f8d83d678ab62f0aafc496d72a133ec0153c1506deda",
+    "scripts/build-video-encoders.sh": "5c3181b5cf969a7cb906055048c071754d3ca905a849e7443ea87d73832c1985",
+    "scripts/patch-x265-single-thread.py": "f60854a47f868b1aaec1359efc0186eef5ddc8fe3b0da1e3cb75e8b0764c4e67",
+    "scripts/vendor/libvvenc.c": "f48965d731cfeaeafd7ac11c8fd129e3f631db04b8dfeb1b46a8d5e4375b943c",
+    "scripts/build-bvc2-wasm-transcode.sh": "69736ea190ed897823a8b7412bad7de74f1e7103b754637e4efe90a8787e39c5"
   }
 }

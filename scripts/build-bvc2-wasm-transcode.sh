@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Experimental browser ByteVC2 -> H.264 pipeline, NOT published into the app.
+# Browser video conversion and incremental ByteVC2 -> H.264 pipeline.
 # Compiles the same pinned Librempeg decoder as upstream and a fixed x264 port.
 set -euo pipefail
 ROOT=$(pwd)
 OUTPUT=${1:-/tmp/hongguo-bvc2-transcode}
+bash "$ROOT/scripts/build-video-encoders.sh" "$OUTPUT"
 COMMIT=cb1f8f3eef84999e61b27e2d44664858179bc240
 SHA256=fd965e6ef9f745af96142cf118d7c2aa0dce906225c9d3cd2ef19e0221723813
 X264_COMMIT=33cac6b77d5b9259c552156013a817ab23119612
@@ -32,6 +33,11 @@ echo "x264 pkg-config version: $(pkg-config --modversion x264)"
 echo "x264 linker flags: $(pkg-config --libs --static x264)"
 test -s "$OUTPUT/prefix/lib/libx264.a"
 cd "$OUTPUT/src/librempeg-$COMMIT"
+# The pinned Librempeg retains the vvenc configure/Makefile entries but lacks
+# its wrapper source. Restore the LGPL wrapper from FFmpeg n8.0, kept in-tree.
+cp "$ROOT/scripts/vendor/libvvenc.c" libavcodec/libvvenc.c
+# BVC2 has in-band parameters and its own sample tag; never relabel it vvc1.
+python3 "$ROOT/scripts/patch-bvc2-mov.py" "$PWD"
 # emconfigure overrides PKG_CONFIG_PATH with its sysroot; the explicit
 # Emscripten toolchain flags below already configure the cross compiler.
 # Invoke configure directly to keep our pinned x264.pc visible.
@@ -42,11 +48,11 @@ cd "$OUTPUT/src/librempeg-$COMMIT"
   --disable-programs --disable-asm --disable-x86asm \
   --disable-inline-asm --disable-stripping --disable-pthreads --disable-network \
   --enable-avcodec --enable-avformat --enable-avutil --enable-swscale \
-  --enable-decoder=bvc2,vvc,aac \
-  --enable-parser=aac --enable-encoder=libx264 \
+  --enable-decoder=bvc2,vvc,aac,h264,hevc \
+  --enable-parser=aac,h264,hevc --enable-encoder=libx264,libx265,libaom_av1,libvvenc \
   --enable-muxer=mp4 --enable-demuxer=mov \
   --enable-protocol=file,pipe \
-  --enable-gpl --enable-agpl --enable-version3 --enable-libx264 \
+  --enable-gpl --enable-agpl --enable-version3 --enable-libx264 --enable-libaom --enable-libvvenc --enable-libx265 \
   --pkg-config=pkg-config --pkg-config-flags=--static \
   --extra-cflags="-O3 -msimd128 -I$OUTPUT/prefix/include" \
   --extra-ldflags="-L$OUTPUT/prefix/lib" \
@@ -68,12 +74,12 @@ emmake make -j4 libavcodec/libavcodec.a libavformat/libavformat.a \
 # memory-backed browser API directly instead of pulling in fftools.
 emcc "$ROOT/scripts/bvc2-transcoder.c" -O3 -msimd128 -I. \
   -Llibavformat -Llibavcodec -Llibavutil -Llibswscale -L"$OUTPUT/prefix/lib" \
-  -Wl,--start-group -lavformat -lavcodec -lswscale -lavutil -lx264 -Wl,--end-group \
+  -Wl,--start-group -lavformat -lavcodec -lswscale -lavutil -lx264 -lx265 -laom -lvvenc -lc++ -Wl,--end-group \
   -lm -s MODULARIZE=1 -s EXPORT_ES6=1 -s ENVIRONMENT=web,worker,node \
-  -s FORCE_FILESYSTEM=1 -s ALLOW_MEMORY_GROWTH=1 \
-  -s INITIAL_MEMORY=67108864 -s MAXIMUM_MEMORY=1073741824 \
-  -s "EXPORTED_FUNCTIONS=['_bvc2_transcode','_bvc2_decoder_available','_bvc2_last_error']" \
-  -s "EXPORTED_RUNTIME_METHODS=['FS','cwrap','UTF8ToString']" \
+  -s ASYNCIFY=1 -s ASYNCIFY_STACK_SIZE=262144 -s FORCE_FILESYSTEM=1 -s ALLOW_MEMORY_GROWTH=1 \
+  -s STACK_SIZE=5242880 -s INITIAL_MEMORY=67108864 -s MAXIMUM_MEMORY=1073741824 \
+  -s "EXPORTED_FUNCTIONS=['_bvc2_transcode','_bvc2_decoder_available','_bvc2_last_error','_bvc2_convert','_bvc2_stream']" \
+  -s "EXPORTED_RUNTIME_METHODS=['FS','cwrap','ccall','UTF8ToString']" \
   -o "$OUTPUT/dist/bvc2-core.mjs" > "$OUTPUT/link.log" 2>&1 || {
     tail -120 "$OUTPUT/link.log"; exit 1;
   }
@@ -84,8 +90,8 @@ const wasmBinary = readFileSync(new URL('./bvc2-core.wasm', import.meta.url));
 const core = await createModule({ wasmBinary });
 if (core._bvc2_decoder_available() !== 1) throw new Error('Missing BVC2 decoder or x264 encoder');
 core.FS.writeFile('/bad.mp4', new Uint8Array([1, 2, 3, 4]));
-const rc = core.cwrap('bvc2_transcode', 'number', ['string', 'string', 'string'])(
-  '/bad.mp4', '/out.mp4', '');
+const rc = await core.ccall('bvc2_transcode', 'number', ['string', 'string', 'string'],
+  ['/bad.mp4', '/out.mp4', ''], {async:true});
 if (rc >= 0) throw new Error('Truncated MP4 unexpectedly succeeded');
 const error = core.UTF8ToString(core._bvc2_last_error());
 if (!error) throw new Error('Error message not exposed');

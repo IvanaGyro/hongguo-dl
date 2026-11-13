@@ -61,8 +61,8 @@
           <div id="download-controls">
           <div class="settings">
             <label>畫質 <select id="quality"><option value="auto">最佳可取得</option><option value="1080p">1080p 以上</option><option value="720p">720p 以上</option></select></label>
-            <label>編碼 <select id="codec"><option value="auto">不限編碼</option><option value="h264">H.264</option><option value="hevc">HEVC / H.265</option><option value="bytevc2">ByteVC2</option></select></label>
-            <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">FFmpeg.wasm 無損封裝 MP4</option><option value="h264">轉 H.264 MP4（ByteVC2 使用 Librempeg WASM）</option></select></label>
+            <label>來源編碼 <select id="codec"><option value="auto">不限編碼</option><option value="h264">H.264</option><option value="hevc">HEVC / H.265</option><option value="bytevc2">ByteVC2</option></select></label>
+            <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
             <label>同時下載 <select id="concurrency"><option value="1">1 集</option><option value="2" selected>2 集</option><option value="3">3 集</option></select></label>
           </div>
           <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
