@@ -33,6 +33,9 @@
 3. **P2 — 實際裝置與來源穩健性**：Windows／Android 有 HEVC MSE 能力的瀏覽器實播，沒有能力時正確提示；對來源 403、429、過期、Range 失敗做有限重試與可理解的訊息，測試弱網及記憶體。
 4. **ByteVC2 驗收**：[PR #10](https://github.com/IvanaGyro/hongguo-dl/pull/10) 已合併；[合成長樣本測試](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43355352198) **PASS**：953,299-byte 來源、第一個完整 fMP4 片段於傳輸 96,504 bytes 時產生；瀏覽器首影格於 913,904 bytes 出現（約 96%，性能仍需改進），24 秒未緩衝 Seek、五種輸出、取消清理通過。真實 BTY2、音畫同步、CPU/RAM 仍待驗收。
 
+- **來源並行查詢（2026-11-13）**：原先 `/api/source?quality=auto&codec=auto` 會先等最多 4.5 秒的公開網頁來源，再查 App。已在 `main` 加入 `channel=web|app` 獨立端點與健康檢查 `sourceChannels=true`；前端對 auto/auto 同時呼叫兩路，第一個取得有效候選先開始播放，另一個成功結果延後補進候選清單，不阻塞起播。**明確 1080p 仍直接查 App**；正式 Worker 尚須另行部署（GitHub Actions 只對 Worker 做 dry-run），部署前前端依健康檢查自動使用舊版單一路徑，避免重複請求。**CI 已通過，但實際提速及持續播放尚未驗收。**
+- **「可能受限制」標籤不是播放驗證**：`worker/worker.js` 取官方 `seriesDetail.accessible_episode_cnt`，僅把超出前 N 集的分集標 `available=false`；欄位缺失即未知。下載模式預設不勾選，但仍允許選取／播放，不可直接視為 DRM 或付款證據。網頁片源的 `protectedPlayback`、`publicVideoSeo.available` 僅影響是否接受公開 SEO URL。
+
 ## 工作原則與驗收入口
 
 - 一般改動直接提交 `main`（若使用者特別指定 PR，依當次要求）；變動先跑對應單元、建置與 GitHub Actions，再更新**本文件**。避免同時編輯 ByteVC2 agent 負責的程式。
