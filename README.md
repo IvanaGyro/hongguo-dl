@@ -73,42 +73,15 @@ bun run dev          # http://localhost:5173
 
 Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_ORIGIN`，即可使用此代理。
 
-## 真實片源低頻 CI 驗證
+## 驗收狀態與已知限制
 
-- [Live Worker source smoke](https://github.com/IvanaGyro/hongguo-dl/actions/workflows/live-worker-smoke.yml) 與一般 CI 分開，**每週一 04:17 UTC** 自動測試 **1 集**；也可以在 Actions → Run workflow 手動選 **1 或 2 集**。不會因每次 push 而對真實來源發送請求。
-- 每次執行只取得 **1 次** `/api/series` 分集 metadata，每集 **1 次** `/api/source`，並最多對 **2 個不同 CDN** 分別送出 `Range: bytes=0-255`。1 集最多 4 個請求，手動 2 集最多 7 個。**不下載完整影片、不自動重試、遇到 HTTP 429 立即停止**，測試日誌不輸出簽章 URL 或內容金鑰。
-- 驗證官方分集、來源變體、GitHub Pages CORS、206 Partial Content 與 HTTP Range；若 CDN 403 或無法取得有效 206，工作流程會明確失敗，以便區分來源故障與本地 mock 測試。真實播放器解密、Android Firefox 實機與影片接續播放**仍須另外測試**。
-- 原有 Firefox 的 60 集 ZIP 測試使用**合成影片／mock 來源**，不會向紅果取得 60 集實際媒體。
+專案唯一進度／交接入口：[目前階段、Goal 與 Pending work](docs/AGENT-CURRENT.md)。
 
-## CENC 一般 MP4 增量播放驗證
-
-- [Librempeg Asyncify WASM 編譯與 HEVC/AAC 無損解密重封裝](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43220527985)：合成 HEVC/AAC CENC MP4，來源 114,718 bytes，WASM 在讀取 32,768 bytes 時已輸出第一個片段，完成輸出可由 FFmpeg 解碼。
-- [Chromium + Firefox 首影格與持續播放驗證](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43224107343)：合成 1.24 MB 的 H.264/AAC CENC 一般 MP4，使用真正 HTTP Range 與 Worker/MSE；兩者均於來源 EOF 前呈現影格，並持續播放超過 1.5 秒，無整檔下載備援。
-- [設計與待測限制](docs/cenc-progressive-to-fmp4.md)。測試以合成內容進行，不能直接推出真實紅果 HEVC 在所有裝置可播放。
-
-## 最新合成串流驗收證據
-
-- [Chromium／Firefox CENC Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406)：合成 H.264/AAC 加密一般 MP4 在 EOF 前起播，往返 7／63／35／5／63 秒遠端 RAP Seek、90% reload 續播、切換下載模式取消 Worker／Range，兩個瀏覽器均 PASS。
-- 同一 Browser CI：Chromium 300 秒合成片完整播放至 300.021 秒，最大 MSE 緩衝跨度 78.021 秒、ahead 41.395 秒，共 32 次有界 Range 請求。這是緩衝時間窗口，**不是**系統 RSS/GPU RAM 精確數據。
-- [1080p HEVC/AAC WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)：合成 1920×1080 CENC 解密重封裝後 FFmpeg 可解碼、保留 HEVC/AAC，6 秒 RAP Seek 輸出 PTS=6。**不代表**瀏覽器具有 HEVC 解碼器。
-- [BVC2 ABI／負例 #43279446447](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279446447)、[BVC2 配對發布 #43280846374](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43280846374)：專用 BVC2 + x264 WASM 可載入，普通 H.264 被拒絕，JS／WASM 發布版本以 SHA256 manifest 綁定。**尚未驗證**真正 ByteVC2 的正例影格與轉碼表現。
-- 網頁「此裝置影片編碼支援檢測」可以在本機讀取 HEVC/MSE、MediaCapabilities 宣告並複製結果，不收 signed media URL、金鑰或裝置 ID；**宣告結果不是實際解碼通過**。
-- 完整最新矩陣：[CENC-TEST-MATRIX.md](docs/CENC-TEST-MATRIX.md)，階段日誌：[AGENT-PROGRESS.md](docs/AGENT-PROGRESS.md)。所有測試與原始碼直接提交 `main`，不使用 PR。
-
-## 已知限制
-
-- 2026-11-12 已對測試影集 `7699513062054710296` 實際呼叫正式 Worker：取得 60 集清單、1080p HEVC／720p ByteVC2 來源，並以限量 HTTP Range 確認可取得第一集加密 HEVC MP4 索引（完整 `moov`、無 `mvex`）。**合成加密一般 MP4 的 Librempeg WASM 增量播放、跨未緩衝 Range Seek、reload 續播及 Chromium 300 秒播放已獨立驗證；未完成的是紅果真實 HEVC 首影格、Android Firefox 硬體解碼、以及設備 RAM/GPU 高水位。**
-- 單集 Blob staging 上限 300 MiB；FFmpeg.wasm 來源讀取／HLS 分片 staging 上限約 320 MiB；ZIP 的 Blob 備援限 240 MiB；MP4 無損合併總輸入限 160 MiB。下載儲存途徑只有未加密且無需轉碼的原始串流能直接串流寫入資料夾，**不能保證 60 集可無損合併成一個 MP4**。
-- [ByteVC2 WASM 實驗](docs/bvc2-wasm.md)：已成功建置約 **4.9 MiB** 的單執行緒 Librempeg `bvc2` 解碼與 x264 編碼核心，並完成 Node.js 實際載入、ABI 檢查及錯誤輸入拒絕測試。瀏覽器播放及下載 H.264 的程式已具備可取消的 Worker 路徑；**但尚未以權限允許的真實 ByteVC2 MP4 驗證成功解密、輸出影格、音訊同步、速度與記憶體**。ByteVC2 現階段需要先下載完整 MP4 再轉碼，不屬於低延遲分段串流；Android Firefox 實機效能未知。沒有 WASM 時仍會明確提示或回退。來源沒有可靠音軌／字幕 metadata 時不顯示虛構選項。
-- 不支援 DRM 授權、直播 HLS、斷點續傳或使用者登入。重新載入頁面會中斷下載；不會保存已簽章媒體 URL 或影片密鑰。
-- HLS 清單資源辨識、標籤 URI 改寫與分片上限檢查在 `src/hls-playlist.js`，不執行網路 I/O；`src/ffmpeg.js` 再依解析結果下載、去重與暫存分片，進度按照清單中的**邏輯分片數**計算。
-- 不接受任意網域的反向代理請求。Worker 驗證 HTTPS 網址與每次重新導向，使用者 Cookie 與授權標頭不會被透傳。
-
-## ByteVC2 核心與效能驗證
-
-`public/bvc2/bvc2-core.mjs`、`bvc2-core.wasm`、`manifest.json` 由 `.github/workflows/bvc2-wasm-probe.yml` 從固定的 Librempeg 和 x264 原始碼重現建置（不透過第三方轉碼服務）。建置 workflow 的 ABI smoke test 通過後才發佈核心。網頁初次載入不會下載大型 ByteVC2 核心；只有選到 ByteVC2 片源才會嘗試載入。WASM 使用單執行緒與獨立 Worker，可取消，但仍會在使用者裝置上消耗 CPU。
-
-> **尚未驗收**：真實 ByteVC2 解碼畫面／音畫同步、真實紅果 1080p HEVC 瀏覽器播放、Android Firefox HEVC 解碼，以及 30–60 分鐘 RAM／GPU 記憶體高水位。**已通過**的是合成 Chromium／Firefox 跨未緩衝區 Seek、reload 續播、播放／下載模式切換及 Chromium 300 秒 MSE 緩衝回收。ByteVC2 的 WASM 全檔轉碼與本次 CENC 增量重封裝是不同功能，不可混為一談。
+- **已通過**：合成 Chromium／Firefox CENC 串流、Seek／續播／背壓；真實紅果 HEVC 的 HTTP 206、WASM 解密轉封裝與 FFmpeg 解碼；macOS WebKit 真實 1080p 首影格及 120 秒遠距 Seek。
+- **尚待驗收**：WebKit 真正 AAC 音訊輸出（Web Audio RMS 為 0 尚不代表實際靜音）、真實 reload／播畢、Windows／Android 解碼及長片資源使用。
+- **ByteVC2**：另一個 agent 正在開發串流與下載；不得把原來的整集 WASM 轉碼或合成測試當成真實 ByteVC2 播放成功。詳見 [技術說明](docs/bvc2-wasm.md)。
+- **公開來源檢測**：真實 CDN 候選可能同時有 HTTP 403／206；腳本只做有界讀取，遇 429 停止。無 DRM 授權、直播 HLS、帳號登入或任意網域代理支援；媒體 URL／金鑰不進日誌。
+- **下載限制**：Blob／FFmpeg 暫存及 ZIP／MP4 合併均有限額；不是所有 60 集都能直接無損併成單一 MP4。仍需 Android Firefox 真實大批次驗收。
 
 ## 授權與第三方來源
 
