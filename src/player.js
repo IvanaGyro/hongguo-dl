@@ -6,7 +6,7 @@
 import { errorWith, classifyError, isHlsUrl, mediaProxyUrl } from './logic.js';
 import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
 import { episodeCacheKey } from './media-cache.js';
-import { recordFailure, playbackFailureMessage } from './retry.js';
+import { recordFailure, playbackFailureMessage, playbackAttemptMessage } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
@@ -43,7 +43,7 @@ export function createPlayer({
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
-  let retryIncrementalCenc = false;
+  let retryIncrementalCenc = false, retryError = null;
   let restartingRemoteSeek = false;
   let canTranscodeBvc2 = false;
   // All measurements refer to the same selected-episode click, not the start
@@ -250,16 +250,49 @@ export function createPlayer({
       check();
     });
   }
+  const streamStages = {
+    metadata: '正在讀取影片索引與加密資訊…',
+    'remux-check': '正在檢查增量串流支援…',
+    'eme-access': '正在檢查瀏覽器串流解密支援…',
+    'eme-session': '正在初始化串流解密…',
+    'wasm-download': '正在載入增量串流工具…',
+    'wasm-verify': '正在驗證串流工具…',
+    'wasm-start': '正在初始化串流工具…',
+    'first-fragment': '正在讀取並解密首段影片…'
+  };
+  function reportStartup(message, signal, attempt = 0) {
+    if (!signal.aborted) setStatus(playbackAttemptMessage(message, attempt, retryError));
+  }
+  async function prepareNativeStream(args) {
+    try {
+      const stream = await openClearKeyStream(args);
+      if (stream?.kind === 'cenc-remux') retryIncrementalCenc = true;
+      return stream;
+    }
+    catch (error) {
+      // This also covers the nativePending prefetch handoff, not just open().
+      if (['CENC_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP'].includes(error?.code))
+        retryIncrementalCenc = true;
+      throw error;
+    }
+  }
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
     const quality = options.quality ?? qualitySelect.value;
     let codec = options.codec ?? codecSelect.value;
     const quiet = !!options.quiet;
+    const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
+    const onStage = stage => { if (streamStages[stage]) report(streamStages[stage]); };
+    const fallbackStatus = message => report(
+      '⚠ 串流未就緒，改為整集下載備援；下載並處理完成後才能播放 · ' + message);
     const seriesId = options.seriesId ?? series?.seriesId;
     let key = episodeCacheKey(seriesId, episode.vid, quality, codec);
     const entry = attempt === 0 ? cache.getEntry(key) : null;
-    if (entry?.blob) return { blob: entry.blob,
-      source: entry.source || { codec, quality, source: 'cache' } };
+    if (entry?.blob) {
+      report('正在讀取已快取的影片…');
+      return { blob: entry.blob, source: entry.source || { codec, quality, source: 'cache' } };
+    }
+    report(attempt ? '正在選取其他 CDN／更新影片來源…' : '正在取得影片來源…');
     // Keep a short-lived source list to rotate through alternate CDNs on
     // retry without another upstream API call. Refresh on the next cycle.
     const sameList = !quiet && lastVariants && lastVariantsVid === episode.vid &&
@@ -274,6 +307,8 @@ export function createPlayer({
     const variants = list.variants || [];
     // A standard browser VVC decoder is not a BVC2 decoder. Only advertise
     // this tier when the dedicated Librempeg WASM bundle is deployed.
+    if (variants.some(v => codecId(v.codec) === 'bytevc2'))
+      report('正在檢查 ByteVC2 播放工具…');
     canTranscodeBvc2 = variants.some(v => codecId(v.codec) === 'bytevc2')
       ? await bvc2BridgeAvailable() : false;
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -326,18 +361,20 @@ export function createPlayer({
       // Do not transcode a whole second episode during playback. Prefetch
       // metadata now; take over when the user actually switches episodes.
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
-      setStatus('讀取 ByteVC2 影片…');
+      const reportBvc2 = message => report(
+        '⚠ 此 ByteVC2 模式需下載及轉碼整集，完成後才能播放 · ' + message);
+      reportBvc2('讀取 ByteVC2 影片…');
       const started = performance.now();
       let received = 0;
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
         (length, total) => {
           received += length;
           if (length > 0) markStartupStage('first-media-byte');
-          if (total > 0) setStatus('讀取 ByteVC2 影片 ' +
+          if (total > 0) reportBvc2('讀取 ByteVC2 影片 ' +
             Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）');
         });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      setStatus('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
+      reportBvc2('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
       const bvc2Phases = {
         'wasm-loading': '載入 ByteVC2 WASM 解碼器…',
         'wasm-ready': 'ByteVC2 解碼器已就緒…',
@@ -347,7 +384,7 @@ export function createPlayer({
       const transcoded = await transcodeBvc2(raw, {
         contentKey: source.contentKey, signal,
         onProgress: phase => {
-          if (!signal.aborted && bvc2Phases[phase]) setStatus(bvc2Phases[phase]);
+          if (!signal.aborted && bvc2Phases[phase]) reportBvc2(bvc2Phases[phase]);
         }
       });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -373,10 +410,10 @@ export function createPlayer({
     if (!quiet && (attempt === 0 || retryIncrementalCenc) &&
         source.contentKey && !isHlsUrl(source.url)) {
       await keyCleanup;
-      const native = await openClearKeyStream({
+      const native = await prepareNativeStream({
         video, source, codec: codecId(source.codec),
         workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode, seriesId)
+        startSeconds: savedResumeSeconds(episode, seriesId), onStage
       });
       if (native) {
         if (native.kind === 'cenc-remux') retryIncrementalCenc = true;
@@ -387,11 +424,11 @@ export function createPlayer({
     }
     let bytes;
     if (isHlsUrl(source.url)) {
-      if (!quiet) setStatus('準備串流中…');
+      if (!quiet) report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 正在讀取分片清單…');
       bytes = await convertHls(source.url, {
         mode: 'copy', contentKey: source.contentKey, signal,
         fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, max),
-        segmentProgress: x => { if (!quiet) setStatus('準備串流 ' + x.current + '/' + x.total); }
+        segmentProgress: x => report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 分片 ' + x.current + '/' + x.total)
       });
     } else {
       // Encrypted MP4s still require the complete source before decryption.
@@ -400,7 +437,7 @@ export function createPlayer({
       let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
       let received = 0, lastUpdate = 0;
       const downloadStarted = performance.now();
-      if (!quiet) setStatus('載入影片…');
+      fallbackStatus('正在下載整集影片…');
       const raw = await fetchBytes(source.url, profile, signal,
         quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
         (length, total) => {
@@ -410,10 +447,11 @@ export function createPlayer({
           const now = Date.now();
           if (!quiet && now - lastUpdate > 250) {
             lastUpdate = now;
-            setStatus(total ? '載入影片 ' + Math.min(100, Math.round(100 * received / total)) + '%'
-              : '載入影片…');
+            fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
+              : '正在下載整集影片…');
           }
         });
+      fallbackStatus('整集已下載，正在準備影片處理工具…');
       const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
       if (warmupError) throw warmupError;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -421,7 +459,7 @@ export function createPlayer({
         console.info('[Hongguo playback] E' + episode.index +
           ' 片源下載：' + Math.round(performance.now() - downloadStarted) +
           'ms，' + raw.byteLength + ' bytes');
-        setStatus('解密並封裝影片…');
+        fallbackStatus('正在解密並重新封裝整集影片…');
       }
       const remuxStarted = performance.now();
       bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
@@ -432,12 +470,15 @@ export function createPlayer({
     const result = new Blob([bytes], { type: 'video/mp4' });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     cache.put(key, result, source);
-    return { blob: result, source, fallbackNotice, variants: quiet ? variants : null };
+    return { blob: result, source, fallbackNotice, fullFileFallback: true,
+      variants: quiet ? variants : null };
   }
   async function load(episode, currentToken, signal, autoPlay, handoff = null) {
     const attempt = sourceAttempt++;
     // If the incoming episode is already being downloaded/decrypted, consume
     // that one promise rather than issuing a second expensive media request.
+    if (handoff && attempt === 0)
+      reportStartup('正在接續預取的影片來源…', signal, attempt);
     const prepared = handoff && attempt === 0 ? await handoff.promise : null;
     let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
     if (resolved?.bvc2Pending) {
@@ -446,10 +487,13 @@ export function createPlayer({
     }
     if (resolved?.nativePending) {
       await keyCleanup;
-      const native = await openClearKeyStream({
+      const native = await prepareNativeStream({
         video, source: resolved.source, codec: codecId(resolved.source.codec),
         workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode)
+        startSeconds: savedResumeSeconds(episode),
+        onStage: stage => {
+          if (streamStages[stage]) reportStartup(streamStages[stage], signal, attempt);
+        }
       });
       resolved = native ? { ...resolved, native, url: native.url, nativePending: false }
         : await sourceForEpisode(episode, signal, attempt,
@@ -511,10 +555,14 @@ export function createPlayer({
     video.style.objectFit = fitSelect.value;
     video.load();
     video.playbackRate = selectedRate;
+    reportStartup(resolved.fullFileFallback
+      ? '整集下載備援處理完成，正在開啟影片…'
+      : '正在等待影片資訊與首段緩衝…', signal, attempt);
     await waitMetadata(signal);
     markStartupStage('loadedmetadata');
     if (signal.aborted || currentToken !== token) return;
     const wanted = savedResumeSeconds(episode);
+    if (wanted > 0.5) reportStartup('正在恢復觀看進度…', signal, attempt);
     await restoreTime(wanted, signal);
     await waitForCencResume(wanted, signal, resolved.native);
     if (signal.aborted || currentToken !== token) return;
@@ -568,8 +616,9 @@ export function createPlayer({
           setStatus('目前 HEVC 媒體來源拒絕存取，嘗試同畫質其他候選來源…');
           continue;
         }
-        errors = recordFailure(errors, parsed, 5);
+        errors = recordFailure(errors, parsed, 5, 20, { retryForbidden: true });
         failure = errors;
+        retryError = parsed;
         setStatus(playbackFailureMessage(errors, parsed, 5));
         if (!errors.retry) {
           loading = false;
@@ -622,6 +671,7 @@ export function createPlayer({
     failure = null;
     sourceAttempt = 0;
     retryIncrementalCenc = false;
+    retryError = null;
     if (lastVariantsVid !== episode.vid) {
       lastVariants = null;
       lastVariantsVid = null;
@@ -635,7 +685,7 @@ export function createPlayer({
     loadStartedAt = performance.now();
     startupStages = new Set();
     if (handoff) signal.addEventListener('abort', () => handoff.controller.abort(), { once: true });
-    setStatus('載入中…');
+    setStatus('正在準備播放…');
     void run(episode, currentToken, signal, autoPlay, null, handoff);
     onProgress?.();
   }
@@ -737,7 +787,8 @@ export function createPlayer({
       disposeNativeKeys();
     }
     const parsed = { code: 'PLAYBACK_ERROR', message: video.error?.message || '播放中斷' };
-    failure = recordFailure(failure, parsed, 5);
+    retryError = parsed;
+    failure = recordFailure(failure, parsed, 5, 20, { retryForbidden: true });
     setStatus(playbackFailureMessage(failure, parsed, 5));
     if (!failure.retry) return;
     const prior = failure;

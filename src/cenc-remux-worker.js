@@ -55,6 +55,7 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
   const moduleUrl = new URL('cenc-core.mjs', base);
   const wasmUrl = new URL('cenc-core.wasm', base);
   const manifestUrl = new URL('manifest.json', base);
+  self.postMessage({ type: 'stage', stage: 'wasm-download' });
   const manifestResponse = await fetch(manifestUrl, {
     signal: controller.signal, cache: 'no-store'
   });
@@ -77,9 +78,11 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     readLimitedAsset(moduleResponse, 1024 * 1024),
     readLimitedAsset(wasmResponse, 24 * 1024 * 1024)
   ]);
+  self.postMessage({ type: 'stage', stage: 'wasm-verify' });
   await verifyCencRuntimeBundle(manifest, moduleBytes, wasmBytes);
   if (controller.signal.aborted) throw new Error('Canceled');
   const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
+  self.postMessage({ type: 'stage', stage: 'wasm-start' });
   const core = await createModule({
     wasmBinary: wasmBytes, readRange, writeChunk: data => assembler.push(data)
   });
@@ -87,6 +90,7 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     throw new Error('WASM missing MOV demuxer or MP4 muxer');
   if (startSeconds > 0.5 && typeof core._cenc_stream_remux_at !== 'function')
     throw new Error('CENC remux WASM seek API unavailable');
+  self.postMessage({ type: 'stage', stage: 'first-fragment' });
   const ret = startSeconds > 0.5
     ? await core.ccall('cenc_stream_remux_at', 'number',
       ['number', 'string', 'number'], [fileSize, key, startSeconds], { async: true })

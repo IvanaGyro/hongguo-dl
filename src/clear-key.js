@@ -349,7 +349,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
-  fetchImpl = fetch,
+  fetchImpl = fetch, onStage = () => {},
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -369,6 +369,7 @@ export async function openClearKeyStream({
   aborted(signal);
   const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
   const metadata = {};
+  onStage('metadata');
   let kid;
   try { kid = await probeCencKid(url, signal, fetchImpl, metadata); }
   catch (error) {
@@ -388,8 +389,9 @@ export async function openClearKeyStream({
   const key = hexKey(source.contentKey);
   if (!metadata.fragmented) {
     try {
+      onStage('remux-check');
       const remux = await openCencProgressiveStream({
-        video, url, fileSize: metadata.fileSize,
+        video, url, fileSize: metadata.fileSize, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
         key: source.contentKey, signal,
@@ -412,6 +414,7 @@ export async function openClearKeyStream({
     return declined('no-eme-or-remux');
   let access;
   try {
+    onStage('eme-access');
     access = await requestAccess(KEY_SYSTEM, [{
       initDataTypes: ['cenc', 'keyids'],
       videoCapabilities: [{ contentType: mime, encryptionScheme: 'cenc' }],
@@ -423,6 +426,7 @@ export async function openClearKeyStream({
   let session = null, mediaKeysSet = false;
   try {
     aborted(signal);
+    onStage('eme-session');
     const keys = await access.createMediaKeys();
     await video.setMediaKeys(keys);
     mediaKeysSet = true;

@@ -130,6 +130,8 @@ function browserProcessTreeRssBytes(rootPid) {
 
 const KID = '11223344556677889900aabbccddeeff';
 const KEY = '00112233445566778899aabbccddeeff';
+const cdnRetry = process.env.CENC_TEST_CDN_RETRY === '1';
+let deniedCdnRequests = 0, alternateCdnRequests = 0;
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
   headless: true, ...(browserName === 'firefox'
@@ -173,6 +175,15 @@ if (process.env.CENC_TEST_MULTI_SEEK === '1') {
     };
   });
 }
+await page.addInitScript(() => {
+  document.addEventListener('DOMContentLoaded', () => {
+    const status = document.querySelector('#player-status');
+    window.__playbackStatusLog = [];
+    new MutationObserver(() => {
+      window.__playbackStatusLog.push(status.textContent);
+    }).observe(status, { childList: true, subtree: true, characterData: true });
+  });
+});
 const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
 const rapidDiagnosticPhases = [];
 let exercisingRepeatedSeeks = false, rapidPhase = 'not-started';
@@ -182,6 +193,12 @@ const canceledSeekMovError = /^\[mov,mp4,m4a,3gp,3g2,mj2 @ 0x[0-9a-f]+\] (?:subs
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
   const text = message.text();
+  // Chromium reports the deliberately rejected fixture request independently
+  // of the application's caught 403. Exempt only that exact transport error.
+  if (cdnRetry && message.type() === 'error' &&
+      /^Failed to load resource: the server responded with a status of 403\b/.test(text) &&
+      new URL(message.location().url, 'http://127.0.0.1').searchParams.get('url') ===
+        'https://denied.fqnovelvod.com/cenc-progressive.mp4') return;
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {
@@ -207,11 +224,13 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   if (u.pathname === '/api/source') return route.fulfill({
     contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' },
-    body: JSON.stringify({ variants: [{
-      codec: 'h264', quality: '720p', source: 'app',
-      url: 'https://cdn.fqnovelvod.com/cenc-progressive.mp4',
-      contentKey: KEY, width: 480, height: 270
-    }] })
+    body: JSON.stringify({ variants: (cdnRetry
+      ? ['https://denied.fqnovelvod.com/cenc-progressive.mp4',
+        'https://alternate.fqnovelvod.com/cenc-progressive.mp4']
+      : ['https://cdn.fqnovelvod.com/cenc-progressive.mp4']).map(url => ({
+        codec: 'h264', quality: '720p', source: 'app', url,
+        contentKey: KEY, width: 480, height: 270
+      })) })
   });
   if (u.pathname !== '/api/media') throw new Error('Unexpected API endpoint');
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
@@ -220,6 +239,15 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
       first: 0, last: input.length - 1, bytes: input.length });
     return route.fulfill({ status: 416, contentType: 'text/plain',
       body: 'Bounded synthetic fixture requires Range' });
+  }
+  if (cdnRetry) {
+    const host = new URL(u.searchParams.get('url')).hostname;
+    if (host.startsWith('denied.')) {
+      deniedCdnRequests++;
+      return route.fulfill({ status: 403, body: 'synthetic CDN rejection' });
+    }
+    assert(host.startsWith('alternate.'), 'Retry must select the alternate CDN');
+    alternateCdnRequests++;
   }
   const first = Number(range[1]);
   const last = range[2] ? Math.min(Number(range[2]), input.length - 1) : input.length - 1;
@@ -283,7 +311,9 @@ try {
       await page.locator('#codec-diagnostics summary').click();
     }
     await page.locator('#mode-play').click();
-    await page.locator('#episodes button.play-episode').first().click();
+    // Entering play mode already resumes the first episode. Do not restart
+    // that load when measuring exactly one rejected-CDN/rotation sequence.
+    if (!cdnRetry) await page.locator('#episodes button.play-episode').first().click();
     try {
       await page.waitForFunction(() => document.querySelector('#player-source-info')
         ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 20000 });
@@ -317,6 +347,16 @@ try {
     assert(frame.requests >= 2 && !mediaRequests.some(req => req.unbounded),
       'Metadata and fragment HTTP ranges must both be used');
     assert.equal(frame.mediaKeys, false, 'Clear output should not need EME');
+    if (cdnRetry) {
+      assert.equal(deniedCdnRequests, 1, 'First CDN should fail once, then rotate');
+      assert(alternateCdnRequests >= 2, 'Alternate must serve metadata and media Ranges');
+      const statuses = await page.evaluate(() => window.__playbackStatusLog);
+      assert(statuses.some(s => /HTTP 403.*第 1 次重試/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => /第 1 次重試.*HTTP 403.*影片索引/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => s.includes('載入增量串流工具')), JSON.stringify(statuses));
+      assert(!statuses.some(s => s.includes('整集下載備援')), JSON.stringify(statuses));
+      console.log('PASS ' + browserName + ' CENC 403 rotates CDN and streams before EOF with stage/retry UI');
+    }
     await page.waitForFunction(() =>
       document.querySelector('#player-video')?.currentTime > 1.5,
       null, { timeout: 20000 });

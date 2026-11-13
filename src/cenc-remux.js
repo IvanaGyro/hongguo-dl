@@ -101,7 +101,7 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  * before MSE opens; Worker output waits for sourceopen/SourceBuffer ACKs.
  */
 export async function openCencProgressiveStream({
-  video, url, fileSize, codec, hasAac, key, signal,
+  video, url, fileSize, onStage = () => {}, codec, hasAac, key, signal,
   startSeconds = 0, durationSeconds = null, videoCodecString = null
 }) {
   if (!/^[a-f0-9]{32}$/i.test(key || '')) return null;
@@ -237,6 +237,11 @@ export async function openCencProgressiveStream({
   };
   worker.onmessage = ({ data }) => {
     if (closed || failed || !data) return;
+    if (data.type === 'stage') {
+      if (['wasm-download', 'wasm-verify', 'wasm-start', 'first-fragment'].includes(data.stage))
+        onStage(data.stage);
+      return;
+    }
     if (data.type === 'error') return fail('wasm-remux');
     if (data.type === 'done') {
       finished = true;
