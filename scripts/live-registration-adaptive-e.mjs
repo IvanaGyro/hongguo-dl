@@ -96,7 +96,11 @@ async function trigger(round){
   await sleep(5000);
   mark('trigger-start',{round,intervalMs:1000,max:MAX_TRIGGER_REQUESTS});
   let nSuccess=0;
+  const triggerStart=performance.now();
   for(let i=1;i<=MAX_TRIGGER_REQUESTS;i++){
+    // Match prior runs: one launch at each integer-second boundary.
+    const remaining=triggerStart+(i-1)*1000-performance.now();
+    if(remaining>0)await sleep(remaining);
     const r=await send(round,'trigger-1s',i);
     const type=classify(r);
     if(type==='zero'){
@@ -122,7 +126,6 @@ async function trigger(round){
       return null;
     }
     nSuccess++;
-    if(i<MAX_TRIGGER_REQUESTS)await sleep(1000);
   }
   mark('no-zero-within-trigger-limit',{round,n:MAX_TRIGGER_REQUESTS});
   await persist();
