@@ -3,9 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sourceQueryForPlayback } from '../src/source-options.js';
 
-test('explicit 1080p bypasses the expensive public HTML source probe', () => {
+test('all playback selections fetch complete unfiltered sources', () => {
   assert.deepEqual(sourceQueryForPlayback('1080p'),
-    { quality: '1080p', codec: 'auto', partial: true });
+    { quality: 'auto', codec: 'auto', partial: false });
 });
 
 test('auto and unsupported exact quality requests retain full metadata listing', () => {

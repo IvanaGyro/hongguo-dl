@@ -96,6 +96,16 @@ export function createPlayer({
   function setStatus(value) { status.textContent = value; }
   function updateCodecOptions(variants, partial = lastVariantsPartial) {
     const available = availableRenditions(variants);
+    // The HTML supplies only the Auto option. Enumerate observed renditions
+    // for this episode, retaining an explicit selection even if unavailable.
+    const requested = qualitySelect.value || preferences.quality || 'auto';
+    const names = new Set(available.qualities);
+    if (requested !== 'auto') names.add(requested);
+    const qualities = [...names].sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
+    qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
+      ...qualities.map(q => new Option(q + (available.qualities.includes(q)
+        ? '' : '（本集未提供）'), q)));
+    qualitySelect.value = requested;
     const atQuality = codecsAtQuality(variants, qualitySelect.value);
     for (const option of codecSelect.options) {
       if (option.value !== 'auto')
@@ -108,13 +118,11 @@ export function createPlayer({
     if (auto) auto.textContent = atQuality.length === 1 && qualitySelect.value !== 'auto'
       ? '自動（' + (CODEC_NAMES[atQuality[0]] || atQuality[0]) + '）' : '自動';
     for (const option of qualitySelect.options) {
-      if (option.value !== 'auto') {
-        const candidates = (variants || []).filter(v => qualityId(v) === option.value);
-        option.disabled = !partial && available.qualities.length > 0 && !candidates.length;
-        option.textContent = option.value + (candidates.length &&
-          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey) && !canTranscodeBvc2
-            ? '（ByteVC2，尚無可用 WASM）' : '');
-      }
+      if (option.value === 'auto') continue;
+      const candidates = (variants || []).filter(v => qualityId(v) === option.value);
+      if (candidates.length &&
+          candidates.every(v => codecId(v.codec) === 'bytevc2' && v.contentKey) &&
+          !canTranscodeBvc2) option.textContent += '（ByteVC2，尚無可用 WASM）';
     }
   }
   function ordered() {
@@ -544,7 +552,10 @@ export function createPlayer({
     }
     if (!isHlsUrl(source.url) && !source.contentKey) {
       log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
-      return { url: source.url, source, fallbackNotice, variants: quiet ? variants : null };
+      // Non-CENC native <video> is not a JS-readable Range fetch; preserve
+      // its reliable proxy path until HTMLMediaElement fallback is implemented.
+      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
+        source, fallbackNotice, variants: quiet ? variants : null };
     }
     // If the current episode already uses native EME, prepare only the next
     // episode's source metadata. Avoid downloading+remuxing the whole upcoming

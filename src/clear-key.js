@@ -381,7 +381,8 @@ export async function openClearKeyStream({
   aborted(signal);
   const proxyUrl = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
   const transport = createMediaTransport({ directUrl: source.url, proxyUrl, fetchImpl,
-    direct: typeof window !== 'undefined',
+    direct: typeof window !== 'undefined' &&
+      !['localhost', '127.0.0.1'].includes(location.hostname),
     onFallback: reason => onStage('media.transport.fallback', { reason }) });
   const url = transport.mode === 'direct' ? source.url : proxyUrl;
   const metadata = {};
