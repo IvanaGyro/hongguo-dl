@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'tests/live-hevc.webkit.mjs'
+      - 'tests/live-hevc-extended.mjs'
       - '.github/workflows/live-hevc-webkit.yml'
       - 'src/cenc-remux.js'
       - 'src/cenc-source-fallback.js'
@@ -29,5 +30,7 @@ jobs:
           npx playwright install webkit
       - name: Check test script syntax
         run: node --check tests/live-hevc.webkit.mjs
-      - name: Verify HEVC MSE support before fetching any real media
+      - name: Verify real HEVC first frame, Web Audio PCM and distant seek
+        env:
+          CENC_WEBKIT_EXTENDED: '1'
         run: node tests/live-hevc.webkit.mjs

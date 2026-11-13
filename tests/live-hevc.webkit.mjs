@@ -200,6 +200,10 @@ try {
       'Real HEVC browser first frame/time not verified across four accessible episodes');
     console.log('PASS real Hongguo 1080p HEVC first decoded browser frame and advancing clock',
       JSON.stringify({ episode: verifiedEpisode, mediaHttpStatuses: counters() }));
+    if (process.env.CENC_WEBKIT_EXTENDED === '1') {
+      const { verifyRealHevcAudioAndSeek } = await import('./live-hevc-extended.mjs');
+      await verifyRealHevcAudioAndSeek(page);
+    }
   }
 } finally {
   await browser.close();
