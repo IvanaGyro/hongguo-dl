@@ -183,6 +183,7 @@ const canceledSeekMovError = /^\[mov,mp4,m4a,3gp,3g2,mj2 @ 0x[0-9a-f]+\] (?:subs
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => {
   const text = message.text();
+  if (text.startsWith("CENC TRACE")) console.log(text);
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {

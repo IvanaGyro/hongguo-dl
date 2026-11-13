@@ -81,7 +81,8 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
   if (controller.signal.aborted) throw new Error('Canceled');
   const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
   const core = await createModule({
-    wasmBinary: wasmBytes, readRange, writeChunk: data => assembler.push(data)
+    wasmBinary: wasmBytes, readRange, writeChunk: data => assembler.push(data),
+    printErr: line => { console.info("CENC TRACE", JSON.stringify({startSeconds, aborted: controller.signal.aborted, bridgeError: core.bridgeError || null})); console.error(line); }
   });
   if (core._cenc_remux_available() !== 1)
     throw new Error('WASM missing MOV demuxer or MP4 muxer');

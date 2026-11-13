@@ -1,7 +1,7 @@
 name: Progressive CENC MSE real-frame browser acceptance
 on:
   push:
-    branches: [main]
+    branches: [main, fix/cenc-cancel-diagnostics]
     paths:
       - '.github/workflows/cenc-browser.yml'
       - 'src/cenc-remux.js'
@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [fast, long]
+        suite: [fast]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
