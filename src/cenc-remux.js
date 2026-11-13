@@ -176,10 +176,14 @@ export async function openCencProgressiveStream({
   // Termination itself stops Worker fetches and discards its pending ACK.
   // Stop Range fetch and pending ACK *before* reporting the media error.
   // SourceBuffer errors are not permitted to leave a live WASM worker behind.
-  const fail = cause => {
+  const fail = (cause, streamError = null) => {
     if (closed || failed) return;
     failed = true;
-    onStage('mse.failed', { reason: cause || 'unknown' });
+    onStage('mse.failed', {
+      reason: cause || 'unknown',
+      code: streamError?.code || 'CENC_REMUX_FAILED',
+      status: streamError?.status || 0
+    });
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
     worker.terminate();
@@ -247,11 +251,14 @@ export async function openCencProgressiveStream({
           requests: data.requests, receivedBytes: data.receivedBytes,
           fetchMs: data.fetchMs
         } : data.stage === 'media-range-failed' ? {
-          request: data.request, code: data.code, fetchMs: data.fetchMs
+          request: data.request, code: data.code, status: data.status,
+          offset: data.offset, bytes: data.bytes, fetchMs: data.fetchMs
         } : {});
       return;
     }
-    if (data.type === 'error') return fail('wasm-remux');
+    if (data.type === 'error') return fail('wasm-remux', {
+      code: data.code, status: data.status
+    });
     if (data.type === 'done') {
       finished = true;
       onStage('mse.done', { fragments: mediaFragments, bytes: mediaBytes });
@@ -320,7 +327,7 @@ export async function openCencProgressiveStream({
     if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
     await close();
     const replacement = await openCencProgressiveStream({
-      video, url, fileSize, codec, hasAac, key, signal,
+      video, url, fileSize, codec, hasAac, key, signal, onStage,
       startSeconds: seconds, durationSeconds, videoCodecString, bridge
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');

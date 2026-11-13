@@ -32,6 +32,7 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
   controller = new AbortController();
   let cacheStart = -1, cacheBytes = new Uint8Array(0);
   let rangeRequests = 0, receivedBytes = 0;
+  let lastRangeError = null;
   const readRange = async (start, wanted) => {
     if (controller.signal.aborted) throw new Error('Canceled');
     if (!Number.isInteger(start) || start < 0 || start >= fileSize ||
@@ -48,9 +49,14 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
       bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
         fileSize, controller.signal);
     } catch (error) {
+      lastRangeError = {
+        code: /^CENC_[A-Z_]{2,45}$/.test(error?.code || '')
+          ? error.code : 'CENC_RANGE_HTTP',
+        status: Number.isInteger(error?.status) ? error.status : 0
+      };
       self.postMessage({ type: 'stage', stage: 'media-range-failed',
-        request: rangeRequests + 1,
-        code: /^[A-Z_]{2,45}$/.test(error?.code || '') ? error.code : 'RANGE_ERROR',
+        request: rangeRequests + 1, offset: start, bytes: end - start + 1,
+        code: lastRangeError.code, status: lastRangeError.status,
         fetchMs: Math.round(performance.now() - fetchStarted) });
       throw error;
     }
@@ -140,6 +146,8 @@ self.onmessage = ({ data }) => {
     // The Worker receives a proxied, signed URL and a CENC key. A native
     // fetch/decoder error can include either; never relay arbitrary messages.
     // The main thread handles all failures through the same resource cleanup.
-    self.postMessage({ type: 'error', detail: 'CENC streaming worker failed' });
+    self.postMessage({ type: 'error',
+      code: lastRangeError?.code || 'CENC_REMUX_FAILED',
+      status: lastRangeError?.status || 0 });
   });
 };

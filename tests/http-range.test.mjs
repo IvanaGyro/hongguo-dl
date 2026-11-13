@@ -130,3 +130,30 @@ test('a transport that rejects after abort remains cancellation, not a network e
   controller.abort();
   await assert.rejects(pending, { message: 'Canceled' });
 });
+
+
+test('Range errors keep exact HTTP category without leaking URL or response body', async () => {
+  const url = 'https://media.example/video?auth=secret-value';
+  for (const [status, code] of [
+    [200, 'CENC_RANGE_UNSUPPORTED'], [403, 'CENC_SOURCE_FORBIDDEN'],
+    [416, 'CENC_RANGE_INVALID'], [429, 'CENC_RATE_LIMITED'],
+    [503, 'CENC_RANGE_HTTP']
+  ]) {
+    await assert.rejects(
+      readVerifiedRange(async () => ({
+        status, body: { cancel: async () => {} }
+      }), url, 10, 13, 100), error => {
+        assert.equal(error.code, code);
+        assert.equal(error.status, status);
+        assert.doesNotMatch(error.message, /secret|media\.example|auth=/);
+        return true;
+      }
+    );
+  }
+  await assert.rejects(
+    readVerifiedRange(async () => {
+      throw new Error(url);
+    }, url, 10, 13, 100),
+    { code: 'CENC_RANGE_HTTP', status: 0, message: 'HTTP Range connection failed' }
+  );
+});
