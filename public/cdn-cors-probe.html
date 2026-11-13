@@ -1,0 +1,54 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Temporary CDN CORS Range probe</title><body><h1>CDN Range probe (2 episode samples)</h1><pre id="result">Loading…</pre><script type="module">
+const OUT = document.querySelector('#result');
+const WORKER='https://hongguo-dl.ivana-gyro.workers.dev', SID='7699513062054710296';
+function output(value){ OUT.textContent=JSON.stringify(value,null,2); }
+const results={origin:location.origin,episodes:[],started:new Date().toISOString()};
+async function json(path){const res=await fetch(WORKER+path,{headers:{Accept:'application/json'}});if(!res.ok)throw Error('Worker HTTP '+res.status);return res.json();}
+const allowed=['qznovelvod.com','fqnovelvod.com','douyinvod.com'];
+const safeHost=url=>{try{const h=new URL(url).hostname;return allowed.some(d=>h===d||h.endsWith('.'+d))?h:'disallowed'}catch{return 'invalid'}};
+async function rangeProbe(variant,sequence) {
+ const host=safeHost(variant.url), result={sequence,host,codec:variant.codec||'unknown',quality:variant.quality||'unknown'};
+ if(host==='disallowed'||host==='invalid')return {...result,error:'invalid-url'};
+ const started=performance.now(),controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),11000);
+ try{
+  const r=await fetch(variant.url,{mode:'cors',credentials:'omit',headers:{Range:'bytes=0-15'},signal:controller.signal,cache:'no-store'});
+  result.httpStatus=r.status;
+  result.contentRangeValid=Boolean(/^bytes 0-15\/\d+$/.test(r.headers.get('content-range')||''));
+  result.contentLength=r.headers.get('content-length');
+  if(r.status===206 && r.body){
+    const reader=r.body.getReader();let n=0;
+    try{while(n<16){const p=await reader.read();if(p.done)break;n+=p.value.byteLength;if(n>16)break;}}
+    finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+    result.readBytes=n;
+  }else await r.body?.cancel().catch(()=>{});
+ }catch(e){result.error=e.name==='AbortError'?'timeout':'CORS-or-fetch-failure';}
+ finally{clearTimeout(timeout);result.elapsedMs=Math.round(performance.now()-started);}
+ return result;
+}
+try {
+ const series=await json('/api/series?input='+SID);
+ const episodes=[series.episodes.find(e=>e.available!==false),series.episodes.find(e=>e.available===false)];
+ for(const [index,episode] of episodes.entries()){
+  if(!episode){results.episodes.push({kind:index?'restricted':'unrestricted',error:'no-sample-episode'});output(results);continue;}
+  const result={kind:index?'restricted':'unrestricted',index:episode.index,channels:[],probes:[]};
+  results.episodes.push(result);output(results);
+  const path='/api/source?sid='+SID+'&vid='+episode.vid+'&quality=auto&codec=auto&channel=';
+  const sources=await Promise.allSettled(['app','web'].map(async channel=>({channel,data:await json(path+channel)})));
+  const byUrl=new Map();
+  for(let j=0;j<sources.length;j++){
+   const s=sources[j];
+   if(s.status==='rejected'){result.channels.push({channel:j?'web':'app',error:String(s.reason.message||'failure').slice(0,80)});continue;}
+   const list=s.value.data.variants||[];
+   result.channels.push({channel:s.value.channel,variants:list.length});
+   for(const v of list)if(v?.url&&!byUrl.has(v.url))byUrl.set(v.url,v);
+  }
+  const variants=[...byUrl.values()];
+  for(let base=0;base<variants.length;base+=3){
+   result.probes.push(...await Promise.all(variants.slice(base,base+3).map((v,j)=>rangeProbe(v,base+j+1))));
+   output(results);
+  }
+ }
+ results.complete=true;
+}catch(error){results.failure=String(error.message||error).slice(0,160);}
+output(results);
+</script></body></html>
