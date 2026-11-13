@@ -42,7 +42,15 @@ export function formatBytes(n) {
 }
 export function classifyError(error) {
   if (error?.name === 'AbortError' || error?.code === 'CANCELED') return { code: 'CANCELED', message: '使用者已取消' };
-  const code = String(error?.code || 'DOWNLOAD_ERROR');
+  let code = String(error?.code || 'DOWNLOAD_ERROR');
+  // Older Worker deployments report upstream forbidden/rate-limit as
+  // MEDIA_HTTP. Classify only the stable, exact sanitized HTTP status message,
+  // never parse or display a signed URL / media response body.
+  const rawMessage = String(error?.message || '');
+  if (code === 'MEDIA_HTTP' && /^媒體來源回傳 HTTP 403$/.test(rawMessage))
+    code = 'MEDIA_SOURCE_FORBIDDEN';
+  else if (code === 'MEDIA_HTTP' && /^媒體來源回傳 HTTP 429$/.test(rawMessage))
+    code = 'MEDIA_RATE_LIMITED';
   const descriptions = {
     MEMORY_LIMIT: '檔案過大，瀏覽器記憶體模式無法安全處理；請改用支援資料夾寫入的瀏覽器，或下載較小片源',
     FFMPEG_ERROR: 'FFmpeg.wasm 處理失敗：可能不支援此影片編碼、加密方式或媒體格式',
@@ -57,7 +65,12 @@ export function classifyError(error) {
     ERR_NETWORK: '連線無法建立，請檢查網路或 Cloudflare Worker 與來源主機的連線',
     CODEC_UNAVAILABLE: '所選編碼沒有可用片源，請改選不限編碼'
   };
-  return { code, message: String(error?.message || descriptions[code] || '下載失敗').slice(0, 300) };
+  const message = code === 'MEDIA_SOURCE_FORBIDDEN'
+    ? '媒體 CDN 拒絕存取（HTTP 403），不是影音解碼失敗；請確認官方影片仍可存取'
+    : code === 'MEDIA_RATE_LIMITED'
+      ? '媒體 CDN 限制請求頻率（HTTP 429），請勿連續重試'
+      : rawMessage || descriptions[code] || '下載失敗';
+  return { code, message: message.slice(0, 300) };
 }
 export function errorWith(code, message) {
   return Object.assign(new Error(message), { code });

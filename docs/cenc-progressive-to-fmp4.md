@@ -4,7 +4,7 @@
 
 **首選：精簡 Librempeg/Libavformat WASM，經 HTTP Range 增量讀取，CENC 解密後保持 HEVC/AAC 壓縮封包不變，以 MSE 需要的 fMP4 逐段輸出。**
 
-原生 FFmpeg 已實測成功；後續已在主分支實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**。合成 H.264/AAC 加密非分段 MP4 已在 Chromium/Firefox 通過 EOF 前首影格與持續播放測試；合成 HEVC/AAC 已在 Node WASM 完成可解碼轉封裝。**合成 H.264/AAC 的 unbuffered Seek/續播已在 Chromium/Firefox 通過，Chromium 合成 300 秒完整播畢已通過，另有合成 HEVC 1080p WASM stream-copy proof；紅果真實 1080p HEVC 與 Android Firefox 仍未驗證，1800 秒合成 Chromium 完整播放、MSE 有界緩衝已通過，Chromium 合成影片暫停 120 秒後 Range 不繼續增長、恢復後正常播畢已獨立驗證**。請以 [最新交接計畫](NEXT-SESSION-PLAN.md) 與 [進度紀錄](AGENT-PROGRESS.md) 為準。
+現行主分支已實作 **Librempeg Asyncify AVIO + HTTP Range + clear fMP4 + MSE**，真實紅果 HEVC 1080p 已在 macOS WebKit 通過首影格及未緩衝 120 秒 Seek 驗收；AAC 實際瀏覽器音訊、完整播畢及跨平台測試尚未完成。**進度與待辦只在 [唯一狀態文件](AGENT-CURRENT.md) 維護**，本篇保留技術設計與實作限制。
 
 ### 已有證據
 
@@ -60,24 +60,6 @@
 5. **seek、續播與清理**：現行版本已實作 indexed RAP 附近的 CENC seek、Worker/MediaSource 重建、歷史位置恢復、MSE eviction 與取消清理；這些行為已通過合成 Chromium/Firefox 的 55 秒及 10/50/90% 跳轉／reload。真實來源及 Android 尚需重複驗證。
 6. **錯誤與保密**：區分來源 HTTP 錯誤、CENC 解密錯誤、mux 封裝錯誤、MSE 不支援、HEVC 解碼失敗。不可在控制台記錄 URL 的 signed token、金鑰或實際影片資料。現有整檔 FFmpeg.wasm 保留為備援。
 
-## 最新驗證狀態與下一步（2026-11-13）
+## 驗收與後續工作
 
-### 已實作、已由合成素材通過
-
-- **增量 CENC→clear fMP4**：Librempeg Asyncify WASM 使用 Worker HTTP Range、片段化 mux 與 MSE sourcebuffer；瀏覽器可在完整來源 EOF 前呈現加密 H.264/AAC 的真實影格。[Browser #43279166406](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279166406) Chromium / Firefox PASS。
-- **unbuffered seek / 恢復**：55 秒跳轉、7→63→35→5→63 秒多次往返、90% reload 均已合成測試 PASS；HEVC 6 秒 indexed RAP seek 保留有效 PTS。[WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)。
-- **300 秒完整播放與緩衝控制**：Chromium 合成 CENC H.264/AAC 完整播放到 EOF，maxBufferedSpan 約 78.02s、32 次 Range；Linux test harness+browser process-tree RSS 粗觀測 first=769.2、peak=769.2、last=764.1 MiB（包含 shared pages，不能代表實機 GPU RAM）。
-- **1080p HEVC/AAC WASM remux**：合成 1920×1080 encrypted progressive MP4 經 WASM copy 成 clear fMP4；FFmpeg 真正解碼成功且未在首 moof 前讀到來源 EOF。[WASM #43279575089](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43279575089)。這**不是** Windows/Android 的 HEVC 瀏覽器解碼驗證。
-- **發行一致性**：已實作 main JS/WASM/manifest SHA256 pin、build provenance 驗證及 CI/Pages 部署阻擋；最近確認 [CI #43283368259](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283368259) 和 [Pages #43283367990](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283367990) success。
-
-### 已定位並修補的 1800 秒影片索引問題（合成端到端已通過）
-
-- **1800 秒合成 CENC**：首輪 [Browser #43281729069](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43281729069) FAIL：MP4 moov/sample tables 超過當時的 1MiB 限制，未找到 KID，備援回整檔得到 HTTP 416；修補為 8MiB bounded metadata 與單元回歸後，[Browser #43283216947](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43283216947) **completed/success 且有實際 PASS 行**：Chromium 16× 播至 1800.021402s、ended=true、videoError=null、104 Range、MSE buffered span 最大 72s、ahead 43.56s；首影格於 HTTP EOF 前且僅取得約 6.6% 來源。process-tree RSS 802.5→peak 838.8→last 838.2 MiB，是 Linux Node harness + browser 粗量測，不能當成精確 GPU/Android RAM。**另外的 120 秒暫停 Range 節流測試已取得獨立 [Browser #43292941869](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43292941869) PASS**；這是 Chromium 合成片，非 Android/HEVC 真實裝置驗收。
-
-### 尚未驗證的最終產品條件
-
-- 真實紅果 HEVC 1080p CENC 來源必須能回正確的 HTTP 206 Range，且在具 HEVC MSE 解碼的實機上可顯示畫面、聲音、seek、完整播畢；先前 CI 的授權來源 CDN 回 403，無法把此 HTTP 失敗推論成解碼失敗。
-- Android Firefox／Windows 實機 HEVC、長時間暫停、弱網路與電力／RAM 指標；合成 Playwright Linux success 不可替代。
-- ByteVC2 是獨立 decoder + x264 實驗性轉碼路徑，不是 HEVC lossless remux；只有 ABI／非 BVC2 負例 PASS，仍缺合法實際 ByteVC2 bitstream 的正例解碼、音畫同步與效能資料。請參閱 [bvc2-wasm.md](bvc2-wasm.md)。
-
-**持續開發原則**：所有提交直接到 `main`，不建立 PR；每階段立刻寫入 [AGENT-PROGRESS.md](AGENT-PROGRESS.md)，以 [CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md) 記錄 PASS/FAIL/NOT TESTED，避免在 GitHub 任何操作上無限重試或因文件更新停工。
+最新 PASS／FAIL、當前 Goal 及 Pending work 請參見 [唯一狀態文件](AGENT-CURRENT.md)；此技術文件不再重複維護進度流水帳。

@@ -1,0 +1,55 @@
+name: Real HEVC CENC WASM remux and decode proof (bounded)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/live-cenc-wasm-proof.mjs'
+      - '.github/workflows/live-cenc-wasm-proof.yml'
+  workflow_dispatch:
+concurrency:
+  group: live-cenc-wasm-proof-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check bounded real probe syntax and pinned WASM provenance
+        run: |
+          node --check scripts/live-cenc-wasm-proof.mjs
+          node scripts/cenc-wasm-bundle.mjs verify
+      - name: Install system FFmpeg for strict real HEVC and AAC decoding
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg >/dev/null
+      - name: Prove one real publicly accessible HEVC CENC episode remuxes before EOF
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=/tmp/hongguo-real-cenc-clear-fmp4.mp4
+          trap 'rm -f "$output"' EXIT
+          node scripts/live-cenc-wasm-proof.mjs "$output"
+          test -s "$output"
+          # Do not publish or artifact the underlying copyrighted media.
+          ffprobe -v error -show_entries stream=codec_type,codec_name,width,height -of json "$output"
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$output" | grep -Fxq hevc
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$output" | grep -Fxq aac
+          ffmpeg -nostdin -hide_banner -v error -xerror -i "$output" -map 0:v:0 -frames:v 12 -f null -
+          ffmpeg -nostdin -hide_banner -v error -xerror -i "$output" -map 0:a:0 -t 3 -f null -
+          # Do not equate presence of an AAC track with non-silent PCM.
+          # Independently measure only aggregate decoded volume near 0s and
+          # 120s; never print or save PCM, source URLs or media payloads.
+          for second in 0 120; do
+            echo "Real source AAC 10s volume stats at media time ${second}s:"
+            ffmpeg -nostdin -hide_banner -v info -ss "$second" -i "$output" \
+              -map 0:a:0 -vn -t 10 -af volumedetect -f null - 2>&1 \
+              | grep -E 'mean_volume:|max_volume:' \
+              | sed -E 's/^\\[[^]]+\\] //'
+          done
+          echo 'PASS actual HEVC video frames and AAC audio decode after real CENC progressive remux'

@@ -1,26 +1,38 @@
-# Hongguo DL — 目前狀態（2026-11-13，階段 73）
+# Hongguo DL — 專案進度與當前目標
 
-> **工程規範**：直接提交 `main`，不建立 PR。新改動應有針對性測試，區分 pending／success／failure；不記錄 signed URLs、金鑰或真實私有媒體。每階段更新 AGENT-PROGRESS，保持交接短版。
+更新：2026-11-13。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
 
-## 近期可證實結果
+## 階段總覽
 
-- **階段 73：批次 ZIP 匯出 Service Worker 啟動／ACK 可取消**：[4d34056](https://github.com/IvanaGyro/hongguo-dl/commit/4d340566b0536dff867ce389f96d0c49d4032831)：`triggerArchiveDownload` 改接收 `AbortSignal`，在 SW register、ready、controllerchange、MessageChannel ACK 等待及 fallback 讀取時都能中止；已移交但未開始下載的 SW ZIP 記錄可透過 `{cancel:id}` 刪除；**取消不得觸發記憶體 fallback 或下載 anchor**。新增 `tests/archive-download.test.mjs`（故意阻塞 SW.ready、SW ACK 的取消回歸）。[主 CI #43336436570](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436570) **completed/success**；[Firefox #43336436624](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436624) **completed/success**（含既有 60 集 ZIP、MP4 concat、延遲 source abort E2E），[Pages #43336436625](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436625) success。[CENC Browser #43336436548](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43336436548) 最後查詢尚未給出 job 結論。未修改影音編碼器與 ZIP 格式。
+| 大階段 | 狀態 | 主要成果／界線 |
+| --- | --- | --- |
+| **1. 網頁產品與下載流程** | 已完成核心 | GitHub Pages + Cloudflare Worker、播放／畫質選擇、佇列、ZIP/MP4、取消與進度恢復；仍需真實 Android Firefox 大批次驗收 |
+| **2. CENC 低延遲串流核心** | 已完成核心 | HTTP 206 有界讀取、Librempeg WASM 解密並無損轉封裝 fMP4、MSE 播放、跨緩衝 Seek／續播、背壓／清理；合成 Chromium／Firefox 及 1800 秒壓測通過 |
+| **3. 真實 HEVC 端到端播放** | **目前階段：部分通過** | 真實 CDN 206、真實 HEVC/AAC 轉封裝／FFmpeg 解碼、macOS WebKit 1080p 首影格與 120 秒遠距 Seek 通過；**瀏覽器實際 AAC 聲音、reload 續播、整集播畢尚未通過完整驗收** |
+| **4. ByteVC2 串流與下載** | 由其他 agent 開發中 | ByteVC2 與標準 VVC 不等價；真實來源解碼、串流轉碼、下載輸出與裝置效能仍須各自驗收，本工作不碰其程式 |
+| **5. 跨裝置與產品穩定性** | 待驗收 | Windows／Android 的 HEVC 能力與實播、真實長片 RAM／CPU、弱網、來源過期與跨模式回歸 |
 
-- **階段 72：下載取得片源 API 也傳遞 AbortSignal + 真實導覽測試**：[2c334e0](https://github.com/IvanaGyro/hongguo-dl/commit/2c334e079079e6c8ddd57d8d9c6ac307c60cc63a) 修正 `src/main.js:runJob` 原先呼叫 `getSource` 少傳 `signal` 的問題；新增 `tests/queue-pagehide.firefox.mjs`：延遲 `/api/source` 模擬在途請求，驗證 synthetic pagehide 確實觸發 AbortError、佇列保留 `INTERRUPTED`、BFCache 模擬返回後不自動重試、**只有使用者點擊重試才新發送 source**；接著執行真正的 `about:blank` 導覽並 `goBack()`，驗證返回後佇列不復活。測試記錄 `pageshow.persisted`，可能是 BFCache，也可能是 reload，兩者須區分；**不宣稱一定實際命中 BFCache**。Firefox CI workflow 已納入新 E2E。**[Firefox #43335942046](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942046) completed/success**：合成延遲 API 的 abort、手動重試、真正歷史導覽均 PASS；`pageshow.persisted=false`，**實際是 reload，不能宣稱 BFCache hit**。[主 CI #43335942065](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942065) success；CENC Browser #43335941895 需另確認。
+## 當前階段 Goal
 
-- **階段 71：下載佇列 pagehide 生命週期修正**：[04c60c4](https://github.com/IvanaGyro/hongguo-dl/commit/04c60c4b6df8a5fd218f07979573bea76d3c383b) 新增 `src/queue-lifecycle.js` 可測試的集中清理：abort active jobs、停止 retry timers、abort bulk export；`src/main.js` pagehide 將未完成項目標記 `INTERRUPTED` 並持久化，`pump` 在頁面暫停期間不啟新工作、BFCache 返回後不自動重試。補 `tests/queue-lifecycle.test.mjs` 覆蓋五種 busy 狀態及 idempotence，並防止 abort 後的 late success/error 覆寫狀態。**此版 [主 CI #43333897868](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897868) completed/success、[Pages #43333897778](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897778) success**；[Firefox #43333897837](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897837) 與 [CENC Browser #43333897775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897775) fast/long 現已全數 completed/success。這是隊列主程式關閉改動，無解碼器修改。
+**證明真實紅果 HEVC 1080p 在支援 HEVC MSE 的瀏覽器可以穩定觀看**：來源合法可讀、EOF 前有真實畫面、音訊確實可輸出、遠距跳轉與重新開啟能恢復、影片能播畢。區分「來源 403／429」、「裝置不支援」、「媒體管線故障」與「測試工具誤判」，**不以 CI 綠燈或單一指標代替完整驗收**。
 
-- **階段 70**：[2652b17](https://github.com/IvanaGyro/hongguo-dl/commit/2652b17e23f73119dc5354e73b1874c9aa843045) 修正播放頁 `pagehide`：儲存進度、取消預取、主動 `disposeSource()`（終止 CENC Worker／Range／MSE URL），並透過 token 防止舊 callback 復活。BFCache `pageshow.persisted` 返回時重開同一集且保持暫停、保留 1.25× 等設定。Firefox 瀏覽器測試新增合成 `pagehide/pageshow` 驗證。**Firefox #43333339704 和 CENC Browser fast #43333339682 已 completed/success**，long 也已 completed/success；主 CI #43333339692、Pages #43333339698 completed/success。
-- **前一個完整 CENC Browser 實證**：[Browser #43302492613](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43302492613) fast/long 都 completed/success：Chromium/Firefox 初次與 5 個遠距 Seek、90% reload、3 次 mode cycles 後實際 AAC PCM 有聲，55s 跳轉保持 1.25×；Chromium 有 8 個 MOV 診斷僅發生於過渡階段，steady/PCM 無警訊，Firefox 為 0；120s pause Range 9→9、300s/1800s 合成片完整播畢並有界 MSE。
-- **MOV 訊息**：轉為獨立 [Issue #6](https://github.com/IvanaGyro/hongguo-dl/issues/6)，附重現，暫不再擴充 AAC 路徑。
-- **WASM proof**：[WASM #43298585708](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43298585708) 70s H264/AAC 7、35、55、63s seek、FFmpeg `-xerror` 解碼及 direct vs 256KiB HTTP window clear-fMP4 byte parity PASS；1080p synthetic HEVC 的 WASM→FFmpeg 正例已通過。
+### 已確認的實測證據
 
-## 後續優先
+- **來源／解密**：公開來源可能同時出現 403 和 206，有限輪替新取得、相同畫質／編碼的候選可找到合法 206；[真實 metadata 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343959663) **PASS**。不得對 429 持續請求。
+- **真實檔案轉封裝與解碼**：[實際 WASM + FFmpeg 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43350204732) **PASS**，來源 EOF 前就產生 fMP4；真實 HEVC 影格可解，AAC 經 FFmpeg 解碼在 0 秒及 120 秒區間有非靜音音量。**這不直接證明 WebKit 的音訊輸出**。
+- **真實瀏覽器畫面／Seek**：[macOS WebKit 首影格](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43348194611) **PASS**：1080p、實際解碼影格、時間前進、無 media error；[延伸實測](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43349532681) **120 秒未緩衝 Seek 與後續影格 PASS**，但整個 job 因 AAC 測量未通過而是 failure。
+- **音訊判定仍不充分**：該 WebKit 測試的 `MediaElementAudioSourceNode` 取得 RMS=0，獨立振盪器在相同 AudioContext 為非零、影片也持續播放；**尚不能確定是 WebKit 音訊擷取限制還是真正靜音**，不得直接修改 AAC 封裝來掩蓋測試疑點。
+- **合成回歸**：[PR #7](https://github.com/IvanaGyro/hongguo-dl/pull/7) 已合併，CENC Worker 結束競態修復後 Chromium MOV 警訊歸零，Chromium／Firefox 反覆 Seek 的 AAC PCM 回歸通過；與真實 WebKit 音訊驗收分開記錄。
 
-- 核對階段73 Firefox archive download/ZIP E2E 和 CENC Browser 結果；若失敗，先看確切 log 修正，不降低原有測試門檻。
-- stage71 已處理下載佇列 pagehide／active jobs／重試計時器／批次匯出。下一步應找另一個可觀測、與影音解碼無關的需求缺口；不要為了測試數量而擴張已通過的項目。
-- 目前 **NOT TESTED**：可合法取得 HTTP 206 的真實紅果 HEVC CENC、Windows／Android 裝置 HEVC MSE 實播與 AAC、真正 ByteVC2 bitstream 成功解碼／CPU/RAM。CI 合成正例不可代替這些驗收。
+## Pending work（依優先順序）
 
-詳盡進度：[AGENT-PROGRESS.md](AGENT-PROGRESS.md)、[CENC-TEST-MATRIX.md](CENC-TEST-MATRIX.md)。
+1. **P0 — 確認 WebKit 真正音訊輸出**：先用已知有聲音的 native MP4／H.264 MSE 對照驗證 Web Audio 測量可靠性，必要時採獨立音訊輸出驗收；只有實際靜音被證實才修正播放管線。
+2. **P1 — 完成真實 HEVC 播放旅程**：保留已通過的起播／120 秒 Seek；補真實 reload 續播、播到 EOF、重複切集／取消，並觀察音畫同步與資源使用。
+3. **P2 — 實際裝置與來源穩健性**：Windows／Android 有 HEVC MSE 能力的瀏覽器實播，沒有能力時正確提示；對來源 403、429、過期、Range 失敗做有限重試與可理解的訊息，測試弱網及記憶體。
+4. **平行工作 — ByteVC2**：由另一 agent 完成串流播放／下載；整合時必須以真實 ByteVC2 影格、音訊同步、EOF 前起播、輸出可播放性及 CPU/RAM 驗收，不以 WASM 載入成功替代。
 
-**文件更新不是停止條件。**
+## 工作原則與驗收入口
+
+- 一般改動直接提交 `main`（若使用者特別指定 PR，依當次要求）；變動先跑對應單元、建置與 GitHub Actions，再更新**本文件**。避免同時編輯 ByteVC2 agent 負責的程式。
+- 真實 HEVC：[WebKit 端到端](../.github/workflows/live-hevc-webkit.yml)、[有界 WASM／FFmpeg 驗證](../.github/workflows/live-cenc-wasm-proof.yml)；合成回歸：[CENC Browser CI](../.github/workflows/cenc-browser.yml)。使用者可追蹤 [Issue #8](https://github.com/IvanaGyro/hongguo-dl/issues/8)。
+- **安全與判定**：測試只用有權存取的來源；不保存 signed URL、金鑰、Cookie 或影片片段；PASS、FAIL、NOT TESTED 分開陳述。過往細節由 Git history／Actions 查證，不再累積逐 commit 日誌。

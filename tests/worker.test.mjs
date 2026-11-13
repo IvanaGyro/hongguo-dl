@@ -73,3 +73,35 @@ test('GitHub Pages cross-origin CORS and preflight', async () => {
   assert.equal(corsOrigin('https://my.site', 'https://example.workers.dev/api/health',
     { FRONTEND_ORIGINS: 'https://my.site,https://other.site' }), 'https://my.site');
 });
+
+
+test('upstream media HTTP 403 is classified as CDN access refusal without leaking its URL', async () => {
+  const native = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('403 forbidden', { status: 403 }); };
+  try {
+    const target = 'https://cdn.fqnovelvod.com/sample.mp4?auth=DO_NOT_LOG';
+    const req = new Request('https://example.workers.dev/api/media?url=' + encodeURIComponent(target));
+    const response = await worker.fetch(req, {});
+    assert.equal(response.status, 403);
+    const data = await response.json();
+    assert.equal(data.error.code, 'MEDIA_SOURCE_FORBIDDEN');
+    assert.match(data.error.message, /403/);
+    assert.doesNotMatch(JSON.stringify(data), /DO_NOT_LOG|sample\.mp4/);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = native; }
+});
+
+test('upstream HTTP 429 is classified as rate limiting without retrying in Worker', async () => {
+  const native = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('rate limited', { status: 429 }); };
+  try {
+    const target = 'https://cdn.fqnovelvod.com/sample.mp4';
+    const req = new Request('https://example.workers.dev/api/media?url=' + encodeURIComponent(target));
+    const response = await worker.fetch(req, {});
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error.code, 'MEDIA_RATE_LIMITED');
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = native; }
+});

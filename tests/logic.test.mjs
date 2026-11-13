@@ -48,3 +48,15 @@ test('PROXY-provided default is used unless a valid browser override exists', ()
   assert.equal(chooseWorkerOrigin('http://unsafe.example', built), 'https://hongguo-dl.example.workers.dev');
   assert.equal(chooseWorkerOrigin('', ''), '');
 });
+
+
+test('legacy Worker MEDIA_HTTP 403 and 429 are classified as media access, not codec failure', () => {
+  const denied = classifyError({ code: 'MEDIA_HTTP', message: '媒體來源回傳 HTTP 403' });
+  assert.equal(denied.code, 'MEDIA_SOURCE_FORBIDDEN');
+  assert.match(denied.message, /CDN.*403/);
+  assert.match(denied.message, /不是影音解碼失敗/);
+  const limited = classifyError({ code: 'MEDIA_HTTP', message: '媒體來源回傳 HTTP 429' });
+  assert.equal(limited.code, 'MEDIA_RATE_LIMITED');
+  assert.match(limited.message, /429/);
+  assert.equal(classifyError({ code: 'MEDIA_HTTP', message: '媒體來源回傳 HTTP 500' }).code, 'MEDIA_HTTP');
+});

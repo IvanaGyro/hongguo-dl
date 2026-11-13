@@ -29,7 +29,7 @@ export async function bvc2BridgeAvailable() {
   return checkBvc2Assets();
 }
 
-export function transcodeBvc2(bytes, { contentKey = null, mode = 'h264', progress, signal } = {}) {
+export function transcodeBvc2(bytes, { contentKey = null, mode = 'h264', progress, onProgress, signal } = {}) {
   if (!(bytes instanceof Uint8Array) || !bytes.length)
     return Promise.reject(errorWith('EMPTY_MEDIA', '沒有 ByteVC2 媒體資料'));
   if (contentKey && !/^[0-9a-f]{32}$/i.test(contentKey))
@@ -39,7 +39,7 @@ export function transcodeBvc2(bytes, { contentKey = null, mode = 'h264', progres
   if (signal?.aborted)
     return Promise.reject(errorWith('CANCELED', '已取消 ByteVC2 轉碼'));
   return runBvc2WorkerJob(bytes, {
-    contentKey, mode, progress, signal,
+    contentKey, mode, progress, onProgress, signal,
     createWorker: () => new Worker(new URL('./bvc2-worker.js', import.meta.url),
       { type: 'module' })
   });

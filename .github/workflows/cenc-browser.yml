@@ -1,7 +1,7 @@
 name: Progressive CENC MSE real-frame browser acceptance
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/cenc-*', 'fix/player-cdn-*']
     paths:
       - '.github/workflows/cenc-browser.yml'
       - 'src/cenc-remux.js'
@@ -12,7 +12,9 @@ on:
       - 'src/main.js'
       - 'src/cenc-seek.js'
       - 'src/http-range.js'
+      - 'src/retry.js'
       - 'tests/cenc-stream.browser.mjs'
+      - 'tests/playback-fallback.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
 # Keep an existing acceptance run alive when main advances. Fast first-frame/
@@ -30,7 +32,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [fast, long]
+        # Focused CENC fixes run real Chromium/Firefox acceptance; main retains both suites.
+        suite: ${{ github.ref != 'refs/heads/main' && github.event_name == 'push' && fromJSON('["fast"]') || fromJSON('["fast","long"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -132,8 +135,10 @@ jobs:
             sleep 1
           done
           if [ "$CENC_SUITE" = "fast" ]; then
-          CENC_BROWSER=chromium CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=chromium CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=chromium node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_SEEK=1 CENC_TEST_MULTI_SEEK=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           else
