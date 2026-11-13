@@ -28,6 +28,15 @@ page.on('response', response => {
 });
 const counters = () => Object.fromEntries(statuses);
 try {
+  // Calibrate WebKit's MediaElementAudioSourceNode with independent,
+  // known-audible synthetic H.264/AAC first. A sine oscillator alone cannot
+  // establish whether media-element audio is observable in headless WebKit.
+  let mediaControl = null;
+  if (process.env.CENC_WEBKIT_EXTENDED === '1') {
+    const { verifyWebKitMediaAudioControl } =
+      await import('./webkit-media-audio-control.mjs');
+    mediaControl = await verifyWebKitMediaAudioControl(browser);
+  }
   await context.addInitScript(() => {
     localStorage.setItem('hongguo-dl-player-preferences-v1', JSON.stringify({
       quality: '1080p', codec: 'hevc', speed: '1', autoNext: false
@@ -202,7 +211,7 @@ try {
       JSON.stringify({ episode: verifiedEpisode, mediaHttpStatuses: counters() }));
     if (process.env.CENC_WEBKIT_EXTENDED === '1') {
       const { verifyRealHevcAudioAndSeek } = await import('./live-hevc-extended.mjs');
-      await verifyRealHevcAudioAndSeek(page);
+      await verifyRealHevcAudioAndSeek(page, mediaControl);
     }
   }
 } finally {
