@@ -131,6 +131,8 @@ function browserProcessTreeRssBytes(rootPid) {
 const KID = '11223344556677889900aabbccddeeff';
 const KEY = '00112233445566778899aabbccddeeff';
 const cdnRetry = process.env.CENC_TEST_CDN_RETRY === '1';
+const rangeRetry = process.env.CENC_TEST_RANGE_RETRY === '1';
+let transientFailures = 0, transientRange = '', recoveredRangeRequests = 0;
 let deniedCdnRequests = 0, alternateCdnRequests = 0;
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
@@ -199,6 +201,10 @@ page.on('console', message => {
       /^Failed to load resource: the server responded with a status of 403\b/.test(text) &&
       new URL(message.location().url, 'http://127.0.0.1').searchParams.get('url') ===
         'https://denied.fqnovelvod.com/cenc-progressive.mp4') return;
+  if (rangeRetry && message.type() === 'error' &&
+      /^Failed to load resource: the server responded with a status of 520\b/.test(text) &&
+      new URL(message.location().url, 'http://127.0.0.1').searchParams.get('url') ===
+        'https://cdn.fqnovelvod.com/cenc-progressive.mp4') return;
   if (/^\[Hongguo (?:CENC|EME|playback|MSE)\]/.test(text))
     diagnosticMessages.push(text.slice(0, 200));
   if (message.type() === 'error' && !text.includes('favicon')) {
@@ -256,6 +262,14 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   const first = Number(range[1]);
   const last = range[2] ? Math.min(Number(range[2]), input.length - 1) : input.length - 1;
   assert(first >= 0 && first <= last && last < input.length);
+  if (rangeRetry && transientFailures === 0 && first >= 512 * 1024 &&
+      await page.evaluate(() => Boolean(window.__cencFrame))) {
+    transientFailures++;
+    transientRange = route.request().headers().range;
+    return route.fulfill({ status: 520, body: 'synthetic transient CDN failure' });
+  }
+  if (transientRange && route.request().headers().range === transientRange)
+    recoveredRangeRequests++;
   const bytes = input.subarray(first, last + 1);
   mediaRequests.push({ first, last, bytes: bytes.length });
   // Real streaming acceptance needs network backpressure, not a 1-shot Blob.
@@ -317,7 +331,7 @@ try {
     await page.locator('#mode-play').click();
     // Entering play mode already resumes the first episode. Do not restart
     // that load when measuring exactly one rejected-CDN/rotation sequence.
-    if (!cdnRetry) await page.locator('#episodes button.play-episode').first().click();
+    if (!cdnRetry && !rangeRetry) await page.locator('#episodes button.play-episode').first().click();
     try {
       await page.waitForFunction(() => document.querySelector('#player-source-info')
         ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 20000 });
@@ -364,6 +378,18 @@ try {
     await page.waitForFunction(() =>
       document.querySelector('#player-video')?.currentTime > 1.5,
       null, { timeout: 20000 });
+    if (rangeRetry) {
+      await page.waitForFunction(() => /phase=media-range-retry.*status=520/.test(
+        document.querySelector('#playback-log')?.value || ''), null, { timeout: 20000 });
+      const log = await page.locator('#playback-log').inputValue();
+      assert.equal(transientFailures, 1);
+      assert(recoveredRangeRequests >= 1, 'Retry must request the identical failed Range');
+      assert.equal((log.match(/mse.init-appended/g) || []).length, 1,
+        'Transient Range failure must keep the same MSE stream');
+      assert.equal((log.match(/playback.attempt attempt=/g) || []).length, 1,
+        'Transient Range failure must not restart source selection/playback');
+      console.log('PASS ' + browserName + ' single-CDN HTTP 520 retries the same Range without restarting MSE');
+    }
     const playback = await page.evaluate(() => {
       const video = document.querySelector('#player-video');
       return {

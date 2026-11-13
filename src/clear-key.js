@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
+import { createCencRangeRecovery } from './cenc-range-recovery.js';
 import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { createMediaTransport } from './media-transport.js';
@@ -103,7 +104,7 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
     };
     const [code, message] = statuses[res.status] ||
       ['CENC_RANGE_HTTP', '來源 HTTP Range 請求失敗（HTTP ' + res.status + '）'];
-    throw errorWith(code, message);
+    throw Object.assign(errorWith(code, message), { status: res.status });
   }
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range') || '');
   if (!match || Number(match[1]) !== start || Number(match[2]) >= start + bytes ||
@@ -160,15 +161,18 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
 }
 
 export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
-  onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS) {
+  onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS, recovery = null) {
+  const read = (start, bytes) => {
+    const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl, onProbe, timeoutMs);
+    return recovery ? recovery.read(once, signal) : once();
+  };
   let offset = 0;
   const tried = new Set();
   for (let probe = 0; probe < MAX_RANGES; probe++) {
     aborted(signal);
     if (tried.has(offset)) return null;
     tried.add(offset);
-    const { data, fileSize } = await rangeFetch(mediaUrl, offset, HEADER_SIZE,
-      signal, fetchImpl, onProbe, timeoutMs);
+    const { data, fileSize } = await read(offset, HEADER_SIZE);
     const boxes = mp4Boxes(data, offset);
     if (probe === 0 && boxes[0]?.type !== 'ftyp') return null;
     for (const box of boxes) {
@@ -178,8 +182,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
           'MP4 索引超過 8 MiB 有界串流安全限制，不能改用整檔下載');
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
-        : (await rangeFetch(mediaUrl, box.offset, box.size,
-          signal, fetchImpl, onProbe, timeoutMs)).data;
+        : (await read(box.offset, box.size)).data;
       if (metadata) {
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
@@ -366,7 +369,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
-  fetchImpl = fetch, onStage = () => {},
+  fetchImpl = fetch, onStage = () => {}, retrySameSource = false,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -395,8 +398,12 @@ export async function openClearKeyStream({
   onStage('metadata');
   let kid;
   try {
+    const recovery = retrySameSource ? createCencRangeRecovery({
+      maxRetries: 1, retryInitial: true,
+      onRetry: fields => onStage('range.retry', fields)
+    }) : null;
     kid = await probeCencKid(url, signal, transport.fetch, metadata,
-      (stage, fields) => onStage(stage, fields));
+      (stage, fields) => onStage(stage, fields), undefined, recovery);
   }
   catch (error) {
     // A rejected/broken HTTP Range is a source/network failure, not a
@@ -427,7 +434,7 @@ export async function openClearKeyStream({
         proxyUrl, fileSize: metadata.fileSize, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
-        key: source.contentKey, signal,
+        key: source.contentKey, signal, retrySameSource,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(startSeconds,
           metadata.movieDurationSeconds || source.duration || null) ?? 0

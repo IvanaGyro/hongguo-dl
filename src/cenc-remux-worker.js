@@ -20,7 +20,7 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
+async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
@@ -43,8 +43,9 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
   let rangeRequests = 0, receivedBytes = 0;
   lastRangeError = null;
   const rangeRecovery = createCencRangeRecovery({
+    retryInitial: retrySameSource,
     onRetry: event => self.postMessage({
-      type: 'stage', stage: 'media-range-retry', status: 403,
+      type: 'stage', stage: 'media-range-retry', code: event.code, status: event.status,
       attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining
     })
   });
@@ -62,8 +63,11 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
     let bytes, timing = {};
     try {
       bytes = await rangeRecovery.read(
-        () => readVerifiedRange(transport.fetch, mediaUrl.href, start, end,
-          fileSize, controller.signal, undefined, fields => { timing = fields; }),
+        () => {
+          timing = {};
+          return readVerifiedRange(transport.fetch, mediaUrl.href, start, end,
+            fileSize, controller.signal, undefined, fields => { timing = fields; });
+        },
         controller.signal
       );
     } catch (error) {

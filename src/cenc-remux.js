@@ -103,7 +103,7 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  */
 export async function openCencProgressiveStream({
   video, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, videoCodecString = null, bridge = 'cenc'
+  startSeconds = 0, durationSeconds = null, videoCodecString = null, bridge = 'cenc', retrySameSource = false
 }) {
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
@@ -255,7 +255,7 @@ export async function openCencProgressiveStream({
           offset: data.offset, bytes: data.bytes, fetchMs: data.fetchMs,
           headerMs: data.headerMs, upstreamMs: data.upstreamMs
         } : data.stage === 'media-range-retry' ? {
-          status: data.status, attempt: data.attempt,
+          code: data.code, status: data.status, attempt: data.attempt,
           delayMs: data.delayMs, remaining: data.remaining
         } : data.stage === 'media.transport.fallback' ? {
           reason: data.reason, status: data.status
@@ -322,7 +322,7 @@ export async function openCencProgressiveStream({
         ? 'hevc-init-unsupported' : 'source-buffer'));
   };
   try {
-    worker.postMessage({ type: 'start', url, proxyUrl, fileSize, key, startSeconds });
+    worker.postMessage({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.
@@ -334,7 +334,7 @@ export async function openCencProgressiveStream({
     await close();
     const replacement = await openCencProgressiveStream({
       video, url, fileSize, codec, hasAac, key, signal, onStage,
-      startSeconds: seconds, durationSeconds, videoCodecString, bridge
+      startSeconds: seconds, durationSeconds, videoCodecString, bridge, retrySameSource
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;

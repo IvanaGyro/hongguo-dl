@@ -279,10 +279,17 @@ export function createPlayer({
     'wasm-download': '正在載入增量串流工具…',
     'wasm-verify': '正在驗證串流工具…',
     'wasm-start': '正在初始化串流工具…',
-    'first-fragment': '正在讀取並解密首段影片…'
+    'first-fragment': '正在讀取並解密首段影片…',
+    'range.retry': '影片來源暫時無回應，正在重試同一段索引…',
+    'media-range-retry': '影片傳輸暫時中斷，正在重試同一段資料…'
   };
   function reportStartup(message, signal, attempt = 0) {
     if (!signal.aborted) setStatus(playbackAttemptMessage(message, attempt, retryError));
+  }
+  function retryCurrentSource(variants, source) {
+    return !(variants || []).some(other => other.url && other.url !== source.url &&
+      other.contentKey && !cencTriedUrls.has(other.url) &&
+      codecId(other.codec) === codecId(source.codec) && qualityId(other) === qualityId(source));
   }
   async function prepareNativeStream(args) {
     try {
@@ -312,7 +319,8 @@ export function createPlayer({
         if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
           streamFailure = { code: fields.code, status: fields.status || 0 };
       }
-      if (streamStages[stage]) report(streamStages[stage]);
+      if (streamStages[stage] && (stage !== 'media-range-retry' || !readyForHistory))
+        report(streamStages[stage]);
     };
     log('source.resolve.begin', {
       attempt: attempt + 1, quality, codec, prefetch: quiet, elapsedMs: ageMs()
@@ -604,7 +612,8 @@ export function createPlayer({
       const native = await prepareNativeStream({
         video, source, codec: codecId(source.codec),
         workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode, seriesId), onStage
+        startSeconds: savedResumeSeconds(episode, seriesId), onStage,
+        retrySameSource: retryCurrentSource(variants, source)
       });
       if (native) {
         if (native.kind === 'cenc-remux') retryIncrementalCenc = true;
@@ -696,6 +705,7 @@ export function createPlayer({
         video, source: resolved.source, codec: codecId(resolved.source.codec),
         workerOrigin: getWorkerOrigin(), signal,
         startSeconds: savedResumeSeconds(episode),
+        retrySameSource: retryCurrentSource(prepared.variants, resolved.source),
         onStage: stage => {
           if (streamStages[stage]) reportStartup(streamStages[stage], signal, attempt);
         }

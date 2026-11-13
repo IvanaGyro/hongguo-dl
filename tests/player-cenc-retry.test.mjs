@@ -102,7 +102,24 @@ test('API failures do not skip CDN candidates or revive failed URLs after an uns
     return new Response('', { status: media === source('c').url ? 429 : 520 });
   });
   assert.equal(calls, 4);
-  assert.deepEqual(requested, ['a', 'b', 'c'].map(name => source(name).url));
+  assert.deepEqual(requested, ['a', 'b', 'b', 'c'].map(name => source(name).url));
   assert.equal(logs.filter(row => row.event === 'source.list.refreshed').length, 1);
   assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RANGE_HTTP'));
+});
+
+test('single-source metadata recovers transient 520 without another source API call', async () => {
+  let sourceCalls = 0;
+  const requested = [];
+  const { logs } = await runScenario(async () => {
+    sourceCalls++;
+    return { variants: [source('only')] };
+  }, async (url, options) => {
+    requested.push({ url, range: options.headers.Range });
+    return new Response('', { status: requested.length === 1 ? 520 : 429 });
+  });
+  assert.equal(sourceCalls, 1);
+  assert.equal(requested.length, 2);
+  assert.deepEqual(requested[0], requested[1], 'Retry only the failed bounded Range');
+  assert(logs.some(row => row.event === 'cenc.stage' && row.phase === 'range.retry' && row.status === 520));
+  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RATE_LIMITED'));
 });

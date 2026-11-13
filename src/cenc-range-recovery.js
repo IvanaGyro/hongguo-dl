@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Recover a small number of transient mid-stream 403 responses without
-// discarding all buffered fMP4. Do not retry a forbidden *initial* source,
-// repeat 429, or exceed the lifetime budget for one Worker.
+// Retry transient Range failures without discarding the current demuxer or
+// buffered media. Never retry initial 403, HTTP 429 or malformed byte ranges.
+// Initial network/5xx retry is opt-in when no untried alternate source exists.
 const canceled = () => Object.assign(new Error('Canceled'), { code: 'CANCELED' });
 
 export function waitForRangeRetry(ms, signal) {
@@ -22,7 +22,7 @@ export function waitForRangeRetry(ms, signal) {
 }
 
 export function createCencRangeRecovery({
-  maxRetries = 2, delayMs = 900,
+  maxRetries = 2, delayMs = 900, retryInitial = false,
   wait = waitForRangeRetry, onRetry = () => {}
 } = {}) {
   let successes = 0, retries = 0;
@@ -35,12 +35,19 @@ export function createCencRangeRecovery({
           successes++;
           return bytes;
         } catch (error) {
-          // HTTP 403 is normally terminal. Only permit a tiny retry budget
-          // after this same source has already returned verified media bytes.
-          if (signal?.aborted || error?.code !== 'CENC_SOURCE_FORBIDDEN' ||
-              successes === 0 || retries >= maxRetries) throw error;
+          const status = Number.isInteger(error?.status) ? error.status : 0;
+          const transient = error?.code === 'CENC_RANGE_TIMEOUT' ||
+            error?.code === 'CENC_RANGE_HTTP' &&
+              (status === 0 || status === 408 || status >= 500 && status <= 599);
+          const recoverable = transient || error?.code === 'CENC_SOURCE_FORBIDDEN';
+          // Allow just one initial transient retry. Once media has succeeded,
+          // use the shared lifetime budget, including intermittent HTTP 403.
+          const initialAllowed = retryInitial && transient && retries === 0;
+          if (signal?.aborted || !recoverable ||
+              successes === 0 && !initialAllowed || retries >= maxRetries) throw error;
           retries++;
-          onRetry({ attempt: retries, delayMs, remaining: maxRetries - retries });
+          onRetry({ code: error.code, status, attempt: retries, delayMs,
+            remaining: maxRetries - retries });
           await wait(delayMs, signal);
         }
       }
