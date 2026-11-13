@@ -302,7 +302,9 @@ try {
       await page.locator('#codec-diagnostics summary').click();
     }
     await page.locator('#mode-play').click();
-    await page.locator('#episodes button.play-episode').first().click();
+    // Entering play mode already resumes the first episode. Do not restart
+    // that load when measuring exactly one rejected-CDN/rotation sequence.
+    if (!cdnRetry) await page.locator('#episodes button.play-episode').first().click();
     try {
       await page.waitForFunction(() => document.querySelector('#player-source-info')
         ?.textContent.includes('增量解密轉封裝（MSE）'), null, { timeout: 20000 });
