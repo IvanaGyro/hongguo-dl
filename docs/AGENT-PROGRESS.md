@@ -670,3 +670,13 @@
 - **最小單元正例**：新測試覆蓋五種未完成狀態、兩個 active controller、兩個 retry timer、一個 bulk controller，檢查全部被 abort/clear，已完成與已取消項目不變；重複清理 idempotent。沒有修改 AAC/MSE/FFmpeg/ByteVC2 核心。
 - **新 HEAD CI**：[主 CI #43333897868](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897868) **completed/success**、[Pages #43333897778](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897778) **success**；[Firefox FFmpeg.wasm #43333897837](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897837)／[CENC Browser #43333897775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897775) 最後查詢未完成。瀏覽器沒有特地模擬「下載到一半進 BFCache」的完整 E2E，此項仍是限制；不能只靠主 CI 推論所有瀏覽器的網路時序均驗證。
 - **下一步**：收到後續 Firefox/CENC 結論再精確更新；如測試 FAIL 讀單次 log，別擴大為無關 codec 變更。另尋擇有具體重現/測試、但不破壞已通過路徑的產品問題。
+
+
+## 階段 72 — 2026-11-13 下載片源 API 缺少 AbortSignal，新增延遲請求與實際歷史導覽 Firefox 回歸
+
+- **可重現的缺口**：`getSource(seriesId, vid, quality, codec, signal)` 早已支援 signal，但 `src/main.js:runJob` 呼叫 `await getSource(job.seriesId, job.vid, 'auto', 'auto')` 漏傳它。上階段 pagehide 只能取消 job 的 controller，不能讓**取得片源 API 的 pending HTTP fetch** 跟著立即取消；若網路慢，離開頁面後仍會等待 API 回應。
+- **最小產品修正直接 main**：[2c334e079079e6c8ddd57d8d9c6ac307c60cc63a](https://github.com/IvanaGyro/hongguo-dl/commit/2c334e079079e6c8ddd57d8d9c6ac307c60cc63a)：只在 `runJob` 將 `signal` 傳給既有 `getSource`，沒有修改 worker、codec、AAC/MSE、資料格式或下載內容。
+- **新增真實瀏覽器路徑驗收**：`tests/queue-pagehide.firefox.mjs` 使用 Firefox Playwright 和合成短劇 API，將 `/api/source` 延遲為等待 AbortSignal 的 promise（不使用第三方 CDN）：加入單筆下載、確認 source request 收到 signal、合成 pagehide 時 signal.abort、下載標記 `failed/INTERRUPTED`、合成 BFCache pageshow 後不重啟；手動按重試才產生第二筆 request。再以 `page.goto('about:blank')` / `page.goBack()` 真的離開／返回，確認持久狀態依然 `INTERRUPTED`、沒有自動再次發送 source；記錄 `pageshow.persisted` 讓後續判斷是否實際 BFCache hit。
+- **界限**：此測試**確實驅動 Firefox 真實頁面導覽**，但 in-flight source 被注入 synthetic delayed Fetch；真正瀏覽器 BFCache eligible 依 Playwright/Firefox 決定。若 `pageshow.persisted=false`，只是確認一般返回 reload，不得宣稱 BFCache 命中；亦不代表 CDN 真實長片下載時序已驗。
+- **CI wiring**：`.github/workflows/firefox-ffmpeg.yml` 加新測試執行與 paths trigger；[Firefox #43335942046](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942046)、[CI #43335942065](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43335942065) 初查 pending；任何 FAIL 必須看 job log 精準修，不改 AAC。
+- **前版完成的驗收補述**：stage 71 對應 [Browser #43333897775](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333897775) fast/long **completed/success**，Firefox #43333897837 也 success；關閉頁面 CENC cleanup 修正沒有使原有 seek/音訊/120秒暫停/300與1800秒合成播放失敗。仍缺真實可合法 206 的紅果 HEVC 與 ByteVC2 正例。
