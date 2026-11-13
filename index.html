@@ -157,6 +157,15 @@
           <div id="bulk-status" class="export-status" role="status" aria-live="polite"></div>
         </div>
       </section>
+      <details id="playback-diagnostics" class="panel playback-diagnostics" open>
+        <summary>播放診斷 Log（暫時功能，可複製）</summary>
+        <p class="help">記錄來源解析、CENC／MSE 與緩衝狀態；不記錄簽章網址、影片金鑰或 Cookie。重現問題後請複製內容。</p>
+        <div class="actions">
+          <button id="playback-log-copy" type="button" class="quiet">複製 Log</button>
+          <button id="playback-log-clear" type="button" class="quiet">清除 Log</button>
+        </div>
+        <textarea id="playback-log" readonly spellcheck="false" aria-label="播放診斷紀錄"></textarea>
+      </details>
     </main>
   </div>
   <script type="module" src="/src/main.js"></script>

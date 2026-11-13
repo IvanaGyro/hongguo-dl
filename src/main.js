@@ -24,6 +24,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
+import { createPlaybackDiagnostics } from './playback-diagnostics.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
 import { episodeFileName, originalExtension, filenameExtension, episodeDisplayTitle } from './naming.js';
@@ -312,9 +313,22 @@ async function apiJson(route, signal) {
   return data;
 }
 async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal) {
-  return apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
-    '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
-    '&codec=' + encodeURIComponent(codec), signal);
+  const started = performance.now();
+  playbackDiagnostics.log('source.api.request', { quality, codec });
+  try {
+    const data = await apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
+      '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
+      '&codec=' + encodeURIComponent(codec), signal);
+    playbackDiagnostics.log('source.api.response', {
+      elapsedMs: performance.now() - started, variants: data?.variants?.length || 0
+    });
+    return data;
+  } catch (error) {
+    playbackDiagnostics.log('source.api.failed', {
+      elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN'
+    });
+    throw error;
+  }
 }
 async function lookupIds(ids) {
   const list = [...new Set(ids)].slice(0, 20);
@@ -743,6 +757,10 @@ async function startBulk(type) {
     renderQueue();
   }
 }
+const playbackDiagnostics = createPlaybackDiagnostics({
+  output: $('playback-log'), copyButton: $('playback-log-copy'),
+  clearButton: $('playback-log-clear')
+});
 let latestCodecDiagnostics = '';
 $('codec-diag-run').addEventListener('click', async () => {
   const button = $('codec-diag-run');
@@ -784,6 +802,7 @@ player = createPlayer({
   getSeries: () => series, sourceFor: getSource,
   fetchBytes, getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
+  diagnostics: playbackDiagnostics.log,
   onProgress: () => { if (series && currentMode === 'play') renderEpisodes(); }
 });
 $('mode-download').addEventListener('click', () => setMode('download'));

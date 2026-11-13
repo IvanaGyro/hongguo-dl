@@ -26,8 +26,9 @@
 
 ## Pending work（依優先順序）
 
+0. **P0 — 修復 1080p HEVC 串流起播卡頓與不必要的整集下載 fallback（新增）**：使用者實測「正在取得影片來源…」耗時過長，且 CENC→fMP4/MSE 可能被整片下載取代。先於頁面底部增加可複製的安全診斷 Log，量測來源、Range、WASM、MSE 與媒體事件；接著追查串流為何失敗。將 1080p HEVC 略過無關的 ByteVC2 WASM 探測，禁止加密 HEVC MP4 靜默轉用全片備援。**目前尚無使用者裝置 log，根因與效能改善仍待驗證。**
 1. **P0 — 確認實際可聽的音訊輸出**：已用完全合成的 native MP4／H.264 MSE 對照證實 WebKit `MediaElementAudioSourceNode` 無法可靠量測 MSE AAC；請改用可收聽／OS 音訊 loopback 的真實裝置，驗證聲音及音畫同步。勿因 Web Audio RMS=0 修改 AAC 管線。
-2. **P1 — 完成真實 HEVC 播放旅程**：起播／120 秒 Seek 已驗收 PASS。已提交 [WebKit reload → 續播 → 真實 EOF 驗收](../tests/live-hevc-journey.mjs)，待 CI 結果；重複切集／取消、音畫同步與資源使用尚待真實裝置驗收。
+2. **P1 — 完成真實 HEVC 播放旅程**：起播與先前的 120 秒 Seek 曾 PASS，但最新 [WebKit Journey CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43356037576) 在 Seek 時停在約 86.65 秒而 FAIL，因此 reload／續播／EOF 未執行；重複切集／取消、音畫同步與資源使用仍待實機驗收。
 3. **P2 — 實際裝置與來源穩健性**：Windows／Android 有 HEVC MSE 能力的瀏覽器實播，沒有能力時正確提示；對來源 403、429、過期、Range 失敗做有限重試與可理解的訊息，測試弱網及記憶體。
 4. **ByteVC2 驗收**：[PR #10](https://github.com/IvanaGyro/hongguo-dl/pull/10) 已合併；[合成長樣本測試](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43355352198) **PASS**：953,299-byte 來源、第一個完整 fMP4 片段於傳輸 96,504 bytes 時產生；瀏覽器首影格於 913,904 bytes 出現（約 96%，性能仍需改進），24 秒未緩衝 Seek、五種輸出、取消清理通過。真實 BTY2、音畫同步、CPU/RAM 仍待驗收。
 

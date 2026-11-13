@@ -240,3 +240,14 @@ media-fullscreen-button[data-fullscreen] .player-enter-fullscreen { display: non
   line-height: 1.5;
 }
 .codec-diag-results:empty { display: none; }
+
+/* Temporary, selectable media diagnostics at the bottom of the page. */
+.playback-diagnostics summary { cursor: pointer; font-weight: 700; color: #c7dcff; }
+.playback-diagnostics .actions { margin: .8rem 0; }
+#playback-log {
+  display: block; width: 100%; min-height: 12rem; height: 17rem; max-height: 40vh;
+  overflow: auto; resize: vertical; padding: .8rem;
+  border-radius: 9px; border: 1px solid #465b7d;
+  background: #0c1525; color: #c7e4e8; font: .76rem/1.5 ui-monospace, Consolas, monospace;
+  white-space: pre; overflow-wrap: normal; tab-size: 2;
+}
