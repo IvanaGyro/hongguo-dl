@@ -34,6 +34,8 @@ if (!candidates.length) {
   process.exit(0);
 }
 let count = 0, announcedBytes = 0;
+const mediaHttpStatuses = new Map();
+let confirmedRangeResponses = 0;
 const fetchImpl = async (url, options) => {
   const range = /^bytes=(\d+)-(\d+)$/.exec(options.headers?.Range || '');
   if (!range) throw new Error('Only explicit bounded HTTP byte ranges are allowed');
@@ -50,6 +52,8 @@ const fetchImpl = async (url, options) => {
     headers: { ...options.headers, Origin: FRONTEND },
     signal: AbortSignal.timeout(20000), cache: 'no-store'
   });
+  mediaHttpStatuses.set(String(res.status), (mediaHttpStatuses.get(String(res.status)) || 0) + 1);
+  if (res.status === 206) confirmedRangeResponses++;
   if (res.status === 429) throw new Error('CDN rate-limited; stopped immediately');
   if (res.status !== 206) {
     console.log('Live CENC metadata Range request returned HTTP ' + res.status +
@@ -77,7 +81,9 @@ for (const [i, candidate] of candidates.entries()) {
       fragmented: metadata.fragmented ?? null,
       fileSizeBytes: metadata.fileSize ?? null,
       rangeRequests: count,
-      requestedBytesMax: announcedBytes
+      requestedBytesMax: announcedBytes,
+      confirmedRangeResponses,
+      mediaHttpStatuses: Object.fromEntries(mediaHttpStatuses)
     }));
     succeeded = true;
     break;
@@ -88,6 +94,13 @@ for (const [i, candidate] of candidates.entries()) {
       ' not accessible for bounded Range inspection');
   }
 }
-if (!succeeded) throw new Error('All ' + candidates.length +
-  ' bounded CENC metadata probes were inaccessible (' + problems.join(', ') + ')');
+if (!succeeded) {
+  console.log('Live CENC layout BLOCKED:', JSON.stringify({
+    episode: episode.index, candidates: candidates.length,
+    confirmedRangeResponses, mediaHttpStatuses: Object.fromEntries(mediaHttpStatuses),
+    requests: count, requestedBytesMax: announcedBytes,
+    failureKinds: problems
+  }));
+  throw new Error('No playable 206 Range metadata: all bounded CENC probes inaccessible');
+}
 // This check never downloads a complete episode or claims HEVC decode succeeds.
