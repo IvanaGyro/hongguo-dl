@@ -5,6 +5,7 @@ on:
     paths:
       - 'tests/live-hevc.webkit.mjs'
       - 'tests/live-hevc-extended.mjs'
+      - 'tests/live-hevc-journey.mjs'
       - 'tests/webkit-media-audio-control.mjs'
       - '.github/workflows/live-hevc-webkit.yml'
       - 'src/cenc-remux.js'
@@ -36,8 +37,10 @@ jobs:
         run: |
           node --check tests/live-hevc.webkit.mjs
           node --check tests/live-hevc-extended.mjs
+          node --check tests/live-hevc-journey.mjs
           node --check tests/webkit-media-audio-control.mjs
-      - name: Verify real HEVC first frame, Web Audio PCM and distant seek
+      - name: Verify real HEVC first frame, distant seek, reload and actual EOF
         env:
           CENC_WEBKIT_EXTENDED: '1'
+          CENC_WEBKIT_JOURNEY: '1'
         run: node tests/live-hevc.webkit.mjs
