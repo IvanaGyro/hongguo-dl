@@ -41,3 +41,21 @@ These observations suggest timing- and count-dependent controls may coexist; dis
 - Whether a longer silent interval reliably recovers registration.
 - The effect of 5-second spacing (test is pending).
 - Server response includes `server_time`, but current diagnostics capture only its presence, not the value.
+
+## Additional 5-second run and overlapping diagnostic
+
+- [C5: 150 registrations at 5-second intervals](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43452139626): three successful 10-second-spaced baseline requests followed by 150/150 success. **No zero-ID responses**. The complete experiment finished 770.970 seconds after script start.
+- [Unintended overlapping 1-second diagnostic](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43453602608): an update to the shared probe file triggered an existing GitHub Actions workflow without the intended isolation. This ran in a separate GitHub runner **while C5 was active**. The diagnostic completed 3/3 baseline and 143/150 burst successes, with 7 zero-ID responses. The **118th burst request** was the first zero-ID; accounting for the baseline, it was the 121st registration, again matching the 120-success quota observation.
+- In the overlapping diagnostic, zero IDs were observed between **15:34:53 and 15:34:59 UTC**, with success returning at **15:35:00 UTC** exactly on a minute boundary. This independently resembles C2's first recovery at 15:21:02 UTC and the older 14:30:00 UTC recovery.
+- Overlap is a methodological flaw: because separate runners may have distinct outbound IPs, it does not prove global independence of limits. C5's 150/150 success is real but should be interpreted as an observed outcome, **not a perfectly isolated control**.
+
+## Current 1s / 2s / 5s comparison
+
+| Interval | Burst count | Burst success | Zero IDs | First zero ID | Returned to success during burst |
+| --- | ---: | ---: | ---: | --- | --- |
+| 1s (initial ID diagnostic) | 150 | 117 | 33 | #118 | no |
+| 1s (overlapping diagnostic) | 150 | 143 | 7 | #118 | #125, around 15:35:00 UTC |
+| 2s | 150 | 141 | 9 | #118 | #127, around 15:21:00 UTC |
+| 5s | 150 | 150 | 0 | none | not applicable |
+
+All three runs showing zero IDs at burst #118 had exactly 3 successful baseline requests preceding the 150-request burst. These repeated results strengthen the **120 successful-registration count** hypothesis. The *shape* and *duration* of the zero-ID intervals, however, depend on elapsed time relative to apparent boundary resets, and may involve several overlapping quotas. Current experiments cannot establish a precise window length, enforcement key, or whether failed attempts extend cooldown.
