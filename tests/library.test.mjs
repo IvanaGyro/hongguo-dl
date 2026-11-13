@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { recentSeries, rememberSeries, forgetSeries, playbackKey, rememberPlayback,
   watchRecords, suggestedEpisode } from '../src/library.js';
-import { recordFailure, playbackFailureMessage } from '../src/retry.js';
+import { recordFailure, playbackFailureMessage, playbackAttemptMessage } from '../src/retry.js';
 import { MediaCache, episodeCacheKey } from '../src/media-cache.js';
 function fakeStorage() {
   const map = new Map();
@@ -110,4 +110,18 @@ test('CENC 55s seek progress survives a temporary 0s media-source reload', () =>
   rememberPlayback(storage, '123456789', '111111111', 0, 70);
   assert.equal(watchRecords(storage)[key].seconds, 55.8);
   assert.equal(watchRecords(storage)[key].completed, false);
+});
+
+
+test('retry UI counts all retries and carries a brief cause into later stages', () => {
+  let failure = recordFailure(null, {code: 'CENC_SOURCE_FORBIDDEN'}, 5, 20, {retryForbidden:true});
+  const forbidden = {code: 'CENC_SOURCE_FORBIDDEN', message: 'https://private/?key=secret'};
+  assert.match(playbackFailureMessage(failure, forbidden), /HTTP 403.*0.7 秒後進行第 1 次重試/);
+  failure = recordFailure(failure, {code: 'PLAYBACK_TIMEOUT'}, 5);
+  assert.equal(failure.streak, 1);
+  assert.match(playbackFailureMessage(failure, {code:'PLAYBACK_TIMEOUT'}), /逾時.*第 2 次重試/);
+  const stage = playbackAttemptMessage('正在讀取影片索引…', 2, forbidden);
+  assert.match(stage, /第 2 次重試.*HTTP 403.*影片索引/);
+  assert(!stage.includes('private') && !stage.includes('secret'));
+  assert.equal(playbackAttemptMessage('正在取得影片來源…'), '正在取得影片來源…');
 });

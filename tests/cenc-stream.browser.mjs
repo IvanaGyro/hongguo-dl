@@ -175,6 +175,15 @@ if (process.env.CENC_TEST_MULTI_SEEK === '1') {
     };
   });
 }
+await page.addInitScript(() => {
+  document.addEventListener('DOMContentLoaded', () => {
+    const status = document.querySelector('#player-status');
+    window.__playbackStatusLog = [];
+    new MutationObserver(() => {
+      window.__playbackStatusLog.push(status.textContent);
+    }).observe(status, { childList: true, subtree: true, characterData: true });
+  });
+});
 const mediaRequests = [], errors = [], diagnosticMessages = [], canceledSeekDemuxDiagnostics = [];
 const rapidDiagnosticPhases = [];
 let exercisingRepeatedSeeks = false, rapidPhase = 'not-started';
@@ -341,7 +350,12 @@ try {
     if (cdnRetry) {
       assert.equal(deniedCdnRequests, 1, 'First CDN should fail once, then rotate');
       assert(alternateCdnRequests >= 2, 'Alternate must serve metadata and media Ranges');
-      console.log('PASS ' + browserName + ' CENC 403 rotates CDN and streams before EOF');
+      const statuses = await page.evaluate(() => window.__playbackStatusLog);
+      assert(statuses.some(s => /HTTP 403.*第 1 次重試/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => /第 1 次重試.*HTTP 403.*影片索引/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => s.includes('載入增量串流工具')), JSON.stringify(statuses));
+      assert(!statuses.some(s => s.includes('整集下載備援')), JSON.stringify(statuses));
+      console.log('PASS ' + browserName + ' CENC 403 rotates CDN and streams before EOF with stage/retry UI');
     }
     await page.waitForFunction(() =>
       document.querySelector('#player-video')?.currentTime > 1.5,
