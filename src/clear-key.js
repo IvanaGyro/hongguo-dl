@@ -2,6 +2,7 @@
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
 import { mediaProxyUrl, errorWith } from './logic.js';
+import { createMediaTransport } from './media-transport.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
   movieDurationSeconds } from './mp4-track-formats.js';
@@ -378,12 +379,16 @@ export async function openClearKeyStream({
   if (!mime || !source?.contentKey ||
       (codec !== 'hevc' && !video.canPlayType(mime))) return null;
   aborted(signal);
-  const url = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
+  const proxyUrl = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin);
+  const transport = createMediaTransport({ directUrl: source.url, proxyUrl, fetchImpl,
+    direct: typeof window !== 'undefined',
+    onFallback: reason => onStage('media.transport.fallback', { reason }) });
+  const url = transport.mode === 'direct' ? source.url : proxyUrl;
   const metadata = {};
   onStage('metadata');
   let kid;
   try {
-    kid = await probeCencKid(url, signal, fetchImpl, metadata,
+    kid = await probeCencKid(url, signal, transport.fetch, metadata,
       (stage, fields) => onStage(stage, fields));
   }
   catch (error) {
@@ -411,7 +416,8 @@ export async function openClearKeyStream({
     try {
       onStage('remux-check');
       const remux = await openCencProgressiveStream({
-        video, url, fileSize: metadata.fileSize, onStage,
+        video, url: transport.mode === 'direct' ? source.url : proxyUrl,
+        proxyUrl, fileSize: metadata.fileSize, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
         key: source.contentKey, signal,

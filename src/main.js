@@ -25,6 +25,7 @@ import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
 import { createPlaybackDiagnostics } from './playback-diagnostics.js';
+import { createMediaTransportForSource } from './media-transport.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -613,7 +614,8 @@ function assertOk(response) {
 }
 async function fetchBytes(url, profile, signal, max, onRead) {
   if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
-  const res = await fetch(mediaProxyUrl(url, profile, requireWorkerOrigin()), { signal });
+  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin());
+  const res = await transport.fetch(url, { signal });
   if (!res.ok) { await assertOk(res); }
   const advertised = Number(res.headers.get('content-length') || 0);
   if (advertised > max) throw errorWith('MEMORY_LIMIT', '媒體超過下載／記憶體安全限制');
@@ -640,7 +642,9 @@ async function fetchBytes(url, profile, signal, max, onRead) {
   return result;
 }
 async function streamToDestination(job, source, signal) {
-  const res = await fetch(mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', requireWorkerOrigin()), { signal });
+  const transport = createMediaTransportForSource(source.url,
+    source.source === 'app' ? 'app' : 'web', requireWorkerOrigin());
+  const res = await transport.fetch(source.url, { signal });
   if (!res.ok) { await assertOk(res); }
   if (!res.body) throw errorWith('EMPTY_MEDIA', '伺服器沒有回傳影片串流');
   const length = Number(res.headers.get('content-length') || 0);

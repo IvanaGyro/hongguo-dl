@@ -16,6 +16,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { canTryNextCencSource, sameTierHevcCandidates } from './cenc-source-fallback.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
+import { createMediaTransportForSource } from './media-transport.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -476,13 +477,16 @@ export function createPlayer({
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
       if (experimentalBvc2Stream) {
       setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
-      const url = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin());
+      const url = transport.mode === 'direct' ? source.url : proxyUrl;
       const metadata = {};
-      await probeCencKid(url, signal, fetch, metadata);
+      await probeCencKid(url, signal, transport.fetch, metadata);
       if (!metadata.fileSize || metadata.fragmented)
         throw errorWith('BVC2_ERROR', 'ByteVC2 串流需要可讀取索引的 MP4 來源');
       const native = await openCencProgressiveStream({
-        video, url, fileSize: metadata.fileSize, codec: 'h264', hasAac: metadata.hasAac,
+        video, url: transport.mode === 'direct' ? source.url : proxyUrl,
+        proxyUrl, fileSize: metadata.fileSize, codec: 'h264', hasAac: metadata.hasAac,
         key: source.contentKey || '', signal, bridge: 'bvc2',
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
@@ -529,8 +533,7 @@ export function createPlayer({
     }
     if (!isHlsUrl(source.url) && !source.contentKey) {
       log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
-      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
-        source, fallbackNotice, variants: quiet ? variants : null };
+      return { url: source.url, source, fallbackNotice, variants: quiet ? variants : null };
     }
     // If the current episode already uses native EME, prepare only the next
     // episode's source metadata. Avoid downloading+remuxing the whole upcoming

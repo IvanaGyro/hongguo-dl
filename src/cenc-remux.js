@@ -102,7 +102,7 @@ function waitBufferHeadroom(video, sourceBuffer, signal) {
  * before MSE opens; Worker output waits for sourceopen/SourceBuffer ACKs.
  */
 export async function openCencProgressiveStream({
-  video, url, fileSize, onStage = () => {}, codec, hasAac, key, signal,
+  video, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
   startSeconds = 0, durationSeconds = null, videoCodecString = null, bridge = 'cenc'
 }) {
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
@@ -319,7 +319,7 @@ export async function openCencProgressiveStream({
         ? 'hevc-init-unsupported' : 'source-buffer'));
   };
   try {
-    worker.postMessage({ type: 'start', url, fileSize, key, startSeconds });
+    worker.postMessage({ type: 'start', url, proxyUrl, fileSize, key, startSeconds });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.

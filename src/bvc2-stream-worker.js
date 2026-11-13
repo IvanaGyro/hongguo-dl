@@ -3,6 +3,7 @@
 // complete clear fMP4 init/media units. Main thread ACK provides backpressure.
 import { createFmp4Assembler } from './fmp4-assembler.js';
 import { readVerifiedRange } from './http-range.js';
+import { createMediaTransport, isAcceptedMediaTransportUrl } from './media-transport.js';
 import { readLimitedAsset } from './cenc-bundle.js';
 import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
 
@@ -18,7 +19,7 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, key, fileSize, startSeconds = 0 }) {
+async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
@@ -27,9 +28,12 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
     throw new Error('Invalid BVC2 seek time');
   const mediaUrl = new URL(url, self.location.origin);
-  if (!['http:', 'https:'].includes(mediaUrl.protocol) ||
-      !mediaUrl.pathname.endsWith('/api/media'))
-    throw new Error('Invalid media proxy endpoint');
+  if (!isAcceptedMediaTransportUrl(mediaUrl.href, self.location.origin) ||
+      (proxyUrl && !isAcceptedMediaTransportUrl(proxyUrl, self.location.origin)))
+    throw new Error('Invalid media transport endpoint');
+  const transport = createMediaTransport({
+    directUrl: mediaUrl.href, proxyUrl: proxyUrl || mediaUrl.href
+  });
   controller = new AbortController();
   let cacheStart = -1, cacheBytes = new Uint8Array(0);
   const readRange = async (start, wanted) => {
@@ -42,7 +46,7 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     const end = Math.min(fileSize, start + Math.max(wanted, WINDOW)) - 1;
     // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
     // the requested 256 KiB window even if it lies about Content-Length.
-    const bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
+    const bytes = await readVerifiedRange(transport.fetch, mediaUrl.href, start, end,
       fileSize, controller.signal);
     cacheStart = start;
     cacheBytes = bytes;
