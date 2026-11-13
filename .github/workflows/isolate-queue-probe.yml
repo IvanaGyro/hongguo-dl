@@ -1,15 +1,17 @@
-name: Probe local workerd isolate scheduling
+name: Compare real Hongguo App request intervals on local workerd
 on:
   push:
     branches:
       - experiment/app-isolate-queue-probe-20261113
     paths:
       - .github/workflows/isolate-queue-probe.yml
-      - worker/isolate-queue-probe.js
-      - scripts/isolate-queue-probe.mjs
+      - scripts/live-app-interval-bench.mjs
+      - worker/worker.js
+      - worker/vendor/app-source.js
 jobs:
-  probe-workerd:
+  real-upstream-benchmark:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -17,23 +19,55 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.3'
-      - name: Install project dependencies
+      - name: Install dependencies
         run: bun ci
-      - name: Run local workerd isolate and concurrency experiment
+      - name: Run six separate REAL upstream App source experiments (30 requests each)
         shell: bash
         run: |
           set -euo pipefail
-          bunx wrangler dev worker/isolate-queue-probe.js --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false > /tmp/isolate-probe-workerd.log 2>&1 &
-          worker_pid=$!
-          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..40}; do
-            if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8787/health > /tmp/isolate-probe-health.json 2>/dev/null && grep -q '"ok":true' /tmp/isolate-probe-health.json; then
-              break
-            fi
-            if ! kill -0 "$worker_pid" 2>/dev/null; then
-              cat /tmp/isolate-probe-workerd.log
+          mkdir -p /tmp/hongguo-live-app-probe
+          # Each experiment starts a fresh local workerd process to prevent
+          # cross-experiment sticky refusal/queue state.
+          # Exactly >=5s idle AFTER the previous experiment has fully settled.
+          rounds=("queue:0" "parallel:0" "queue:1000" "parallel:1000" "queue:2000" "parallel:2000")
+          for i in "${!rounds[@]}"; do
+            IFS=: read -r mode interval <<< "${rounds[$i]}"
+            echo "===== START REAL APP experiment mode=$mode interval_ms=$interval count=30 ====="
+            bunx wrangler dev --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false > /tmp/hongguo-live-app-probe/workerd.log 2>&1 &
+            worker_pid=$!
+            trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+            ready=0
+            for attempt in {1..45}; do
+              if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8787/api/health > /dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              if ! kill -0 "$worker_pid" 2>/dev/null; then
+                cat /tmp/hongguo-live-app-probe/workerd.log
+                exit 1
+              fi
+              sleep 1
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "workerd did not start"
+              cat /tmp/hongguo-live-app-probe/workerd.log
               exit 1
             fi
-            sleep 1
+            node scripts/live-app-interval-bench.mjs "$mode" "$interval"
+            kill "$worker_pid" 2>/dev/null || true
+            wait "$worker_pid" 2>/dev/null || true
+            trap - EXIT
+            if [ "$i" -lt 5 ]; then
+              echo "===== END experiment; RESTING 5 SECONDS before next start ====="
+              sleep 5
+            fi
           done
-          node scripts/isolate-queue-probe.mjs
+          echo "===== ALL REAL-APP EXPERIMENTS FINISHED ====="
+      - name: Upload anonymous timing results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-app-interval-timings
+          path: /tmp/hongguo-live-app-probe/*.json
+          if-no-files-found: warn
+          retention-days: 7

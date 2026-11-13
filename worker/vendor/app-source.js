@@ -450,6 +450,13 @@ async function fetchAppPlayUrl(vid, options = {}) {
     normalizeDownloadQuality(options.quality); // Validate before registration or network I/O.
     vid = String(vid || '');
     if (!/^\d{1,30}$/.test(vid)) throw new Error('分集编号无效');
+    // Benchmark-only bypass of the per-isolate playback queue.
+    // Branch is NOT deployed to the public Worker. The real signed upstream
+    // requests, device registration, validation and timeouts are unchanged.
+    if (options.benchmarkParallel) {
+        options.benchmarkOnStart?.(Date.now());
+        return fetchAppPlayUrlFresh(vid, options);
+    }
     // Playback, prefetch and downloads share one paced turn, including registration.
     const previousRejection = playbackRejection;
     const pending = playbackQueue.then(async () => {
@@ -461,6 +468,7 @@ async function fetchAppPlayUrl(vid, options = {}) {
             catch (error) { throwIfAborted(options.signal); throw error; }
         }
         throwIfAborted(options.signal);
+        options.benchmarkOnStart?.(Date.now());
         try { return await fetchAppPlayUrlFresh(vid, options); }
         catch (error) {
             // An explicit refusal also stops work queued before it was received.

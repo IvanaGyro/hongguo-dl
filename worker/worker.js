@@ -15,6 +15,8 @@ const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KH
 const APP_UA = 'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C)';
 const ID = /^\d{1,30}$/;
 const isHost = (host, suffixes) => suffixes.some(s => host === s || host.endsWith('.' + s));
+// Experiment branch only: a per-isolate, non-sensitive diagnostic identifier.
+let benchmarkIsolateId = null;
 
 export function safeUrl(raw, allowed) {
   let u;
@@ -158,7 +160,7 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, channel = 'auto') {
+async function loadSource(sid, vid, channel = 'auto', benchmark = null) {
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
   if (!['auto', 'web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
@@ -176,7 +178,10 @@ async function loadSource(sid, vid, channel = 'auto') {
   try {
     // Source metadata is complete. Quality and codec are a client-side
     // selection policy, not a Worker concern.
-    const result = await fetchAppPlayUrl(vid);
+    const result = await fetchAppPlayUrl(vid, benchmark ? {
+      benchmarkParallel: benchmark.mode === 'parallel',
+      benchmarkOnStart: startedAt => { benchmark.queueWaitMs = startedAt - benchmark.enteredAt; }
+    } : {});
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
@@ -285,6 +290,20 @@ export default {
       return new Response(null, { status: 204, headers });
     }
 
+    const benchmarkMode = url.pathname === '/api/source'
+      ? url.searchParams.get('benchmark') : null;
+    const benchmark = ['queue', 'parallel'].includes(benchmarkMode)
+      ? { mode: benchmarkMode, enteredAt: Date.now(), queueWaitMs: null } : null;
+    // The identifying header never includes signing/device credentials.
+    const annotateBenchmark = response => {
+      if (benchmark) {
+        benchmarkIsolateId ||= crypto.randomUUID();
+        response.headers.set('X-Benchmark-Isolate', benchmarkIsolateId);
+        response.headers.set('X-Benchmark-Queue-Wait-Ms',
+          benchmark.queueWaitMs == null ? 'not-started' : String(benchmark.queueWaitMs));
+      }
+      return response;
+    };
     try {
       if (url.pathname === '/api/health') return withCors(asJson({
         ok: true, runtime: 'cloudflare-worker', sourceChannels: true
@@ -300,15 +319,15 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
-          url.searchParams.get('channel') || 'auto'));
+          url.searchParams.get('channel') || 'auto', benchmark));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');
-      return withCors(response, allowed);
+      return withCors(annotateBenchmark(response), allowed);
     } catch (error) {
-      return withCors(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
+      return withCors(annotateBenchmark(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
         message: String(error.message || '未知錯誤').slice(0, 300) } },
-        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), allowed);
+        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502)), allowed);
     }
   }
 };
