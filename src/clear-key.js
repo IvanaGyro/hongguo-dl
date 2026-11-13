@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
+import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { createMediaTransport } from './media-transport.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
@@ -61,7 +62,11 @@ export function cencKidFromMoov(data) {
 function aborted(signal) {
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
 }
-async function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe = () => {}) {
+function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe, timeoutMs) {
+  return withRangeDeadline(localSignal =>
+    rangeFetchOnce(url, start, bytes, localSignal, fetchImpl, onProbe), signal, timeoutMs);
+}
+async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = () => {}) {
   const started = performance.now();
   onProbe('range.request', { offset: start, bytes });
   aborted(signal);
@@ -84,7 +89,8 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe = () => 
     await res.body?.cancel().catch(() => {});
     aborted(signal);
   }
-  onProbe('range.response', { status: res.status, elapsedMs: performance.now() - started });
+  onProbe('range.response', { status: res.status, elapsedMs: performance.now() - started,
+    ...rangeTiming(res) });
   if (res.status !== 206) {
     await res.body?.cancel().catch(() => {});
     // Preserve HTTP failure semantics instead of reporting an HEVC decoder
@@ -154,7 +160,7 @@ async function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe = () => 
 }
 
 export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
-  onProbe = () => {}) {
+  onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS) {
   let offset = 0;
   const tried = new Set();
   for (let probe = 0; probe < MAX_RANGES; probe++) {
@@ -162,7 +168,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
     if (tried.has(offset)) return null;
     tried.add(offset);
     const { data, fileSize } = await rangeFetch(mediaUrl, offset, HEADER_SIZE,
-      signal, fetchImpl, onProbe);
+      signal, fetchImpl, onProbe, timeoutMs);
     const boxes = mp4Boxes(data, offset);
     if (probe === 0 && boxes[0]?.type !== 'ftyp') return null;
     for (const box of boxes) {
@@ -173,7 +179,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
         : (await rangeFetch(mediaUrl, box.offset, box.size,
-          signal, fetchImpl, onProbe)).data;
+          signal, fetchImpl, onProbe, timeoutMs)).data;
       if (metadata) {
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
@@ -383,7 +389,7 @@ export async function openClearKeyStream({
   const transport = createMediaTransport({ directUrl: source.url, proxyUrl, fetchImpl,
     direct: typeof window !== 'undefined' &&
       !['localhost', '127.0.0.1'].includes(location.hostname),
-    onFallback: reason => onStage('media.transport.fallback', { reason }) });
+    onFallback: (reason, fields) => onStage('media.transport.fallback', { reason, ...fields }) });
   const url = transport.mode === 'direct' ? source.url : proxyUrl;
   const metadata = {};
   onStage('metadata');

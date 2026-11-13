@@ -249,13 +249,16 @@ export async function openCencProgressiveStream({
         'media-range', 'media-range-failed', 'media-range-retry', 'media.transport.fallback'].includes(data.stage))
         onStage(data.stage, data.stage === 'media-range' ? {
           requests: data.requests, receivedBytes: data.receivedBytes,
-          fetchMs: data.fetchMs
+          fetchMs: data.fetchMs, headerMs: data.headerMs, upstreamMs: data.upstreamMs
         } : data.stage === 'media-range-failed' ? {
           request: data.request, code: data.code, status: data.status,
-          offset: data.offset, bytes: data.bytes, fetchMs: data.fetchMs
+          offset: data.offset, bytes: data.bytes, fetchMs: data.fetchMs,
+          headerMs: data.headerMs, upstreamMs: data.upstreamMs
         } : data.stage === 'media-range-retry' ? {
           status: data.status, attempt: data.attempt,
           delayMs: data.delayMs, remaining: data.remaining
+        } : data.stage === 'media.transport.fallback' ? {
+          reason: data.reason, status: data.status
         } : {});
       return;
     }

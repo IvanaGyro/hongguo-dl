@@ -142,3 +142,26 @@ test('quality and codec are ignored by /api/source, including legacy callers', a
     assert.equal(calls, 2);
   } finally { globalThis.fetch = original; }
 });
+
+test('media proxy exposes upstream-header time on successful and failed requests', async () => {
+  const native = globalThis.fetch;
+  try {
+    for (const status of [206, 520]) {
+      globalThis.fetch = async () => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return new Response('fixture', { status, headers: { 'Content-Type': 'video/mp4' } });
+      };
+      const response = await worker.fetch(new Request('https://example.workers.dev/api/media?url=' +
+        encodeURIComponent('https://cdn.fqnovelvod.com/sample.mp4?private=secret'), {
+        headers: { Origin: 'https://ivanagyro.github.io', Range: 'bytes=0-6' }
+      }), {});
+      assert.equal(response.status, status);
+      const timing = response.headers.get('Server-Timing');
+      assert.match(timing, /^upstream;dur=\d+$/);
+      assert(Number(timing.split('=')[1]) >= 10);
+      assert.match(response.headers.get('Access-Control-Expose-Headers'), /Server-Timing/);
+      assert.doesNotMatch(timing, /secret|sample|https/);
+      await response.body.cancel();
+    }
+  } finally { globalThis.fetch = native; }
+});

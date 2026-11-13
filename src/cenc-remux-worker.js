@@ -10,6 +10,7 @@ import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
 const WINDOW = 256 * 1024;
 const MAX_FILE = 260 * 1024 * 1024;
 let started = false, controller = null, pendingAck = null, seq = 0;
+let lastRangeError = null;
 
 const sendUnit = (type, data) => new Promise((resolve, reject) => {
   if (controller.signal.aborted) return reject(new Error('Canceled'));
@@ -32,12 +33,15 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
       (proxyUrl && !isAcceptedMediaTransportUrl(proxyUrl, self.location.origin)))
     throw new Error('Invalid media transport endpoint');
   const transport = createMediaTransport({
-    directUrl: mediaUrl.href, proxyUrl: proxyUrl || mediaUrl.href
+    directUrl: mediaUrl.href, proxyUrl: proxyUrl || mediaUrl.href,
+    onFallback: (reason, fields) => self.postMessage({
+      type: 'stage', stage: 'media.transport.fallback', reason, ...fields
+    })
   });
   controller = new AbortController();
   let cacheStart = -1, cacheBytes = new Uint8Array(0);
   let rangeRequests = 0, receivedBytes = 0;
-  let lastRangeError = null;
+  lastRangeError = null;
   const rangeRecovery = createCencRangeRecovery({
     onRetry: event => self.postMessage({
       type: 'stage', stage: 'media-range-retry', status: 403,
@@ -55,11 +59,11 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
     // No response.arrayBuffer(): a misbehaving CDN must not allocate beyond
     // the requested 256 KiB window even if it lies about Content-Length.
     const fetchStarted = performance.now();
-    let bytes;
+    let bytes, timing = {};
     try {
       bytes = await rangeRecovery.read(
         () => readVerifiedRange(transport.fetch, mediaUrl.href, start, end,
-          fileSize, controller.signal),
+          fileSize, controller.signal, undefined, fields => { timing = fields; }),
         controller.signal
       );
     } catch (error) {
@@ -71,7 +75,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
       self.postMessage({ type: 'stage', stage: 'media-range-failed',
         request: rangeRequests + 1, offset: start, bytes: end - start + 1,
         code: lastRangeError.code, status: lastRangeError.status,
-        fetchMs: Math.round(performance.now() - fetchStarted) });
+        fetchMs: Math.round(performance.now() - fetchStarted), ...timing });
       throw error;
     }
     rangeRequests++;
@@ -79,7 +83,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0 }) {
     if (rangeRequests <= 4 || rangeRequests % 12 === 0)
       self.postMessage({ type: 'stage', stage: 'media-range',
         requests: rangeRequests, receivedBytes,
-        fetchMs: Math.round(performance.now() - fetchStarted) });
+        fetchMs: Math.round(performance.now() - fetchStarted), ...timing });
     cacheStart = start;
     cacheBytes = bytes;
     return bytes.subarray(0, wanted);

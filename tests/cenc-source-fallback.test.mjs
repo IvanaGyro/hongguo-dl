@@ -65,3 +65,15 @@ test('HEVC retry candidates stay at original quality and remove duplicates', () 
     'https://cdn-a.example/1', 'https://cdn-b.example/1'
   ]);
 });
+
+test('timeouts and 520 network errors rotate by actual tried URLs, ignoring API failure counts', () => {
+  const base = { variants, variantsVid:'101', episodeVid:'101', quality:'1080p', codec:'hevc',
+    tier: { quality:'1080p', codec:'hevc' }, tried: 7,
+    triedUrls: new Set(['https://cdn-a.example/1']) };
+  for (const code of ['CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT']) {
+    assert.equal(canTryNextCencSource({ ...base, code }), true);
+    assert.equal(canTryNextCencSource({ ...base, code,
+      triedUrls: new Set(['https://cdn-a.example/1','https://cdn-b.example/1']) }), false);
+  }
+  assert.equal(canTryNextCencSource({ ...base, code:'CENC_RATE_LIMITED' }), false);
+});

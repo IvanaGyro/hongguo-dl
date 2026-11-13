@@ -44,7 +44,8 @@ export function createPlayer({
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
   let sourceAttempt = 0;
-  let sourceCycleStart = 0, sourceRefreshCount = 0, cencRetryTier = null;
+  let sourceRefreshCount = 0, cencRetryTier = null;
+  let cencTriedUrls = new Set();
   let streamFailure = null;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let lastVariantsPartial = false;
@@ -161,6 +162,11 @@ export function createPlayer({
     disposeNativeKeys();
     if (activeUrl) { URL.revokeObjectURL(activeUrl); activeUrl = null; }
   }
+  function streamPlaybackError(message) {
+    return streamFailure?.code?.startsWith('CENC_')
+      ? errorWith(streamFailure.code, playbackErrorSummary(streamFailure))
+      : errorWith('PLAYBACK_ERROR', message);
+  }
   async function waitMetadata(signal) {
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) return;
     await new Promise((resolve, reject) => {
@@ -172,7 +178,7 @@ export function createPlayer({
         signal.removeEventListener('abort', aborted);
       };
       const loaded = () => { clear(); resolve(); };
-      const failed = () => { clear(); reject(errorWith('PLAYBACK_ERROR',
+      const failed = () => { clear(); reject(streamPlaybackError(
         video.error?.message || '瀏覽器無法解碼此影片')); };
       const aborted = () => { clear(); reject(errorWith('CANCELED', '已切換影片')); };
       timeout = setTimeout(() => { clear(); reject(errorWith('PLAYBACK_TIMEOUT', '載入影片逾時')); },
@@ -217,11 +223,11 @@ export function createPlayer({
     if (!signal.aborted) trySeek();
   }
   // MSE reports loadedmetadata before its first media fragment arrives.
-  // Keep the resume handshake in 'loading' state until the requested instant
-  // is actually decoded/buffered. Otherwise a delayed seeking event can
-  // accidentally start a second Worker and discard the first one.
-  async function waitForCencResume(seconds, signal, stream) {
-    if (!['cenc-remux', 'bvc2-transcode'].includes(stream?.kind) || seconds <= 0.5) return;
+  // Keep startup in 'loading' until the requested instant has media data,
+  // including zero-start playback. Metadata alone does not prove readiness.
+  // A delayed seeking event must not start a second Worker during this wait.
+  async function waitForCencStartup(seconds, signal, stream) {
+    if (!['cenc-remux', 'bvc2-transcode'].includes(stream?.kind)) return;
     const target = clampStreamSeek(seconds, stream.durationSeconds || video.duration);
     if (target === null) return;
     await new Promise((resolve, reject) => {
@@ -242,21 +248,22 @@ export function createPlayer({
         else resolve();
       };
       const canceled = () => finish(errorWith('CANCELED', '已切換影片'));
-      const failed = () => finish(errorWith('PLAYBACK_ERROR', 'CENC 續播解碼失敗'));
+      const failed = () => finish(streamPlaybackError('CENC 首段影片載入失敗'));
       const check = () => {
         if (signal.aborted) return canceled();
         if (video.error) return failed();
-        if (!timeIsBuffered(video.buffered, target, 0.15)) return;
+        const bufferedTarget = seconds > 0.5 ? target : video.currentTime;
+        if (!timeIsBuffered(video.buffered, bufferedTarget, 0.15)) return;
         // Some browsers keep currentTime at zero during MSE startup even
         // after we first assigned the target in restoreTime().
-        if (Math.abs(video.currentTime - target) > 0.6) {
+        if (seconds > 0.5 && Math.abs(video.currentTime - target) > 0.6) {
           try { video.currentTime = target; } catch { /* retry on canplay */ }
         }
         if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-            Math.abs(video.currentTime - target) <= 0.6) finish();
+            (seconds <= 0.5 || Math.abs(video.currentTime - target) <= 0.6)) finish();
       };
       const timeout = setTimeout(() =>
-        finish(errorWith('PLAYBACK_TIMEOUT', 'CENC 續播片段未在時限內準備完成')),
+        finish(errorWith('PLAYBACK_TIMEOUT', 'CENC 首段影片未在時限內準備完成')),
       SESSION_TIMEOUT);
       for (const event of events) video.addEventListener(event, check);
       video.addEventListener('error', failed, { once: true });
@@ -332,8 +339,8 @@ export function createPlayer({
     const sameEpisode = !quiet && lastVariants && lastVariantsVid === episode.vid;
     const priorCandidates = sameEpisode && cencRetryTier
       ? sameTierHevcCandidates(lastVariants, { quality, codec }, cencRetryTier) : [];
-    const usedInCycle = attempt - sourceCycleStart;
-    const withinCycle = priorCandidates.length > 0 && usedInCycle < priorCandidates.length;
+    const withinCycle = priorCandidates.some(source => !cencTriedUrls.has(source.url));
+    let refreshingCencSources = false;
     const sameList = Boolean(sameEpisode && attempt > 0 &&
       (cencRetryTier ? withinCycle : attempt < lastVariants.length));
     if (!quiet && cencRetryTier && sameEpisode && attempt > 0 && !sameList) {
@@ -344,8 +351,7 @@ export function createPlayer({
         throw errorWith('CENC_SOURCE_EXHAUSTED',
           '同畫質候選來源均已嘗試且刷新一次後仍不可用；請稍後再試。');
       }
-      sourceRefreshCount++;
-      sourceCycleStart = attempt;
+      refreshingCencSources = true;
       log('source.list.refresh', {
         attempt: attempt + 1, tier: cencRetryTier.quality, refreshed: sourceRefreshCount
       });
@@ -360,6 +366,15 @@ export function createPlayer({
           { refresh: !quiet && attempt > 0 && !sameList });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
+    if (refreshingCencSources) {
+      if (!variants.length) throw errorWith('SOURCE_UNAVAILABLE', '刷新未取得可用片源');
+      // An API failure does not start a new cycle. Keep all failed URLs marked
+      // until a refresh actually succeeds, so retry cannot revive the old list.
+      sourceRefreshCount++;
+      cencTriedUrls.clear();
+      log('source.list.refreshed', { variants: variants.length, refreshed: sourceRefreshCount });
+    }
+
     // A public unknown-quality URL cannot satisfy an explicit rendition
     // request. Await the other query only when the initial source lacks it.
     if (list.lateVariants && (quality !== 'auto' || codec !== 'auto') &&
@@ -431,9 +446,10 @@ export function createPlayer({
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
     const selectableVariants = !quiet && cencRetryTier
       ? sameTierHevcCandidates(variants, { quality, codec }, cencRetryTier)
+        .filter(source => !cencTriedUrls.has(source.url))
       : variants;
-    const candidateIndex = !quiet && cencRetryTier
-      ? Math.max(0, attempt - sourceCycleStart) : attempt;
+    const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
+      ? 0 : attempt;
     let resolved = playbackRendition(selectableVariants,
       { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport);
     if (!quiet && !cencRetryTier && triedSourceUrls.size) {
@@ -461,7 +477,10 @@ export function createPlayer({
         ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
         '。ByteVC2 須部署 Librempeg WASM 轉碼器；HEVC 需瀏覽器支援。');
     }
-    if (!quiet) triedSourceUrls.add(source.url);
+    if (!quiet) {
+      triedSourceUrls.add(source.url);
+      cencTriedUrls.add(source.url);
+    }
     let fallbackNotice = '';
     if (resolved.fallback) {
       const original = quality;
@@ -770,7 +789,7 @@ export function createPlayer({
     const wanted = savedResumeSeconds(episode);
     if (wanted > 0.5) reportStartup('正在恢復觀看進度…', signal, attempt);
     await restoreTime(wanted, signal);
-    await waitForCencResume(wanted, signal, resolved.native);
+    await waitForCencStartup(wanted, signal, resolved.native);
     if (signal.aborted || currentToken !== token) return;
     restoredTime = wanted;
     readyForHistory = true;
@@ -786,7 +805,7 @@ export function createPlayer({
       try { await video.play(); }
       catch (error) {
         if (error.name === 'NotAllowedError') setStatus('點選影片即可開始播放');
-        else throw errorWith('PLAYBACK_ERROR', error.message || '無法播放此片源');
+        else throw streamPlaybackError(error.message || '無法播放此片源');
       }
     }
   }
@@ -812,19 +831,20 @@ export function createPlayer({
           setStatus('無法播放 · ' + parsed.message);
           return;
         }
-        // A CDN may reject one freshly signed HEVC variant while another
-        // variant supplied by the same official source API returns 206.
+        // A CDN may deny or stall one HEVC candidate while another official
+        // source at the same resolution still returns usable media.
         // Limit retries to distinct candidates at the SAME quality and codec;
         // never broaden to ByteVC2, lower quality, or unlimited 403 retries.
         if (canTryNextCencSource({
           code: parsed.code, variants: lastVariants,
           variantsVid: lastVariantsVid, episodeVid: episode.vid,
-          tried: sourceAttempt - sourceCycleStart, quality: selection().quality,
+          tried: cencTriedUrls.size, triedUrls: cencTriedUrls, tier: cencRetryTier,
+          quality: selection().quality,
           codec: selection().codec
         })) {
           retryIncrementalCenc = true; // keep the bounded MSE/Range path
           log('playback.cdn.rotate', { attempt: sourceAttempt, elapsedMs: ageMs() });
-          setStatus('目前 HEVC 媒體來源拒絕存取，嘗試同畫質其他候選來源…');
+          setStatus('目前 HEVC 媒體來源無法使用，嘗試同畫質其他候選來源…');
           continue;
         }
         errors = recordFailure(errors, parsed, 5, 20, { retryForbidden: true });
@@ -887,7 +907,7 @@ export function createPlayer({
     sourceAttempt = 0;
     pendingSourceExpansion = null;
     triedSourceUrls = new Set();
-    sourceCycleStart = 0;
+    cencTriedUrls = new Set();
     sourceRefreshCount = 0;
     cencRetryTier = null;
     streamFailure = null;
@@ -1069,7 +1089,7 @@ export function createPlayer({
     streamFailure = null;
     const knownCodes = [
       'CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'CENC_RANGE_INVALID',
-      'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_REMUX_FAILED'
+      'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_REMUX_FAILED'
     ];
     const parsed = transport && knownCodes.includes(transport.code)
       ? { code: transport.code, message: playbackErrorSummary(transport) }

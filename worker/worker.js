@@ -189,7 +189,7 @@ async function loadSource(sid, vid, channel = 'auto') {
       e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message);
   }
 }
-async function relayMedia(request, raw) {
+async function relayMedia(request, timing) {
   const endpoint = new URL(request.url);
   const urlParam = endpoint.searchParams.get('url');
   if (!urlParam) throw httpError(400, 'MISSING_URL', '缺少媒體網址');
@@ -206,7 +206,13 @@ async function relayMedia(request, raw) {
       'Accept-Encoding': 'identity'
     });
     if (range) headers.set('Range', range);
-    const res = await fetch(target.href, { method: request.method, headers, redirect: 'manual', cache: 'no-store' });
+    const upstreamStarted = performance.now();
+    let res;
+    try {
+      res = await fetch(target.href, { method: request.method, headers, redirect: 'manual', cache: 'no-store' });
+    } finally {
+      timing.upstreamMs += performance.now() - upstreamStarted;
+    }
     if ([301, 302, 303, 307, 308].includes(res.status)) {
       if (!res.headers.get('location')) throw httpError(502, 'BAD_REDIRECT', '媒體跳轉缺少網址');
       target = safeUrl(new URL(res.headers.get('location'), target).href, [...MEDIA_HOSTS, ...API_HOSTS]);
@@ -233,6 +239,14 @@ async function relayMedia(request, raw) {
   }
   throw httpError(502, 'MEDIA_REDIRECT_LOOP', '媒體跳轉次數過多');
 }
+// Time spent awaiting upstream response headers, including redirects. This
+// cannot measure scheduling before this Worker invocation or browser latency.
+function withMediaTiming(response, timing) {
+  if (!timing) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Server-Timing', 'upstream;dur=' + Math.round(timing.upstreamMs));
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 // CORS is only for the public GitHub Pages frontend and explicitly configured sites.
 // Origin restrictions are not authentication: use Cloudflare rate limiting for abuse protection.
 export function corsOrigin(origin, requestUrl, env = {}) {
@@ -250,7 +264,7 @@ function withCors(response, origin) {
   if (!origin) return response;
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', origin);
-  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified');
+  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, Server-Timing');
   headers.append('Vary', 'Origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -285,6 +299,7 @@ export default {
       return new Response(null, { status: 204, headers });
     }
 
+    const mediaTiming = url.pathname === '/api/media' ? { upstreamMs: 0 } : null;
     try {
       if (url.pathname === '/api/health') return withCors(asJson({
         ok: true, runtime: 'cloudflare-worker', sourceChannels: true
@@ -302,13 +317,13 @@ export default {
           url.searchParams.get('vid') || '',
           url.searchParams.get('channel') || 'auto'));
       } else if (url.pathname === '/api/media') {
-        response = await relayMedia(request);
+        response = await relayMedia(request, mediaTiming);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');
-      return withCors(response, allowed);
+      return withCors(withMediaTiming(response, mediaTiming), allowed);
     } catch (error) {
-      return withCors(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
+      return withCors(withMediaTiming(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
         message: String(error.message || '未知錯誤').slice(0, 300) } },
-        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), allowed);
+        Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), mediaTiming), allowed);
     }
   }
 };

@@ -126,9 +126,10 @@ test('a transport that rejects after abort remains cancellation, not a network e
         reject(new Error('secret signed URL inside aborted fetch')), { once: true });
     });
   }, '/api/media', 10, 13, 100, controller.signal);
-  assert.equal(signalSeen, controller.signal);
+  assert.equal(signalSeen.aborted, false);
   controller.abort();
   await assert.rejects(pending, { message: 'Canceled' });
+  assert.equal(signalSeen.aborted, true, 'Deadline signal must follow episode cancellation');
 });
 
 
@@ -156,4 +157,30 @@ test('Range errors keep exact HTTP category without leaking URL or response body
     }, url, 10, 13, 100),
     { code: 'CENC_RANGE_HTTP', status: 0, message: 'HTTP Range connection failed' }
   );
+});
+
+test('Range deadline covers stalled headers and body and aborts underlying I/O', async () => {
+  for (const phase of ['headers', 'body']) {
+    let signalSeen, canceled = 0;
+    const fetchImpl = async (_url, { signal }) => {
+      signalSeen = signal;
+      if (phase === 'headers') return new Promise(() => {}); // adapter ignores abort
+      return okResponse(new ReadableStream({ cancel() { canceled++; } }));
+    };
+    await assert.rejects(readVerifiedRange(fetchImpl, '/api/media', 10, 13, 100,
+      undefined, 20), { code: 'CENC_RANGE_TIMEOUT' });
+    assert.equal(signalSeen.aborted, true);
+    if (phase === 'body') assert.equal(canceled, 1);
+  }
+});
+
+test('Range telemetry separates upstream-header duration without publishing arbitrary headers', async () => {
+  let observed;
+  await readVerifiedRange(async () => okResponse(new Uint8Array(4), {
+    'Server-Timing': 'upstream;dur=123.5', 'X-Secret': 'private-signed-url'
+  }), '/api/media', 10, 13, 100, undefined, undefined, fields => { observed = fields; });
+  assert.equal(observed.status, 206);
+  assert.equal(observed.upstreamMs, 123.5);
+  assert(observed.headerMs >= 0);
+  assert.doesNotMatch(JSON.stringify(observed), /private|url|Secret/);
 });

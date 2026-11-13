@@ -62,7 +62,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
         (range && (response.status !== 206 || !validRange))) {
       await response.body?.cancel().catch(() => {});
       useDirect = false;
-      onFallback('range-or-access');
+      onFallback('range-or-access', { status: response.status });
       const fallback = await fetchImpl(proxyUrl, options);
       markIfProxyWorks(fallback, range);
       return fallback;

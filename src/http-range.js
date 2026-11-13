@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Strict, bounded HTTP 206 reader shared by the CENC Range Worker and Node tests.
 // Only publish fixed, sanitized error codes and numeric HTTP statuses.
+import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 const rangeError = (code, message, status = 0) =>
   Object.assign(new Error(message), { code, status });
 
-export async function readVerifiedRange(fetchImpl, url, start, end, fileSize, signal) {
+export function readVerifiedRange(fetchImpl, url, start, end, fileSize, signal,
+  timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}) {
+  return withRangeDeadline(localSignal =>
+    readVerifiedRangeOnce(fetchImpl, url, start, end, fileSize, localSignal, onResponse), signal, timeoutMs);
+}
+async function readVerifiedRangeOnce(fetchImpl, url, start, end, fileSize, signal, onResponse) {
+  const started = performance.now();
   const expected = end - start + 1;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
       !Number.isSafeInteger(fileSize) || start < 0 || end < start ||
@@ -26,6 +33,7 @@ export async function readVerifiedRange(fetchImpl, url, start, end, fileSize, si
     await response.body?.cancel().catch(() => {});
     throw rangeError('CANCELED', 'Canceled');
   }
+  onResponse({ status: response.status, headerMs: performance.now() - started, ...rangeTiming(response) });
   if (response.status !== 206) {
     await response.body?.cancel().catch(() => {});
     const status = response.status;

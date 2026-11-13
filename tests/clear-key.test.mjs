@@ -212,7 +212,24 @@ test('aborting stalled CENC KID metadata Range cancels reader and stops probing'
     });
   await Promise.resolve();
   controller.abort();
-  await assert.rejects(pending, /已切換影片/);
+  await assert.rejects(pending, { code: 'CANCELED' });
   assert.equal(opened, 1);
   assert.equal(canceled, 1, 'Metadata stream must be canceled immediately on abort');
+});
+
+test('metadata Range deadline covers both headers and an idle body', async () => {
+  for (const phase of ['headers', 'body']) {
+    let signalSeen, canceled = 0;
+    const fetchImpl = async (_url, { signal }) => {
+      signalSeen = signal;
+      if (phase === 'headers') return new Promise(() => {});
+      return new Response(new ReadableStream({ cancel() { canceled++; } }), {
+        status: 206, headers: { 'Content-Range': 'bytes 0-65535/100000' }
+      });
+    };
+    await assert.rejects(probeCencKid('https://example.com/fixture', undefined,
+      fetchImpl, null, () => {}, 20), { code: 'CENC_RANGE_TIMEOUT' });
+    assert.equal(signalSeen.aborted, true);
+    if (phase === 'body') assert.equal(canceled, 1);
+  }
 });

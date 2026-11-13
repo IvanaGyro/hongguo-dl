@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// An HTTP 403 is a *candidate* access refusal, not a reason to abandon all
+// HTTP access/network failures concern a candidate, not necessarily all
 // official HEVC renditions. Rotate only across distinct alternatives already
 // supplied by /api/source at the same codec and quality. There is no retry
 // on 429 or decoder/MSE failures; signed URLs/keys never enter logs.
@@ -7,11 +7,14 @@ import { candidateRenditions, codecId, qualityId } from './source-options.js';
 
 export function canTryNextCencSource({
   code, variants, variantsVid, episodeVid, tried, quality = 'auto',
-  codec = 'auto'
+  codec = 'auto', triedUrls = null, tier = null
 }) {
-  if (!['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN'].includes(code) ||
+  if (!['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP',
+    'CENC_RANGE_TIMEOUT'].includes(code) ||
       !Array.isArray(variants) || variantsVid !== episodeVid ||
       !Number.isSafeInteger(tried) || tried < 1) return false;
+  if (triedUrls && tier) return sameTierHevcCandidates(variants, { quality, codec }, tier)
+    .some(source => !triedUrls.has(source.url));
   const options = candidateRenditions(variants, { quality, codec });
   const selected = options[0];
   if (!selected || codecId(selected.codec) !== 'hevc' ||
