@@ -327,12 +327,28 @@ export function createPlayer({
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
       setStatus('讀取 ByteVC2 影片…');
       const started = performance.now();
+      let received = 0;
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
-        (length) => { if (length > 0) markStartupStage('first-media-byte'); });
+        (length, total) => {
+          received += length;
+          if (length > 0) markStartupStage('first-media-byte');
+          if (total > 0) setStatus('讀取 ByteVC2 影片 ' +
+            Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）');
+        });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      setStatus('Librempeg ByteVC2 → H.264 實驗性轉碼中…');
-      const transcoded = await transcodeBvc2(raw,
-        { contentKey: source.contentKey, signal });
+      setStatus('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
+      const bvc2Phases = {
+        'wasm-loading': '載入 ByteVC2 WASM 解碼器…',
+        'wasm-ready': 'ByteVC2 解碼器已就緒…',
+        transcoding: 'ByteVC2 → H.264 正在轉碼整集；完成前無法顯示影格，請勿誤認為已起播',
+        finalizing: 'ByteVC2 轉碼完成，正在輸出 MP4…'
+      };
+      const transcoded = await transcodeBvc2(raw, {
+        contentKey: source.contentKey, signal,
+        onProgress: phase => {
+          if (!signal.aborted && bvc2Phases[phase]) setStatus(bvc2Phases[phase]);
+        }
+      });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       console.info('[Hongguo playback] E' + episode.index + ' ByteVC2 解密轉碼：' +
         Math.round(performance.now() - started) + 'ms');

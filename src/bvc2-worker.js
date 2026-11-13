@@ -5,6 +5,7 @@ import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
 self.onmessage = async ({ data }) => {
   let core = null;
   try {
+    self.postMessage({ type: 'progress', phase: 'wasm-loading' });
     const base = new URL(import.meta.env.BASE_URL + 'bvc2/', self.location.href);
     const moduleUrl = new URL('bvc2-core.mjs', base);
     const wasmUrl = new URL('bvc2-core.wasm', base);
@@ -32,14 +33,19 @@ self.onmessage = async ({ data }) => {
     core = await createModule({ wasmBinary });
     if (core._bvc2_decoder_available() !== 1)
       throw new Error('WASM 未包含 BVC2 解碼器與 x264 編碼器');
+    self.postMessage({ type: 'progress', phase: 'wasm-ready' });
     const input = '/input.mp4', output = '/output.mp4';
     core.FS.writeFile(input, new Uint8Array(data.bytes));
     const run = core.cwrap('bvc2_transcode', 'number', ['string', 'string', 'string']);
+    // The current WASM API is a synchronous, full-episode transcoder. This
+    // phase intentionally does NOT fabricate a percent-complete estimate.
+    self.postMessage({ type: 'progress', phase: 'transcoding' });
     const code = run(input, output, data.key || '');
     if (code !== 0) {
       const message = core.UTF8ToString(core._bvc2_last_error());
       throw new Error(message || '轉碼結束碼 ' + code);
     }
+    self.postMessage({ type: 'progress', phase: 'finalizing' });
     const bytes = core.FS.readFile(output);
     if (bytes.length === 0) throw new Error('ByteVC2 轉碼產生空白 MP4');
     self.postMessage({ ok: true, bytes: bytes.buffer }, [bytes.buffer]);

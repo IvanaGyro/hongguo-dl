@@ -3,7 +3,7 @@
 // so cancellation, transfer and startup failures can be regression tested.
 import { errorWith } from './logic.js';
 
-export function runBvc2WorkerJob(bytes, { contentKey = '', signal, createWorker }) {
+export function runBvc2WorkerJob(bytes, { contentKey = '', signal, onProgress, createWorker }) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -35,6 +35,13 @@ export function runBvc2WorkerJob(bytes, { contentKey = '', signal, createWorker 
     };
     worker.onmessage = ({ data }) => {
       if (done) return;
+      // Phase messages are informational; never resolve or terminate a job
+      // before the Worker provides a nonempty playable MP4.
+      if (data?.type === 'progress') {
+        if (['wasm-loading', 'wasm-ready', 'transcoding', 'finalizing'].includes(data.phase))
+          onProgress?.(data.phase);
+        return;
+      }
       if (!data?.ok) {
         finish(errorWith('BVC2_ERROR', data?.error || 'ByteVC2 轉碼失敗'));
       } else if (!(data.bytes instanceof ArrayBuffer) || data.bytes.byteLength === 0) {

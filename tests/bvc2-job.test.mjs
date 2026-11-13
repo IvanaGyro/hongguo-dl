@@ -80,3 +80,36 @@ test('failure to construct Worker is converted to a stable error', async () => {
     createWorker: () => { throw new Error('secret implementation details'); }
   }), /無法建立/);
 });
+
+
+test('ByteVC2 progress phases do not finish a job before valid media arrives', async () => {
+  const { worker, createWorker } = create();
+  const phases = [];
+  const task = runBvc2WorkerJob(Uint8Array.of(1), {
+    createWorker, onProgress: phase => phases.push(phase)
+  });
+  worker.onmessage({ data: { type: 'progress', phase: 'wasm-loading' } });
+  worker.onmessage({ data: { type: 'progress', phase: 'wasm-ready' } });
+  worker.onmessage({ data: { type: 'progress', phase: 'transcoding' } });
+  worker.onmessage({ data: { type: 'progress', phase: 'secret-unknown' } });
+  worker.onmessage({ data: { type: 'progress', phase: 'finalizing' } });
+  assert.deepEqual(phases, ['wasm-loading', 'wasm-ready', 'transcoding', 'finalizing']);
+  assert.equal(worker.terminated, false);
+  worker.onmessage({ data: { ok: true, bytes: Uint8Array.of(1, 2, 3).buffer } });
+  assert.deepEqual([...await task], [1, 2, 3]);
+  assert.equal(worker.terminated, true);
+});
+
+test('ByteVC2 late progress from a canceled Worker cannot update the UI', async () => {
+  const { worker, createWorker } = create();
+  const controller = new AbortController();
+  const phases = [];
+  const task = runBvc2WorkerJob(Uint8Array.of(1), {
+    signal: controller.signal, createWorker, onProgress: phase => phases.push(phase)
+  });
+  controller.abort();
+  worker.onmessage({ data: { type: 'progress', phase: 'transcoding' } });
+  await assert.rejects(task, /已取消/);
+  assert.deepEqual(phases, []);
+  assert.equal(worker.terminated, true);
+});
