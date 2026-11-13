@@ -16,14 +16,17 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
   const cache = createMediaByteCache({ fileSize, budget });
   for (const { offset, data } of initialRanges) cache.write(offset, data, true);
   let closed = false, enabled = false, focus = 0, pumping = false, demand = 0;
-  let queue = Promise.resolve(), downloadedBytes = 0, requests = 0, lastLog = 0;
+  let queue = Promise.resolve(), downloadedBytes = 0, requests = 0, lastLog = 0, reportedComplete = false;
   const notify = force => {
-    if (force || performance.now() - lastLog > 2000) {
+    const complete = cache.firstMissing(0, fileSize) === null;
+    if (force || complete !== reportedComplete || performance.now() - lastLog > 2000) {
+      reportedComplete = complete;
       lastLog = performance.now();
       onStage('media.cache', { ...cache.stats, downloadedBytes, requests });
     }
   };
-  const network = createHttpStreamReader({ ...options, fileSize,
+  const network = createHttpStreamReader({ ...options, fileSize, externalCache: cache,
+    maxPacketBytes: fileSize <= budget ? budget : Math.max(4 * 1024 * 1024, budget / 2),
     onChunk: (offset, data) => { cache.write(offset, data); downloadedBytes += data.length; },
     onResponse: fields => { requests = fields.requests; options.onResponse?.(fields); }
   });
@@ -44,6 +47,7 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
   const pump = async () => {
     if (pumping || !enabled || closed) return;
     pumping = true;
+    const before = downloadedBytes;
     try {
       // Short episodes can finish downloading without remuxing them all.
       // Long files use an independent, bounded byte lookahead, not MSE size.
@@ -58,7 +62,7 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
         // Yield to queued seeks/ACKs instead of monopolizing a cached stream.
         await new Promise(resolve => setTimeout(resolve, 0));
       }
-      notify(true);
+      notify(downloadedBytes !== before);
     } catch (error) {
       // Speculation must not fail playback. A demanded read retains the
       // existing status-aware recovery/error path and can retry later.
@@ -76,12 +80,16 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
         throw new TypeError('Invalid AVIO read');
       focus = start;
       const hit = cache.read(start, size);
-      if (hit) return hit;
+      if (hit) { if (enabled) void pump(); return hit; }
       demand++;
       try { return await abortable(serial(() => acquire(start, size)), readSignal); }
       finally { demand--; if (enabled) void pump(); }
     },
-    prefetch(active) { enabled = active && !closed; if (enabled) void pump(); },
+    prefetch(active) {
+      const next = active && !closed;
+      if (enabled !== next) onStage('media.prefetch', { active: next });
+      enabled = next; if (enabled) void pump();
+    },
     get networkStats() { return { requests, downloadedBytes }; },
     snapshot(force = false) { notify(force); return { ...cache.stats, downloadedBytes, requests }; },
     close

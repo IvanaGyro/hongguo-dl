@@ -63,3 +63,37 @@ test('pause disables raw prefetch without discarding its byte cache', async () =
     assert.equal(starts.length, 1);
   } finally { reader.close(); }
 });
+
+test('a whole short-episode packet enters sparse cache directly and survives backward seek', async () => {
+  const size = 10 * 1024 * 1024;
+  const bytes = new Uint8Array(size).fill(43);
+  let calls = 0;
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: size,
+    budget: 16 * 1024 * 1024, fetchImpl: async () => {
+      calls++; return new Response(new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), { status: 206,
+        headers: { 'Content-Range': `bytes 0-${size - 1}/${size}` } });
+    } });
+  try {
+    assert.equal((await reader.read(0, 100))[0], 43);
+    assert(reader.snapshot().complete);
+    assert.equal((await reader.read(size - 100, 100))[0], 43);
+    assert.equal((await reader.read(100000, 100))[0], 43);
+    assert.equal(calls, 1);
+    assert(reader.snapshot().allocatedBytes <= 16 * 1024 * 1024);
+  } finally { reader.close(); }
+});
+
+test('capped CDN responses reconnect at exact gaps without consuming retry budget', async () => {
+  const starts = [];
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
+    fetchImpl: async (_, options) => {
+      const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
+      const end = Math.min(start + 65536, data.length); starts.push(start);
+      return new Response(data.slice(start, end), { status: 206,
+        headers: { 'Content-Range': `bytes ${start}-${end - 1}/${data.length}` } });
+    } });
+  try {
+    assert.deepEqual(await reader.read(0, 160000), data.slice(0, 160000));
+    assert.deepEqual(starts, [0, 65536, 131072]);
+  } finally { reader.close(); }
+});

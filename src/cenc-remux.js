@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Encrypted progressive MP4 -> clear fMP4 over MSE.
-// Works with a dedicated pinned Librempeg WASM; never buffers an entire episode.
+// Uses pinned Librempeg WASM with bounded raw-byte and MSE caches.
 import { bvc2BridgeAvailable } from './bvc2.js';
 import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
@@ -66,8 +66,8 @@ const waitBufferUpdate = (sourceBuffer, action, signal) => new Promise((resolve,
     action();
   } catch (error) { cleanup(); reject(error); }
 });
-// Prevent the worker from fetching the rest of a paused 300-second episode.
-// ACK the next fragment only when the buffered-ahead interval falls below 25s.
+// Bound remuxed lookahead independently of raw-byte download prefetch.
+// Only the contiguous range at the playhead counts as available headroom.
 function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
   if (bufferedAround(sourceBuffer.buffered, video.currentTime).bufferedAhead < policy.ahead)
     return Promise.resolve();
@@ -261,7 +261,7 @@ export async function openCencProgressiveStream({
   worker.onmessage = ({ data }) => {
     if (closed || failed || !data) return;
     if (data.type === 'stage') {
-      if (['media.cache', 'media.prefetch.stopped', 'seek.run'].includes(data.stage)) {
+      if (['media.cache', 'media.prefetch', 'media.prefetch.stopped', 'seek.run'].includes(data.stage)) {
         const { type, stage, ...fields } = data;
         if (stage === 'media.cache') cacheInfo = fields;
         onStage(stage, fields); return;

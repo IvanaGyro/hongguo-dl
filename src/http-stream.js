@@ -5,9 +5,11 @@ import { RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 const fail = (code, status = 0) => Object.assign(new Error(code), { code, status });
 const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
-  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onChunk = () => {} }) {
+  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onChunk = () => {}, externalCache = null,
+  maxPacketBytes = 4 * 1024 * 1024 }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
-  const bytes = new Uint8Array(8 * 1024 * 1024);
+  const bytes = externalCache ? null : new Uint8Array(8 * 1024 * 1024);
+  let networkOffset = 0;
   let requests = 0, receivedBytes = 0, validator = null;
   const drop = () => {
     const old = session;
@@ -81,6 +83,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       throw fail('CENC_RANGE_INVALID');
     }
     if (tag) validator = tag;
+    networkOffset = offset;
     current.end = offset + expected;
     current.reader = response.body.getReader();
   }
@@ -103,6 +106,24 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       receivedBytes += value.length;
     }
   }
+  async function readExternal(start, end) {
+    let result = externalCache.read(start, end - start);
+    while (!result) {
+      const missing = externalCache.firstMissing(start, end);
+      if (!session || networkOffset !== missing || networkOffset === session.end) await open(missing);
+      const { done, value } = await io(() => session.reader.read());
+      if (done) throw fail('CENC_RANGE_HTTP');
+      if (!(value instanceof Uint8Array) || !value.length || value.length > maxPacketBytes ||
+          networkOffset + value.length > session.end) throw fail('CENC_RANGE_INVALID');
+      // A cached/adapter response can legitimately deliver a whole short
+      // episode in one packet. Store it directly in the bounded sparse cache;
+      // never force it through the demuxer's small rewind buffer.
+      onChunk(networkOffset, value);
+      networkOffset += value.length; receivedBytes += value.length;
+      result = externalCache.read(start, end - start);
+    }
+    return result;
+  }
   return {
     async read(start, wanted) {
       check();
@@ -110,6 +131,13 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
           !Number.isInteger(wanted) || wanted < 1 || wanted > 1024 * 1024)
         throw fail('CENC_RANGE_INVALID');
       const end = Math.min(fileSize, start + wanted);
+      if (externalCache) {
+        const once = async () => {
+          try { return await readExternal(start, end); }
+          catch (error) { drop(); throw error; }
+        };
+        return recovery ? recovery.read(once, signal) : once();
+      }
       if (start < base || start > base + length) {
         drop(); base = start; head = 0; length = 0;
       }

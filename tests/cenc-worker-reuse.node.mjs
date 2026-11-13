@@ -1,10 +1,11 @@
 // Actual pinned WASM + production worker, synthetic media only. No CDN traffic.
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 const input = new Uint8Array(await readFile(process.argv[2]));
 const temporary = await mkdtemp(join(tmpdir(), 'cenc-worker-reuse-'));
 const stages = [], packets = [], requests = [];
@@ -64,6 +65,13 @@ try {
   assert(generationCounts.get(1) > 0 && generationCounts.get(2) > 0);
   assert.equal(packets.filter(p => p.type === 'init').length, 3);
   assert(stages.some(s => s.stage === 'media.cache' && s.cacheHits > 0));
+  for (const generation of [1, 2]) {
+    const clear = join(temporary, `generation-${generation}.mp4`);
+    await writeFile(clear, Buffer.concat(packets.filter(p => p.generation === generation)
+      .map(p => Buffer.from(p.bytes))));
+    execFileSync('ffmpeg', ['-nostdin', '-hide_banner', '-loglevel', 'error', '-i', clear, '-f', 'null', '-'],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+  }
   console.log('PASS production CENC worker reuses WASM and cached bytes for interrupted/EOF forward/back seeks',
     JSON.stringify({ requests, generations: [...generationCounts] }));
 } finally {
