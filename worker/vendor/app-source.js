@@ -8,11 +8,10 @@
 // Crypto tables and SDK protocol constants below are not user credentials.
 const crypto = require('node:crypto');
 const { gzipSync } = require('node:zlib');
-const { setTimeout: delay } = require('node:timers/promises');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { registerPlaybackDevice } = require('./playback-device');
 const { signPlayer, Ladon } = require('./playback-signature');
-const { throwIfAborted, boundedSignal, networkFailure } = require('./request-signal');
+const { abortError, throwIfAborted, boundedSignal, networkFailure } = require('./request-signal');
 const sm3 = require('./sm3');
 const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
 const localId = () => String(1000000000000000n + BigInt('0x' + crypto.randomBytes(6).toString('hex')));
