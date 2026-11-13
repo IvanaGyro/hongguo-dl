@@ -649,3 +649,13 @@
 - **直接提交 main**：[9a040f6966ebf32bcd2bb5c8049d78abbca60b7e](https://github.com/IvanaGyro/hongguo-dl/commit/9a040f6966ebf32bcd2bb5c8049d78abbca60b7e)、[27353d0856d8c53c97374a11eb84220379567b66](https://github.com/IvanaGyro/hongguo-dl/commit/27353d0856d8c53c97374a11eb84220379567b66)，修改 `tests/cenc-stream.browser.mjs`。CENC_TEST_SEEK=1 的 70s 測試**不在開頭建立 WebAudio node**，仍在完整 5 次 Seek／90% reload／3 次播放下載切換後測試 non-silent PCM；非 Seek 的 15s fixture 在 Chromium/Firefox 各測 startup PCM。不減少最終兩個場景的 AAC 驗收要求。
 - **新增失敗診斷**：55s remote RAP seek 若 timeout，收集 `playerStatus`、`currentTime`、`readyState`、`buffered`、`playbackRate`、`defaultPlaybackRate`、`mediaError`、新增 Range 次數及 MOV warning phases。**不輸出 video.src、簽署 URL、CENC key 或原始 browser error 字串**，只有錯誤數量。
 - **新 CI / E2E PENDING**：此版 `27353d0` 變更已提交 main；只有真正完成 browser fast 且執行 startup/seek/post-seek AAC PCM、speed assertions 才可填 PASS。若仍失敗，必須根據新診斷處理，不能取消長片 120s/1800s 或其他 E2E 門檻。
+
+
+## 階段 70 — 2026-11-13 離開播放分頁時主動停止現有媒體來源／BFCache 安全恢復
+
+- **問題**：先前 `src/player.js` 的 `window.pagehide` 只呼叫 `savePosition()`、`cancelPrefetch()`，未主動 abort 正在播放的 Worker／CENC Range／MSE URL。瀏覽器 BFCache 可保留頁面及 JS 上下文，不能以假設頁面必然被銷毀作為資源清理證據。
+- **最小修正直接 main**：[2652b17e23f73119dc5354e73b1874c9aa843045](https://github.com/IvanaGyro/hongguo-dl/commit/2652b17e23f73119dc5354e73b1874c9aa843045)，只修改 `src/player.js` 和現有 `tests/browser-modes.firefox.mjs`。在 pagehide 保存位置/取消預取後，若當前 player controller 存在且仍未 abort，呼叫既有 `disposeSource()` 統一停止媒體、Worker/Range/MSE 並 `token++` 阻止非同步 callback 復活。若返回同一個 BFCache 頁面，`pageshow.persisted` 用 `open(current, false, true)` 還原同一集、播放偏好及進度，**不擅自 autoplay**。
+- **針對性測試**：Firefox mock H264 720p/1.25× 的 `tests/browser-modes.firefox.mjs` 補合成 `PageTransitionEvent('pagehide',{persisted:true})` 和 `pageshow.persisted`，確認 active src 被移除、video 進入 HAVE_NOTHING、返回後可重新載入來源且為暫停並保留速度。**合成事件測試不是實際瀏覽器歷史 BFCache 導覽證據**。
+- **驗收狀態**：本輪查詢主 [CI #43333339692](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339692) 與 [Pages #43333339698](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339698) success；[Firefox #43333339704](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339704) 與 [CENC Browser #43333339682](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43333339682) 當時 in_progress，尚不能把新 handler 標為 Browser PASS。
+- **原本完整正例**：[Browser #43302492613](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43302492613) fast/long success，包括 Chromium/Firefox 實際 AAC PCM after 5 seeks/3 cycles、120s pause、300/1800s synthetic 完播；8 個 transition-only Chromium MOV 訊息另見 [Issue #6](https://github.com/IvanaGyro/hongguo-dl/issues/6)，本階段沒有更動 decoder。
+- **下一步**：確認新 Firefox smoke 後，調查下載佇列主程式 `src/main.js` 的 pagehide 是否終止 active jobs、retry timer 與 bulk controller。避免因重複 lifecycle hooks 製造新問題，僅針對已知缺口加入最小修正與驗收。
