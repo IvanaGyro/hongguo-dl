@@ -16,7 +16,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { canTryNextCencSource, sameTierHevcCandidates } from './cenc-source-fallback.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
-import { createMediaTransportForSource } from './media-transport.js';
+import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -51,6 +51,7 @@ export function createPlayer({
   let pendingSourceExpansion = null, triedSourceUrls = new Set();
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
+  let directNativeProxyFallback = null;
   let retryIncrementalCenc = false, retryError = null;
   let restartingRemoteSeek = false;
   let canTranscodeBvc2 = false;
@@ -162,6 +163,7 @@ export function createPlayer({
     }).catch(() => {});
   }
   function disposeSource() {
+    directNativeProxyFallback = null;
     controller?.abort();
     controller = null;
     readyForHistory = false;
@@ -555,9 +557,25 @@ export function createPlayer({
     }
     if (!isHlsUrl(source.url) && !source.contentKey) {
       log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
-      // Non-CENC native <video> is not a JS-readable Range fetch; preserve
-      // its reliable proxy path until HTMLMediaElement fallback is implemented.
-      return { url: mediaProxyUrl(source.url, profile, getWorkerOrigin()),
+      const fallbackProxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin());
+      if (!isApprovedDirectMediaUrl(source.url))
+        return { url: fallbackProxyUrl, source, fallbackNotice, variants: quiet ? variants : null };
+      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(),
+        fetch, reason => log('media.transport.fallback', { reason }));
+      // Test a bounded CORS-readable range, avoiding a complete download
+      // just to decide whether native <video> may use this CDN directly.
+      const probe = await transport.fetch(source.url, {
+        headers: { Range: 'bytes=0-15' }, signal, cache: 'no-store'
+      });
+      await probe.body?.cancel().catch(() => {});
+      if (probe.status === 429)
+        throw errorWith('MEDIA_RATE_LIMITED', '來源回傳 HTTP 429，暫停重試');
+      if (probe.status !== 206)
+        throw errorWith(probe.status === 403 ? 'MEDIA_SOURCE_FORBIDDEN' : 'MEDIA_HTTP',
+          '媒體來源 HTTP ' + probe.status);
+      const directUrl = transport.mode === 'direct' ? source.url : null;
+      return { url: directUrl || fallbackProxyUrl,
+        directProxyFallback: directUrl ? fallbackProxyUrl : null,
         source, fallbackNotice, variants: quiet ? variants : null };
     }
     // If the current episode already uses native EME, prepare only the next
@@ -720,6 +738,7 @@ export function createPlayer({
     // The native key session belongs to this source and is released before
     // any subsequent selection, retry, or playback-mode transition.
     nativeStream = resolved.native || null;
+    directNativeProxyFallback = resolved.directProxyFallback || null;
     activeUrl = resolved.blob ? URL.createObjectURL(resolved.blob) : null;
     loading = true;
     // The callback reports a frame submitted for presentation, unlike
@@ -741,7 +760,16 @@ export function createPlayer({
     reportStartup(resolved.fullFileFallback
       ? '整集下載備援處理完成，正在開啟影片…'
       : '正在等待影片資訊與首段緩衝…', signal, attempt);
-    await waitMetadata(signal);
+    try {
+      await waitMetadata(signal);
+    } catch (error) {
+      if (!directNativeProxyFallback || signal.aborted) throw error;
+      log('media.transport.fallback', { reason: 'native-metadata-failed' });
+      video.src = directNativeProxyFallback;
+      directNativeProxyFallback = null;
+      video.load();
+      await waitMetadata(signal);
+    }
     markStartupStage('loadedmetadata');
     log('playback.metadata', {
       duration: video.duration, width: video.videoWidth, height: video.videoHeight,
@@ -1022,6 +1050,21 @@ export function createPlayer({
   });
   video.addEventListener('error', () => {
     if (!current || loading || !controller || controller.signal.aborted) return;
+    if (directNativeProxyFallback) {
+      const proxyUrl = directNativeProxyFallback;
+      directNativeProxyFallback = null;
+      const resume = video.currentTime, wasPlaying = !video.paused;
+      log('media.transport.fallback', { reason: 'native-playback-failed' });
+      setStatus('CDN 直連中斷，改由代理接續影片…');
+      video.src = proxyUrl;
+      video.load();
+      video.addEventListener('loadedmetadata', () => {
+        if (resume > 0 && Number.isFinite(video.duration))
+          video.currentTime = Math.min(resume, Math.max(0, video.duration - 0.1));
+        if (wasPlaying) void video.play().catch(() => {});
+      }, { once: true });
+      return;
+    }
     const currentToken = token, signal = controller.signal;
     if (nativeStream) {
       video.pause();
