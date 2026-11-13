@@ -34,6 +34,13 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
   if (!proxyUrl) throw new TypeError('Missing media proxy endpoint');
   const hostname = isApprovedDirectMediaUrl(directUrl) ? new URL(directUrl).hostname : '';
   let useDirect = direct && !!hostname && !sessionFailureCache?.has(hostname);
+  const markIfProxyWorks = (response, range) => {
+    if (!hostname || !sessionFailureCache) return;
+    if (range
+      ? response.status === 206 &&
+        /^bytes d+-d+/d+$/.test(response.headers.get('content-range') || '')
+      : response.ok) sessionFailureCache.add(hostname);
+  };
   const fetchMedia = async (_url, options = {}) => {
     if (!useDirect) return fetchImpl(proxyUrl, options);
     let response;
@@ -44,7 +51,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
       useDirect = false;
       onFallback('cors-or-network');
       const fallback = await fetchImpl(proxyUrl, options);
-      if (fallback.ok && hostname) sessionFailureCache?.add(hostname);
+      markIfProxyWorks(fallback, options.headers?.Range || options.headers?.range);
       return fallback;
     }
     const range = options.headers?.Range || options.headers?.range;
@@ -57,7 +64,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
       useDirect = false;
       onFallback('range-or-access');
       const fallback = await fetchImpl(proxyUrl, options);
-      if (fallback.ok && hostname) sessionFailureCache?.add(hostname);
+      markIfProxyWorks(fallback, range);
       return fallback;
     }
     return response;

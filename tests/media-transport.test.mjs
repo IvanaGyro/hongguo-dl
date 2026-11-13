@@ -74,3 +74,14 @@ test('403 on direct and proxy does not poison whole host', async () => {
   assert.equal((await transport.fetch(direct,{headers:{Range:'bytes=0-15'}})).status,403);
   assert.equal(memory.size,0);
 });
+
+
+test('proxy HTTP 200 that ignores Range must not mark a CDN host as proxy-preferred', async () => {
+  const remembered = new Set();
+  const transport = createMediaTransport({
+    directUrl: direct, proxyUrl: proxy, sessionFailureCache: remembered,
+    fetchImpl: async url => url === direct ? response(403) : response(200)
+  });
+  assert.equal((await transport.fetch(direct, {headers:{Range:'bytes=0-15'}})).status,200);
+  assert.equal(remembered.size,0);
+});
