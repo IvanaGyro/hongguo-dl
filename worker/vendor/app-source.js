@@ -12,7 +12,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { registerPlaybackDevice } = require('./playback-device');
 const { signPlayer, Ladon } = require('./playback-signature');
-const { abortError, throwIfAborted, boundedSignal, networkFailure } = require('./request-signal');
+const { throwIfAborted, boundedSignal, networkFailure } = require('./request-signal');
 const sm3 = require('./sm3');
 const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
 const localId = () => String(1000000000000000n + BigInt('0x' + crypto.randomBytes(6).toString('hex')));
@@ -25,9 +25,6 @@ function getProcessIdentity() {
         started: Date.now(),
     });
 }
-let playbackQueue = Promise.resolve();
-let playbackReadyAt = 0;
-let playbackRejection = null;
 const VIDEO_API = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/';
 const VIDEO_TAB_API = 'https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/video_tab/multi_video_model/v1/';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
@@ -447,47 +444,13 @@ async function requestJson(url, options, deadline, signal) {
 }
 async function fetchAppPlayUrl(vid, options = {}) {
     throwIfAborted(options.signal);
-    normalizeDownloadQuality(options.quality); // Validate before registration or network I/O.
+    normalizeDownloadQuality(options.quality); // Validate request shape only.
     vid = String(vid || '');
     if (!/^\d{1,30}$/.test(vid)) throw new Error('分集编号无效');
-    // Benchmark-only bypass of the per-isolate playback queue.
-    // Branch is NOT deployed to the public Worker. The real signed upstream
-    // requests, device registration, validation and timeouts are unchanged.
-    if (options.benchmarkParallel) {
-        options.benchmarkOnStart?.(Date.now());
-        return fetchAppPlayUrlFresh(vid, options);
-    }
-    // Playback, prefetch and downloads share one paced turn, including registration.
-    const previousRejection = playbackRejection;
-    const pending = playbackQueue.then(async () => {
-        throwIfAborted(options.signal);
-        if (playbackRejection !== previousRejection) throw playbackRejection;
-        const wait = playbackReadyAt - Date.now();
-        if (wait > 0) {
-            try { await delay(wait, undefined, { signal: options.signal }); }
-            catch (error) { throwIfAborted(options.signal); throw error; }
-        }
-        throwIfAborted(options.signal);
-        options.benchmarkOnStart?.(Date.now());
-        try { return await fetchAppPlayUrlFresh(vid, options); }
-        catch (error) {
-            // An explicit refusal also stops work queued before it was received.
-            if ([403, 429].includes(error.status) || error.code === 'BUSINESS_REJECTED' || error.code === 'DEVICE_REGISTRATION_FAILED'
-                && ['BUSINESS_REJECTED', 'HTTP_403', 'HTTP_429'].includes(error.registrationFailure)) playbackRejection = error;
-            throw error;
-        }
-        finally { playbackReadyAt = Date.now() + 1000; }
-    });
-    playbackQueue = pending.catch(() => {});
-    if (!options.signal) return pending;
-    let cancel;
-    try {
-        return await Promise.race([pending, new Promise((resolve, reject) => {
-            cancel = () => reject(abortError(options.signal));
-            options.signal.addEventListener('abort', cancel, { once: true });
-            if (options.signal.aborted) cancel();
-        })]);
-    } finally { options.signal.removeEventListener('abort', cancel); }
+    // No per-isolate serialization, completion cooldown or refusal latch.
+    // A benchmark callback is informational and does not change scheduling.
+    options.benchmarkOnStart?.(Date.now());
+    return fetchAppPlayUrlFresh(vid, options);
 }
 
 async function fetchAppPlayUrlFresh(vid, options) {

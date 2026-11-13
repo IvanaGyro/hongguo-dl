@@ -10,12 +10,6 @@ const { abortError, throwIfAborted, boundedSignal, networkFailure } = require('.
 
 const REGISTER_URL = 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin&use_store_region_cookie=1';
 const KDF_SALT = Buffer.from('4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58', 'hex');
-let registration;
-let refreshAfter = 0;
-let retryAfter = 0;
-let registrationRetryAfter = 0;
-let lastRegistrationFailure;
-let lastNetworkFailure;
 
 function responseId(response, name) {
     const preferred = response?.[`${name}_str`];
@@ -26,10 +20,6 @@ function responseId(response, name) {
 
 async function registerPlaybackDevice(requestJson, { signal } = {}) {
     throwIfAborted(signal);
-    if (Date.now() < registrationRetryAfter) throw Object.assign(new Error('匿名播放设备注册失败，请检查网络，10 秒后重试'), {
-        code: 'DEVICE_REGISTRATION_FAILED', registrationFailure: lastRegistrationFailure,
-        ...(lastNetworkFailure ? { networkFailure: lastNetworkFailure } : {}),
-    });
     const request = boundedSignal(signal, 8000);
     try {
             throwIfAborted(request.signal);
@@ -77,7 +67,6 @@ async function registerPlaybackDevice(requestJson, { signal } = {}) {
             const iid = responseId(response, 'install_id');
             if (Number(response?.code ?? response?.Code ?? 0) !== 0) throw Object.assign(new Error('Registration rejected'), { code: 'BUSINESS_REJECTED' });
             if (!device_id || !iid) throw Object.assign(new Error('Invalid registration'), { code: 'INVALID_RESPONSE' });
-        registrationRetryAfter = 0;
         return Object.freeze({ device_id, iid, cdid });
     } catch (error) {
         if (request.signal.aborted) error = abortError(request.signal);
@@ -88,44 +77,16 @@ async function registerPlaybackDevice(requestJson, { signal } = {}) {
             : ['ECONNABORTED', 'ETIMEDOUT'].includes(error?.code) ? 'TIMEOUT'
             : detail || error?.code === 'ERR_NETWORK' ? 'NETWORK_ERROR'
             : ['EMPTY_RESPONSE', 'INVALID_RESPONSE', 'BUSINESS_REJECTED', 'SECURITY_BLOCKED'].includes(error?.code) ? error.code : 'UNKNOWN';
-        registrationRetryAfter = Date.now() + 10000;
-        lastRegistrationFailure = registrationFailure;
-        lastNetworkFailure = registrationFailure === 'NETWORK_ERROR' ? detail : undefined;
-        throw Object.assign(new Error('匿名播放设备注册失败，请检查网络，10 秒后重试'), {
+        // Report the actual upstream failure; do not impose a local cooldown.
+        throw Object.assign(new Error('匿名播放設備註冊失敗'), {
             code: 'DEVICE_REGISTRATION_FAILED', registrationFailure,
-            ...(lastNetworkFailure ? { networkFailure: lastNetworkFailure } : {}),
+            ...(registrationFailure === 'NETWORK_ERROR' && detail ? { networkFailure: detail } : {}),
         });
     } finally {
         request.dispose();
     }
 }
 
-function getPlaybackDevice(requestJson, rejectedDevice) {
-    if (retryAfter && Date.now() >= retryAfter) {
-        registration = undefined;
-        retryAfter = 0;
-    }
-    if (rejectedDevice && registration) {
-        const previous = registration;
-        return previous.then(current => {
-            // Concurrent and late failures must share the newest device, with at most one renewal per minute.
-            if (registration !== previous || current !== rejectedDevice || Date.now() < refreshAfter) return registration;
-            refreshAfter = Date.now() + 60000;
-            const renewal = Promise.resolve().then(() => registerPlaybackDevice(requestJson)).catch(error => {
-                if (registration === renewal) registration = previous;
-                throw error;
-            });
-            registration = renewal;
-            return registration;
-        });
-    }
-    // Share failures briefly to avoid concurrent retries, then allow recovery without restarting.
-    registration ||= Promise.resolve().then(() => registerPlaybackDevice(requestJson)).catch(error => {
-        if (error.code === 'ERR_CANCELED') registration = undefined;
-        else retryAfter = Date.now() + 10000;
-        throw error;
-    });
-    return registration;
-}
-
-module.exports = { getPlaybackDevice, registerPlaybackDevice };
+// A fresh attempt always reaches the registration API. No cached refusal,
+// local retry-after latch, throttling, or shared promise for experimental runs.
+module.exports = { registerPlaybackDevice };
