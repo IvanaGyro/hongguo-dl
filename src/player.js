@@ -570,10 +570,14 @@ export function createPlayer({
       await probe.body?.cancel().catch(() => {});
       if (probe.status === 429)
         throw errorWith('MEDIA_RATE_LIMITED', '來源回傳 HTTP 429，暫停重試');
-      if (probe.status !== 206)
+      // The proxy may legally return 200/full-body to native <video>.
+      // A 206 requirement applies to JS byte-range demux, not the HTML
+      // media element, which handles complete MP4 responses natively.
+      if (probe.status !== 206 && probe.status !== 200)
         throw errorWith(probe.status === 403 ? 'MEDIA_SOURCE_FORBIDDEN' : 'MEDIA_HTTP',
           '媒體來源 HTTP ' + probe.status);
-      const directUrl = transport.mode === 'direct' ? source.url : null;
+      const directUrl = probe.status === 206 && transport.mode === 'direct'
+        ? source.url : null;
       return { url: directUrl || fallbackProxyUrl,
         directProxyFallback: directUrl ? fallbackProxyUrl : null,
         source, fallbackNotice, variants: quiet ? variants : null };

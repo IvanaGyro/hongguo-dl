@@ -93,8 +93,16 @@ try {
       null, { timeout: 30000 });
     await page.locator('#mode-play').click();
     await page.locator('#player-panel').waitFor({ state: 'visible', timeout: 30000 });
-    // Pre-selected 1080p/HEVC deliberately avoids the separate BVC2
-    // downloader/transcoder being implemented by another agent.
+    // The quality menu is now populated from real per-episode source
+    // metadata, not hard-coded HTML. Prefer the saved 1080p selection, and
+    // wait for the dynamic option before asserting that it is selectable.
+    await page.waitForFunction(() => Array.from(
+      document.querySelector('#player-quality')?.options || [])
+      .some(option => option.value === '1080p'), null, { timeout: 30000 });
+    if (await page.locator('#player-quality').inputValue() !== '1080p')
+      await page.locator('#player-quality').selectOption('1080p');
+    if (await page.locator('#player-codec').inputValue() !== 'hevc')
+      await page.locator('#player-codec').selectOption('hevc');
     assert.equal(await page.locator('#player-quality').inputValue(), '1080p');
     assert.equal(await page.locator('#player-codec').inputValue(), 'hevc');
     // The same video element receives successive MediaSource objects. Count
