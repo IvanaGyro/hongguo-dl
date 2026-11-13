@@ -208,7 +208,18 @@ async function relayMedia(request, raw) {
       target = safeUrl(new URL(res.headers.get('location'), target).href, [...MEDIA_HOSTS, ...API_HOSTS]);
       continue;
     }
-    if (![200, 206].includes(res.status)) throw httpError(res.status, 'MEDIA_HTTP', '媒體來源回傳 HTTP ' + res.status);
+    if (![200, 206].includes(res.status)) {
+      // An upstream 403/429 is a media-access refusal, not a BVC2/WASM
+      // decoder failure. Do not echo signed URLs, headers or response bodies.
+      const code = res.status === 403 ? 'MEDIA_SOURCE_FORBIDDEN' :
+        res.status === 429 ? 'MEDIA_RATE_LIMITED' : 'MEDIA_HTTP';
+      const message = res.status === 403
+        ? '媒體 CDN 拒絕存取（HTTP 403），並非影片解碼失敗'
+        : res.status === 429
+          ? '媒體 CDN 限制請求頻率（HTTP 429），請勿連續重試'
+          : '媒體來源回傳 HTTP ' + res.status;
+      throw httpError(res.status, code, message);
+    }
     const type = String(res.headers.get('content-type') || '');
     if (/text\/html|application\/json/i.test(type)) throw httpError(502, 'NOT_MEDIA', '媒體來源回傳錯誤頁面');
     const out = new Headers({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
