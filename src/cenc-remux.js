@@ -165,10 +165,10 @@ export async function openCencProgressiveStream({
       // than 0.5s indicates a different timeline defect, not harmless preroll.
       initialStartChecked = true;
       alignInitialCencBufferedStart(video, startSeconds);
-      video.removeEventListener('loadedmetadata', alignFirstBuffer);
+      video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     } catch { /* video src may have been replaced during cancellation */ }
   };
-  video.addEventListener('loadedmetadata', alignFirstBuffer);
+  video.addEventListener?.('loadedmetadata', alignFirstBuffer);
   // Terminate directly: posting cancel first can resume an interrupted AVIO
   // sample with EIO before termination, producing spurious MOV corruption logs.
   // Termination itself stops Worker fetches and discards its pending ACK.
@@ -180,7 +180,7 @@ export async function openCencProgressiveStream({
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
     worker.terminate();
-    video.removeEventListener('loadedmetadata', alignFirstBuffer);
+    video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     const endWithError = () => {
       if (closed) return;
       if (buffer?.updating) {
@@ -203,7 +203,7 @@ export async function openCencProgressiveStream({
     closed = true;
     internal.abort();
     signal?.removeEventListener('abort', onAbort);
-    video.removeEventListener('loadedmetadata', alignFirstBuffer);
+    video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     worker.terminate();
     revokeObjectUrl();
   };
