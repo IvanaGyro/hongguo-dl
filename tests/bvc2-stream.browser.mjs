@@ -40,7 +40,7 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
       'Content-Length': String(last - first + 1) }, body: input.subarray(first, last + 1) });
 });
 try {
-  await page.goto('http://127.0.0.1:4173/hongguo-dl/?id=123456789');
+  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789`);
   // The controls exist in static HTML before the application attaches handlers.
   await page.waitForFunction(() => document.querySelector('#series-title')
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
@@ -70,12 +70,13 @@ try {
   console.log(JSON.stringify({ decodedSyntheticBvc2Frames: true, boundedRangeRequests: reads.length,
     outputs: ['original', 'h264', 'hevc', 'vvc', 'av1'], liveMseAfterModeSwitch: 0 }));
 } catch (error) {
+  console.error('Synthetic BVC2 browser failure', error.message);
   console.error('Synthetic BVC2 browser state', await page.evaluate(() => ({
     status: document.querySelector('#player-status')?.textContent,
     source: document.querySelector('#player-source-info')?.textContent,
     title: document.querySelector('#series-title')?.textContent,
     videoError: document.querySelector('#player-video')?.error?.code || null
-  })));
+  })).catch(() => ({ unavailable: true })));
   console.error('Page errors', errors);
   throw error;
 } finally { await browser.close(); }

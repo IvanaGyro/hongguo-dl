@@ -109,7 +109,7 @@ jobs:
           bunx playwright install --with-deps chromium
           node scripts/bvc2-wasm-bundle.mjs publish /tmp/hongguo-bvc2-transcode/dist
           VITE_BASE_PATH=/hongguo-dl/ bun run build
-          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/bvc2-vite.log 2>&1 &
+          VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/bvc2-vite.log 2>&1 &
           VITE_PID=$!
           trap 'kill "$VITE_PID" || true' EXIT
           for attempt in $(seq 1 30); do
