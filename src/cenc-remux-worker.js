@@ -3,6 +3,7 @@
 // complete clear fMP4 init/media units. Main thread ACK provides backpressure.
 import { createFmp4Assembler } from './fmp4-assembler.js';
 import { readVerifiedRange } from './http-range.js';
+import { createCencRangeRecovery } from './cenc-range-recovery.js';
 import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
 
 const WINDOW = 256 * 1024;
@@ -33,6 +34,12 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
   let cacheStart = -1, cacheBytes = new Uint8Array(0);
   let rangeRequests = 0, receivedBytes = 0;
   let lastRangeError = null;
+  const rangeRecovery = createCencRangeRecovery({
+    onRetry: event => self.postMessage({
+      type: 'stage', stage: 'media-range-retry', status: 403,
+      attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining
+    })
+  });
   const readRange = async (start, wanted) => {
     if (controller.signal.aborted) throw new Error('Canceled');
     if (!Number.isInteger(start) || start < 0 || start >= fileSize ||
@@ -46,8 +53,11 @@ async function run({ url, key, fileSize, startSeconds = 0 }) {
     const fetchStarted = performance.now();
     let bytes;
     try {
-      bytes = await readVerifiedRange(fetch, mediaUrl.href, start, end,
-        fileSize, controller.signal);
+      bytes = await rangeRecovery.read(
+        () => readVerifiedRange(fetch, mediaUrl.href, start, end,
+          fileSize, controller.signal),
+        controller.signal
+      );
     } catch (error) {
       lastRangeError = {
         code: /^CENC_[A-Z_]{2,45}$/.test(error?.code || '')

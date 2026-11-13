@@ -246,13 +246,16 @@ export async function openCencProgressiveStream({
     if (closed || failed || !data) return;
     if (data.type === 'stage') {
       if (['wasm-download', 'wasm-verify', 'wasm-start', 'first-fragment',
-        'media-range', 'media-range-failed'].includes(data.stage))
+        'media-range', 'media-range-failed', 'media-range-retry'].includes(data.stage))
         onStage(data.stage, data.stage === 'media-range' ? {
           requests: data.requests, receivedBytes: data.receivedBytes,
           fetchMs: data.fetchMs
         } : data.stage === 'media-range-failed' ? {
           request: data.request, code: data.code, status: data.status,
           offset: data.offset, bytes: data.bytes, fetchMs: data.fetchMs
+        } : data.stage === 'media-range-retry' ? {
+          status: data.status, attempt: data.attempt,
+          delayMs: data.delayMs, remaining: data.remaining
         } : {});
       return;
     }
