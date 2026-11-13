@@ -73,3 +73,34 @@ Across all 153 responses in this diagnostic, `new_user=0` coincided with zero ID
 ## Silent recovery E240
 
 The independent [E240 study](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43454520761) uses an initial 300-second quiet period, then baseline validation, then 150 registrations at one-second spacing, then *240 completely silent seconds* before one probe. The outcome is recorded separately once the run completes. This avoids mixing ongoing polling with silent recovery.
+
+## E240 completed: silent recovery
+
+The [independent E240 workflow](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43454520761) finished successfully. This workflow first waited 300 seconds with zero registration requests, then verified a 3-request low-rate baseline, then sent 150 real registrations spaced by 1 second. All were in a single local workerd process.
+
+| Segment | Outcome |
+| --- | --- |
+| Pre-experiment silence | 300 seconds; no registrations |
+| Baseline | 3 / 3 accepted |
+| One-second trigger | 117 / 150 accepted; requests #118–150 returned four zero-valued IDs |
+| First zero ID | Trigger #118, cumulative #121, around 2026-11-13 **15:45:28 UTC** |
+| Last trigger response | Trigger #150, **15:46:00 UTC**, zero-valued IDs |
+| Complete post-trigger silence | 240 seconds, *zero intermediate registration requests* |
+| Single recovery probe | **15:50:01 UTC**, successful valid registration |
+
+A previous experiment's 120-second silent probe failed after a similar 150-request trigger. These are different jobs with possible different egress IPs and start-window alignment; the comparison shows that success by 240s is feasible, **not** that the server always enforces a penalty lasting 120–240 seconds.
+
+The E240 run once again produced exactly 120 successful registrations (3 baseline plus 117 trigger), followed by the first zero ID on cumulative request #121. Across four independent experiments with 3 baseline registrations, the first non-issued ID occurred at the **same ordinal**. The successful C5 run (150 at five-second spacing) argues against an unbounded total-count ceiling. Together the findings support a time-sensitive count quota; the exact window duration, server key (e.g. source-IP or another attribute), replenishment policy, and the effect of rejected attempts remain unidentified.
+
+### Workflow execution note
+
+Updating the shared registration probe during C5 accidentally fired the old automatic ID diagnostic workflow; that overlapping job is separately listed above. This was not intended and violates a clean non-overlapping design. Future tests should require an explicit trigger marker or manual invocation, rather than running on edits to common experiment files.
+
+### Experiment artifacts
+
+- [C2, 2-second interval](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43450890848)
+- [C5, 5-second interval](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43452139626)
+- [Overlapping 1-second diagnostic](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43453602608)
+- [E240, 240-second complete silence](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43454520761)
+
+The JSON artifacts retain per-request real start/end times, error categories, and exact anonymized registration IDs. Full ID artifacts have one-day GitHub Actions retention and should be treated as sensitive. Public job logs contain structure, counts, and timing but not exact IDs.
