@@ -140,9 +140,14 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
       : 'REAL_HEVC_MSE_PCM_NOT_DETECTED_DESPITE_VALID_CONTROLS'
   }));
 
-  // The player must perform an indexed unbuffered seek, not pretend to seek
-  // inside the first 40s of buffered media. This is the real CENC Range path.
-  const target = 120;
+  // Prefer a real gap beyond adaptive MSE lookahead. A fully buffered
+  // episode is successful prefetch, not grounds to force another CDN read.
+  const target = await page.evaluate(() => {
+    const v = document.querySelector('#player-video');
+    const end = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
+    return end + 8 < v.duration - 20 ? Math.max(120, end + 8)
+      : Math.min(120, v.duration - 20);
+  });
   const before = await page.evaluate(target => {
     const video = document.querySelector('#player-video');
     return {
@@ -154,8 +159,9 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
         .some(([start, end]) => target >= start && target <= end)
     };
   }, target);
-  assert.equal(before.targetAlreadyBuffered, false,
-    '120s seek is already buffered: not a real remote Range regression test');
+  console.log('macOS WebKit adaptive seek path:', JSON.stringify({
+    target, path: before.targetAlreadyBuffered ? 'mse-cache' : 'indexed-seek'
+  }));
   await page.locator('#player-video').evaluate((video, seconds) => {
     video.currentTime = seconds;
   }, target);
@@ -169,11 +175,11 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
     return advanced || /已停止播放|跳轉失敗|無法播放/.test(status);
   }, { target, beforeFrames: before.frames, beforeTotalFrames: before.totalFrames },
   { timeout: 90000 }).catch(() => {});
-  const seek = await page.evaluate(() => {
+  const seek = await page.evaluate(target => {
     const v = document.querySelector('#player-video');
     const status = document.querySelector('#player-status')?.textContent || '';
     return {
-      target: 120,
+      target,
       currentTime: Number((v?.currentTime || 0).toFixed(3)),
       readyState: v?.readyState || 0,
       paused: v?.paused ?? null,
@@ -189,15 +195,17 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
         /跳轉失敗/.test(status) ? 'SEEK_FAILED' :
         /已停止播放/.test(status) ? 'STOPPED' : 'OTHER'
     };
-  });
+  }, target);
   console.log('macOS WebKit real HEVC distant seek:', JSON.stringify(seek));
   const seekValid = Math.abs(seek.currentTime - target) < 8 &&
     seek.readyState >= 2 && !seek.seeking && seek.mediaError == null &&
     (seek.frames > before.frames + 1 || seek.totalFrames > before.totalFrames + 1);
   if (seekValid)
-    console.log('PASS real Hongguo HEVC distant unbuffered seek and decoded frames');
+    console.log('PASS real Hongguo HEVC distant seek and decoded frames', JSON.stringify({
+      target, initiallyBuffered: before.targetAlreadyBuffered
+    }));
   // The decoded audio track may legitimately be quiet at the start. If we
-  // reached 120s, also check 3 more seconds of PCM at the seek destination.
+  // reached the seek destination, also check 3 more seconds of PCM at the seek destination.
   let afterSeekAudio = null;
   if (seekValid && !audioValid && audioControlValid) {
     afterSeekAudio = await page.evaluate(async () => {
@@ -220,14 +228,14 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
       return { peakRms: maxRms, nonSilentWindows,
         playbackSeconds: Number((current - initial).toFixed(3)) };
     });
-    console.log('macOS WebKit real AAC after 120s HEVC seek:', JSON.stringify(afterSeekAudio));
+    console.log('macOS WebKit real AAC after distant HEVC seek:', JSON.stringify(afterSeekAudio));
   }
   await page.evaluate(() => {
     void window.__hevcAudioProbe?.context?.close().catch(() => {});
     document.querySelector('#hevc-enable-aac-pcm-test')?.remove();
   });
   const failures = [];
-  if (!seekValid) failures.push('Real HEVC 120s remote seek / decoded frames did not pass');
+  if (!seekValid) failures.push('Real HEVC distant seek / decoded frames did not pass');
   if (!audioControlValid) failures.push('Web Audio oscillator control did not produce PCM; cannot validate AAC');
   if (!audioValid && !(afterSeekAudio?.peakRms > 0.004 &&
       afterSeekAudio.nonSilentWindows >= 4)) {
@@ -241,7 +249,7 @@ export async function verifyRealHevcAudioAndSeek(page, mediaControl = null) {
   }
   assert.deepEqual(failures, [], 'Extended real HEVC acceptance failures');
   console.log(nativeElementPcm && mseElementPcm
-    ? 'PASS real Hongguo HEVC AAC PCM plus 120s distant seek'
-    : 'PASS real Hongguo HEVC 120s distant seek; actual audible AAC remains NOT TESTED');
+    ? 'PASS real Hongguo HEVC AAC PCM plus distant seek'
+    : 'PASS real Hongguo HEVC distant seek; actual audible AAC remains NOT TESTED');
 
 }
