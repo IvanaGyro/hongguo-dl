@@ -38,7 +38,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
     if (!hostname || !sessionFailureCache) return;
     if (range
       ? response.status === 206 &&
-        /^bytes d+-d+/d+$/.test(response.headers.get('content-range') || '')
+        /^bytes \d+-\d+\/\d+$/.test(response.headers.get('content-range') || '')
       : response.ok) sessionFailureCache.add(hostname);
   };
   const fetchMedia = async (_url, options = {}) => {
