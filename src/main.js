@@ -608,7 +608,7 @@ async function runJob(job, signal) {
     }
     const data = job.vid === 'direct'
       ? { variants: [{ url: job.directUrl, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await getSource(job.seriesId, job.vid, 'auto', 'auto');
+      : await getSource(job.seriesId, job.vid, 'auto', 'auto', signal);
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
     // Retry with another advertised URL while preserving the selected tier.
     const source = renditionForAttempt(data.variants,

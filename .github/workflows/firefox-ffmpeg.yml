@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/ffmpeg.js'
       - 'src/main.js'
+      - 'src/queue-lifecycle.js'
+      - 'tests/queue-lifecycle.test.mjs'
+      - 'tests/queue-pagehide.firefox.mjs'
       - 'src/player.js'
       - 'src/clear-key.js'
       - 'tests/clear-key.test.mjs'
@@ -93,5 +96,6 @@ jobs:
           done
           node tests/ffmpeg.firefox.mjs /tmp/ffmpeg-smoke.mp4
           node tests/browser-modes.firefox.mjs /tmp/ffmpeg-playback.mp4
+          node tests/queue-pagehide.firefox.mjs
           HONGGUO_TEST_BROWSER=chromium node tests/clear-key.firefox.mjs /tmp/ffmpeg-cenc.mp4
           node tests/clear-key.firefox.mjs /tmp/ffmpeg-cenc.mp4
