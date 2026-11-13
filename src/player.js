@@ -374,6 +374,28 @@ export function createPlayer({
       lastVariantsAt = Date.now();
       lastVariantsPartial = sourceQuery.partial;
       updateCodecOptions(variants);
+      // An independently resolved web/App source may arrive after playback
+      // has already started. Merge it for future quality changes and retries,
+      // but never restart or replace a healthy active MediaSource.
+      if (list.lateVariants) {
+        void list.lateVariants.then(extras => {
+          if (signal.aborted || lastVariants !== variants ||
+              lastVariantsVid !== episode.vid || !extras?.length) return;
+          const seen = new Set(variants.map(item => item.url));
+          let added = 0;
+          for (const variant of extras) {
+            if (!variant?.url || seen.has(variant.url)) continue;
+            seen.add(variant.url);
+            variants.push(variant);
+            added++;
+          }
+          if (added) {
+            lastVariantsAt = Date.now();
+            log('source.list.extended', { added, variants: variants.length });
+            updateCodecOptions(variants);
+          }
+        }).catch(() => {});
+      }
       // Persisted codec preferences can belong to another episode's tier.
       // Use the now-enabled selection, rather than rejecting a stale codec.
       if (codec !== codecSelect.value) {

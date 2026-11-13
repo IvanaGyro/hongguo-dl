@@ -158,17 +158,24 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, codec, quality) {
+async function loadSource(sid, vid, codec, quality, channel = 'auto') {
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
   if (!['auto', 'h264', 'hevc', 'bytevc2'].includes(codec)) throw httpError(400, 'INVALID_CODEC', '不支援的編碼篩選');
   if (!['auto', '720p', '1080p'].includes(quality)) throw httpError(400, 'INVALID_QUALITY', '不支援的畫質篩選');
+  if (!['auto', 'web', 'app'].includes(channel))
+    throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
+  if (channel === 'web' && (codec !== 'auto' || quality !== 'auto'))
+    throw httpError(400, 'INVALID_SOURCE_CHANNEL', '網頁版來源僅支援自動畫質與編碼');
   let webError = '';
-  if (codec === 'auto' && quality === 'auto') {
+  if (channel !== 'app' && codec === 'auto' && quality === 'auto') {
     try {
       const html = await fetchLimited(SITE + '/player/' + sid + '/' + vid, { timeout: 4500 });
       const media = findPublicMedia(html, sid, vid);
-      if (media) return { variants: [media] };
+      if (media) return { variants: [media], sourceChannel: 'web' };
     } catch (error) { webError = error.message; }
+    if (channel === 'web')
+      throw httpError(404, 'PUBLIC_SOURCE_UNAVAILABLE',
+        '目前沒有已確認可直接讀取的公開網頁片源');
   }
   try {
     const result = await fetchAppPlayUrl(vid, { quality });
@@ -177,7 +184,7 @@ async function loadSource(sid, vid, codec, quality) {
     if (!variants.length) throw httpError(404, 'CODEC_UNAVAILABLE', '本集沒有符合 ' + codec + ' 的片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
       contentKey: v.contentKey || null, source: v.source, width: v.width || null,
-      height: v.height || null, duration: v.duration || null })) };
+      height: v.height || null, duration: v.duration || null })), sourceChannel: 'app' };
   } catch (e) {
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
     const message = String(e.message || 'App 取源失敗').slice(0, 250);
@@ -294,7 +301,8 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '', url.searchParams.get('codec') || 'auto',
-          url.searchParams.get('quality') || 'auto'));
+          url.searchParams.get('quality') || 'auto',
+          url.searchParams.get('channel') || 'auto'));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');

@@ -25,6 +25,7 @@ import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
 import { createPlaybackDiagnostics } from './playback-diagnostics.js';
+import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
 import { episodeFileName, originalExtension, filenameExtension, episodeDisplayTitle } from './naming.js';
@@ -322,12 +323,47 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto', signal
       elapsedMs: performance.now() - started
     });
   }, 2000);
+  const endpoint = '/api/source?sid=' + encodeURIComponent(seriesId) +
+    '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
+    '&codec=' + encodeURIComponent(codec);
+  const requestChannel = async channel => {
+    const begin = performance.now();
+    playbackDiagnostics.log('source.channel.request', { channel });
+    try {
+      const data = await apiJson(endpoint + '&channel=' + channel, signal);
+      playbackDiagnostics.log('source.channel.ready', {
+        channel, elapsedMs: performance.now() - begin,
+        variants: data?.variants?.length || 0
+      });
+      return data;
+    } catch (error) {
+      if (!signal?.aborted) playbackDiagnostics.log('source.channel.failed', {
+        channel, elapsedMs: performance.now() - begin,
+        code: error?.code || 'SOURCE_UNAVAILABLE'
+      });
+      throw error;
+    }
+  };
   try {
-    const data = await apiJson('/api/source?sid=' + encodeURIComponent(seriesId) +
-      '&vid=' + encodeURIComponent(vid) + '&quality=' + encodeURIComponent(quality) +
-      '&codec=' + encodeURIComponent(codec), signal);
+    // Only AUTO benefits from the public URL race. A selected 1080p tier
+    // continues directly to the App API and bypasses the website probe.
+    if (quality === 'auto' && codec === 'auto') {
+      const { winner, later } = await raceSourceQueries([
+        { route: 'web', run: () => requestChannel('web') },
+        { route: 'app', run: () => requestChannel('app') }
+      ]);
+      playbackDiagnostics.log('source.api.response', {
+        elapsedMs: performance.now() - started,
+        channel: winner.route, variants: winner.variants.length
+      });
+      const lateVariants = later.then(sources =>
+        sources.flatMap(item => item.variants || []));
+      return { ...winner.data, lateVariants };
+    }
+    const data = await requestChannel('app');
     playbackDiagnostics.log('source.api.response', {
-      elapsedMs: performance.now() - started, variants: data?.variants?.length || 0
+      elapsedMs: performance.now() - started, channel: 'app',
+      variants: data?.variants?.length || 0
     });
     return data;
   } catch (error) {
