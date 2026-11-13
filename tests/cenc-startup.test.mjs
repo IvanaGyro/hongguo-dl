@@ -136,18 +136,17 @@ test('HEVC seeks preserve codec and failed workers revoke URLs', async t => {
   };
   let stream = await openCencProgressiveStream(base);
   assert.equal(stream.mime, expectedMime);
-  for (const seconds of [55, 62, 5, 68]) {
-    const previous = stream;
-    stream = await previous.seekTo(seconds);
-    assert.equal(stream.mime, expectedMime, 'Seek lost the exact hvcC profile');
-    assert.equal(workers.at(-2).terminated, true);
-    assert(!workers.at(-2).messages.some(message => message.type === 'cancel'),
-      'Teardown must terminate directly without resuming canceled AVIO reads');
-    assert.equal(workers.at(-1).messages[0].startSeconds, seconds);
-    assert.equal(revoked.length, minted.length - 1,
-      'Seek retained a previous CENC Object URL');
-  }
+  // Seek commands reuse the worker and URL; readiness waits for appended
+  // media. Closing during a pending seek must reject it and release resources.
+  const pending = stream.seekTo(55);
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].terminated, false);
+  assert.equal(workers[0].messages.at(-1).type, 'seek');
+  assert.equal(workers[0].messages.at(-1).seconds, 55);
+  assert.equal(revoked.length, 0);
+  const rejected = assert.rejects(pending, { code: 'CENC_REMUX_FAILED' });
   workers.at(-1).onerror({ preventDefault() {} });
+  await rejected;
   assert.equal(workers.at(-1).terminated, true);
   assert(!workers.at(-1).messages.some(message => message.type === 'cancel'),
     'Failure cleanup must also terminate without racing a cancel message');

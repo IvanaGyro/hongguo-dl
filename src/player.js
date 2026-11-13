@@ -14,6 +14,7 @@ import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
+import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 import { canTryNextCencSource, sameTierHevcCandidates } from './cenc-source-fallback.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
@@ -956,12 +957,16 @@ export function createPlayer({
       const n = video.buffered?.length || 0;
       if (n) bufferedEnd = video.buffered.end(n - 1);
     } catch { /* switching MediaSource */ }
+    const raw = nativeStream?.snapshot?.() || {};
     return {
-      time: video.currentTime, bufferedEnd, readyState: video.readyState,
+      rawCachedBytes: raw.cachedBytes, rawComplete: raw.complete, requests: raw.requests,
+      time: video.currentTime, bufferedEnd, bufferedRanges: bufferedIntervals(video.buffered),
+      ...bufferedAround(video.buffered, video.currentTime), readyState: video.readyState,
       networkState: video.networkState,
       frames: video.getVideoPlaybackQuality?.().totalVideoFrames || 0
     };
   };
+  let seekMeasurement = null;
   for (const eventName of ['loadstart', 'loadedmetadata', 'loadeddata',
     'playing', 'waiting', 'stalled', 'suspend', 'seeking', 'seeked',
     'error', 'ended', 'emptied']) {
@@ -971,6 +976,11 @@ export function createPlayer({
         ...mediaSnapshot(), elapsedMs: ageMs(),
         ...(eventName === 'error' ? { errorCode: video.error?.code || 0 } : {})
       });
+      if (eventName === 'seeked' && seekMeasurement) {
+        log('media.seek.complete', { target: seekMeasurement.target,
+          seekMs: performance.now() - seekMeasurement.started, ...mediaSnapshot() });
+        seekMeasurement = null;
+      }
     });
   }
   let lastMediaSnapshotAt = 0;
@@ -1002,13 +1012,18 @@ export function createPlayer({
         !nativeStream?.seekTo || !controller || controller.signal.aborted) return;
     const target = clampStreamSeek(video.currentTime,
       nativeStream.durationSeconds || video.duration);
-    if (target === null || timeIsBuffered(video.buffered, target)) return;
+    if (target === null) return;
+    if (timeIsBuffered(video.buffered, target)) {
+      log('media.seek.buffered', { target, ...mediaSnapshot(), elapsedMs: ageMs() });
+      return;
+    }
     const seekToken = token, signal = controller.signal, oldStream = nativeStream;
     const wasPlaying = !video.paused;
     restartingRemoteSeek = true;
     readyForHistory = false; // Never overwrite saved position with temporary t=0.
     loading = true;
-    log('media.remote-seek', { target, elapsedMs: ageMs() });
+    const seekStarted = performance.now();
+    log('media.remote-seek', { target, ...mediaSnapshot(), elapsedMs: ageMs() });
     setStatus('跳轉到 ' + Math.round(target) + ' 秒…');
     void (async () => {
       try {
@@ -1023,8 +1038,10 @@ export function createPlayer({
         // preserve it. Keep the user's selected rate on both paths.
         const rate = Number(speedSelect.value) || 1;
         video.defaultPlaybackRate = rate;
-        video.src = nextStream.url;
-        video.load();
+        if (!nextStream.inPlaceSeek) {
+          video.src = nextStream.url;
+          video.load();
+        }
         video.playbackRate = rate;
         await waitMetadata(signal);
         if (signal.aborted || seekToken !== token) return;
@@ -1034,7 +1051,8 @@ export function createPlayer({
         readyForHistory = true;
         loading = false;
         savePosition();
-        log('media.remote-seek.ready', { target, time: video.currentTime, elapsedMs: ageMs() });
+        log('media.remote-seek.ready', { target, ...mediaSnapshot(),
+          seekMs: performance.now() - seekStarted, workerReused: Boolean(nextStream.inPlaceSeek), elapsedMs: ageMs() });
         setStatus('已跳轉到 ' + Math.round(target) + ' 秒');
         if (wasPlaying) {
           try { await video.play(); }

@@ -8,6 +8,13 @@ export function createDiagnosticBuffer(now = () => performance.now()) {
   const started = now();
   let rows = [];
   const value = input => {
+    // Only numeric interval pairs are accepted, never arbitrary object JSON.
+    if (Array.isArray(input)) {
+      if (input.length <= 2048 && input.every(pair => Array.isArray(pair) && pair.length === 2 &&
+          pair.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0) && pair[1] >= pair[0]))
+        return JSON.stringify(input.map(pair => pair.map(n => Math.round(n * 100) / 100)));
+      return '[redacted]';
+    }
     if (typeof input === 'boolean') return String(input);
     if (typeof input === 'number')
       return Number.isFinite(input) ? String(Math.round(input * 100) / 100) : '?';
@@ -19,7 +26,7 @@ export function createDiagnosticBuffer(now = () => performance.now()) {
   };
   function log(event, fields = {}) {
     if (!SAFE_TOKEN.test(event)) return;
-    const params = Object.entries(fields || {}).slice(0, 16)
+    const params = Object.entries(fields || {}).slice(0, 24)
       .filter(([key, item]) => SAFE_FIELD.test(key) && item !== undefined && item !== null)
       .map(([key, item]) => key + '=' + value(item));
     const elapsed = Math.max(0, Math.round(now() - started));
@@ -54,6 +61,6 @@ export function createPlaybackDiagnostics({ output, copyButton, clearButton,
     refresh();
     copyButton.textContent = '複製 Log';
   });
-  log('diagnostics.ready', { version: 1 });
+  log('diagnostics.ready', { version: 2 });
   return { log, text: buffer.text, clear: () => { buffer.clear(); refresh(); } };
 }

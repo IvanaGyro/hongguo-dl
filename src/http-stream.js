@@ -5,7 +5,7 @@ import { RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 const fail = (code, status = 0) => Object.assign(new Error(code), { code, status });
 const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
-  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {} }) {
+  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onChunk = () => {} }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
   const bytes = new Uint8Array(8 * 1024 * 1024);
   let requests = 0, receivedBytes = 0, validator = null;
@@ -98,6 +98,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
         bytes.copyWithin(0, head, head + length); head = 0;
       }
       if (length + value.length > bytes.length) throw fail('CENC_RANGE_INVALID');
+      onChunk(offset, value);
       bytes.set(value, head + length); length += value.length;
       receivedBytes += value.length;
     }

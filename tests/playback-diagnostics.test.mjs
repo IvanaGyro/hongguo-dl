@@ -39,3 +39,13 @@ test('diagnostics show resolution label but redact unsafe strings', () => {
   assert.match(b.text(), /codec=hevc/);
   assert.match(b.text(), /suspicious=\[redacted\]/);
 });
+
+test('diagnostics preserve complete numeric buffer/cache intervals but reject nested secrets', () => {
+  const b = createDiagnosticBuffer(() => 0);
+  b.log('media.progress', { bufferedRanges: [[0.16, 30], [90, 140]], byteRanges: [[0, 65536]],
+    unsafe: [['https://secret', 4]], malformed: [[10, 1]] });
+  assert.match(b.text(), /bufferedRanges=\[\[0.16,30\],\[90,140\]\]/);
+  assert.match(b.text(), /byteRanges=\[\[0,65536\]\]/);
+  assert.doesNotMatch(b.text(), /https|secret/);
+  assert.match(b.text(), /malformed=\[redacted\]/);
+});

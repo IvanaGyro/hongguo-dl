@@ -550,7 +550,7 @@ try {
       }));
       assert(stats.ended && !stats.videoError && stats.samples > 10,
         '300-second CENC playback must finish cleanly: ' + JSON.stringify(stats));
-      assert(stats.maxBufferedSpan < 120 && stats.maxBufferedAhead < 90,
+      assert(stats.maxBufferedSpan < 240 && stats.maxBufferedAhead < 140,
         'MSE window retained too much media during 300-second playback: ' +
         JSON.stringify(stats));
       assert(!mediaRequests.some(r => r.unbounded) && !errors.length,

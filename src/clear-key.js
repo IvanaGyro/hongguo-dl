@@ -162,9 +162,12 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
 
 export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
   onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS, recovery = null) {
-  const read = (start, bytes) => {
+  const initialRanges = [];
+  const read = async (start, bytes) => {
     const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl, onProbe, timeoutMs);
-    return recovery ? recovery.read(once, signal) : once();
+    const result = await (recovery ? recovery.read(once, signal) : once());
+    initialRanges.push({ offset: start, data: result.data });
+    return result;
   };
   let offset = 0;
   const tried = new Set();
@@ -187,6 +190,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
         metadata.fileSize = fileSize;
+        metadata.initialRanges = initialRanges;
         // Inspect stsd sample entries (including encrypted sinf/frma), not
         // arbitrary "mp4a" text in udta or another nested box.
         const tracks = inspectMp4TrackFormats(moov);
@@ -431,7 +435,7 @@ export async function openClearKeyStream({
       onStage('remux-check');
       const remux = await openCencProgressiveStream({
         video, url: transport.mode === 'direct' ? source.url : proxyUrl,
-        proxyUrl, fileSize: metadata.fileSize, onStage,
+        proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
         key: source.contentKey, signal, retrySameSource,
