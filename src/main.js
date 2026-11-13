@@ -319,7 +319,9 @@ async function apiJson(route, signal) {
 let sourceChannelProbeOrigin = '';
 let sourceChannelProbe = null;
 function supportsIndependentSourceChannels() {
-  const url = apiRoute('/api/health');
+  let url;
+  try { url = apiRoute('/api/health'); }
+  catch { return Promise.resolve(false); }
   if (url !== sourceChannelProbeOrigin || !sourceChannelProbe) {
     sourceChannelProbeOrigin = url;
     sourceChannelProbe = fetch(url, { headers: { Accept: 'application/json' } })
