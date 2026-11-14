@@ -48,6 +48,8 @@ try {
         mode: document.body.dataset.mode
       };
     });
+    console.log('LAYOUT ' + width + 'px: ' + JSON.stringify(layout));
+    await page.screenshot({path: shots + '/hongguo-' + width + '.png', fullPage: true});
     assert(layout.scrollWidth <= width + 1,
       width + 'px: document horizontal overflow '+JSON.stringify(layout));
     if (width > 820) assert(layout.player.right < layout.episodes.left,
@@ -58,7 +60,6 @@ try {
     assert.equal(layout.mode, 'play');
     assert(layout.prev.width >= 40 && layout.next.width >= 40,
       width + 'px: episode navigation buttons too narrow');
-    await page.screenshot({path: shots + '/hongguo-' + width + '.png', fullPage: true});
     console.log('PASS ' + width + 'px layout, overflow, nav targets and palette');
   }
   assert.deepEqual(errors, [], 'unexpected page errors');
