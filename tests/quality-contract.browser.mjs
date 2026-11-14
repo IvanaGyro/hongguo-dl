@@ -74,6 +74,7 @@ try {
     await page.waitForFunction(() => document.querySelector('#quality')?.options.length > 1);
     await page.locator('#mode-play').click();
     await expectSelected();
+    await page.locator('[data-play-vid="101"]').click();
     const initialLabels = first === 'web' ? ['自動最佳', '720p', '360p']
       : ['自動最佳', '1080p', '720p'];
     assert.deepEqual(await page.locator('#player-quality option').allTextContents(), initialLabels);
@@ -89,7 +90,7 @@ try {
     assert.deepEqual(await page.locator('#player-quality-options button').allTextContents(),
       labels.map((label, i) => label + (i === 0 ? '✓' : '')));
     assert.equal((await log()).split('source.selected').length - 1, 1,
-      'A late higher quality may update choices without replacing the first winner');
+      'Duplicate activation and late higher quality must preserve the first selection');
     await page.locator('#player-quality-options [data-choice-value="720p|h264"]').click();
     assert.equal(await page.locator('#player-quality').inputValue(), '720p|h264');
     assert.deepEqual(await page.evaluate(() => JSON.parse(

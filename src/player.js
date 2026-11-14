@@ -1003,6 +1003,7 @@ export function createPlayer({
     sourceInfo.textContent = '';
     if (!keepSettings) showSettings(false);
     const signal = (controller = new AbortController()).signal;
+    loading = true; // Source discovery and WASM preparation are part of loading too.
     const currentToken = ++token;
     loadStartedAt = performance.now();
     startupStages = new Set();

@@ -78,6 +78,12 @@ try {
       video.getVideoPlaybackQuality().totalVideoFrames > 2;
   }, null, { timeout: 90000 });
   assert.equal(denied, 1, '403 must rotate to the other BVC2 CDN');
+  const readyFrames = await page.locator('#player-video').evaluate(video =>
+    video.getVideoPlaybackQuality().totalVideoFrames);
+  await page.locator('[data-play-vid="111111111"]').click();
+  await page.waitForFunction(frames => document.querySelector('#player-video')
+    .getVideoPlaybackQuality().totalVideoFrames > frames + 1, readyFrames);
+  assert.equal(denied, 1, 'Selecting the healthy current episode must preserve its CDN');
   assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
   assert.match(await page.locator('#playback-log').inputValue(),
     whole ? /bvc2\.prepare\.begin mode=whole-file/ : /bvc2\.prepare\.begin mode=stream/);
