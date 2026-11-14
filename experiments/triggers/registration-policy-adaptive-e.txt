@@ -1,1 +1,1 @@
-Paired A/B 180-second experiment, 2026-11-14. A: silent until 180s. B: intermediate 135s probe then 180s. 600s between rounds. Exact IDs only in short-lived artifact.
+90-second comparison 2026-11-14: round1 A silent 180s; round2 C silent 90s with recovery confirmation; round3 B 90s intermediate probe and 180s check. 600s inter-round silence.
