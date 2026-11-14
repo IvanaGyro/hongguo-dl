@@ -84,6 +84,7 @@ jobs:
           done
           node tests/rendition-menu.browser.mjs
           node tests/design-layout.browser.mjs
+          node tests/watch-progress.browser.mjs
 
       - name: Upload responsive design screenshots
         if: always()
