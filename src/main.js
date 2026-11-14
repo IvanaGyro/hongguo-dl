@@ -949,7 +949,7 @@ player = createPlayer({
   qualitySelect: $('player-quality'),
   speedSelect: $('player-speed'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
-  settingsClose: $('player-settings-close'),
+  settingsClose: $('player-settings-close'), sourceInfo: $('player-source-info'),
   getSeries: () => series, sourceFor: getSource,
   fetchBytes, getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
