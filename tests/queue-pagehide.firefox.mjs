@@ -7,6 +7,8 @@ import { firefox } from 'playwright';
 const browser = await firefox.launch({ headless: true });
 const context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: true });
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const base = 'http://127.0.0.1:4173/hongguo-dl/';
 try {
   // This route supplies only public synthetic series metadata.

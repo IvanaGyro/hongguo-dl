@@ -16,6 +16,8 @@ const browser = await (engine === 'chromium' ? chromium : firefox).launch({
 });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const mediaRequests = [], pageErrors = [];
 const emeDiagnostics = [];
 page.on('console', message => {
@@ -136,6 +138,8 @@ try {
     // Compare against the production FFmpeg.wasm fallback with the exact same
     // encrypted bytes. Relative speed is informational: CI runners fluctuate.
     const fallback = await context.newPage();
+    // The app opens in watch mode; this suite was written against a download-mode start.
+    await fallback.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
     await fallback.addInitScript(() => {
       Object.defineProperty(navigator, 'requestMediaKeySystemAccess',
         { configurable: true, value: undefined });

@@ -17,10 +17,8 @@ import '@videojs/html/ui/time-separator';
 import '@videojs/html/ui/gesture';
 import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
+import '@fontsource-variable/chiron-goround-tc/wght.css';
 import './styles.css';
-import './redesign.css';
-import './open-layout.css';
-import './player-polish.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
@@ -101,7 +99,7 @@ let queuePage = 0;
 const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
-let currentMode = 'download';
+let currentMode = 'play';
 let pageSuspended = false;
 let player = null;
 let bulkController = null;
@@ -1127,7 +1125,9 @@ if (!window.showDirectoryPicker) {
   $('folder-status').hidden = true;
 }
 renderQueue();
-setMode('download');
+// The app opens in watch mode. Browser suites written against a download-mode
+// start set this flag before load.
+setMode(globalThis.__HONGGUO_START_MODE === 'download' ? 'download' : 'play');
 const initialIds = idsFromUrl(new URL(location.href));
 if (initialIds.length) {
   $('input-url').value = initialIds.join(', ');

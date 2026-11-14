@@ -49,6 +49,8 @@ export async function verifyWebKitMediaAudioControl(browser) {
     const origin = 'http://127.0.0.1:' + server.address().port;
     context = await browser.newContext();
     const page = await context.newPage();
+    // The app opens in watch mode; this suite was written against a download-mode start.
+    await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
     const results = {};
     for (const mode of ['native', 'mse']) {
       await page.goto(origin + '/', { waitUntil: 'domcontentloaded' });

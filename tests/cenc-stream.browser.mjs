@@ -150,6 +150,8 @@ const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
 });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 // Only the multi-seek/mode-switch acceptance needs lifetime instrumentation.
 // Track MSE object URLs without exposing media URLs or CENC keys.
 if (process.env.CENC_TEST_MULTI_SEEK === '1') {

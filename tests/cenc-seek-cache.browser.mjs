@@ -7,6 +7,8 @@ const name = process.env.CENC_BROWSER === 'firefox' ? 'firefox' : 'chromium';
 const browser = await (name === 'firefox' ? firefox : chromium).launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors = [], requests = [];
 page.on('pageerror', error => errors.push(error.message));
 await page.addInitScript(() => {

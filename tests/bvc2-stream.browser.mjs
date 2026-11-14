@@ -14,6 +14,8 @@ const browserName = process.env.BVC2_BROWSER || 'chromium';
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors = [], reads = [];
 const consoleMessages = [];
 page.on('console', message => { consoleMessages.push(message.text()); if (consoleMessages.length > 30) consoleMessages.shift(); });

@@ -8,6 +8,8 @@ const ID = '7698294694886788121';
 const browser = await chromium.launch({headless:true,
   ...(process.env.CHROMIUM_PATH ? {executablePath:process.env.CHROMIUM_PATH} : {})});
 const page = await browser.newPage({viewport:{width:1440,height:900},reducedMotion:'reduce'});
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors=[];
 page.on('pageerror',err=>errors.push(err.message));
 await page.addInitScript(seriesId => {

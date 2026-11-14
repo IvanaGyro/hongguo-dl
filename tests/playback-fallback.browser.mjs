@@ -11,6 +11,8 @@ const browser = await (name === 'firefox' ? firefox : chromium).launch({
     : { args: ['--autoplay-policy=no-user-gesture-required'] })
 });
 const page = await browser.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 let wholeFileRequests = 0;
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));

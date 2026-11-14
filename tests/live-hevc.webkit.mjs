@@ -15,6 +15,8 @@ const MIME_PROBES = [
 const browser = await webkit.launch({ headless: true });
 const context = await browser.newContext({ acceptDownloads: false });
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const statuses = new Map();
 page.on('response', response => {
   try {
