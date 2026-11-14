@@ -113,7 +113,9 @@ try {
     await page.locator('#add-queue').click();
     await page.waitForFunction(count => document.querySelectorAll('.job .s-completed').length === count ||
       document.querySelectorAll('.job .s-failed').length > 0,
-      index + 1, { timeout: 120000 });
+      // Firefox's AV1 WASM encoder reaches ~92% at 120s on the CI runner.
+      // Allow that CPU-bound codec to finish without weakening its assertions.
+      index + 1, { timeout: browserName === 'firefox' && mode === 'av1' ? 240000 : 120000 });
     assert.equal(await page.locator('.job .s-failed').count(), 0, mode + ': ' + await page.locator('#queue').textContent());
     console.log(browserName + ' ' + (whole ? 'whole-file' : 'stream') + ' download ' + mode + ' passed');
   }
