@@ -198,9 +198,11 @@ function renderQueue() {
   $('queue-prev-range').disabled = queuePage === 0;
   $('queue-next-range').disabled = queuePage === pages - 1;
   if (!jobs.length) {
+    $('queue').removeAttribute('role');
     $('queue').innerHTML = '<div class="empty">尚無下載項目</div>';
     return;
   }
+  $('queue').setAttribute('role', 'list');
   $('queue').innerHTML = orderQueueSelection(jobs).slice(pageStart, pageStart + JOBS_PER_PAGE).map(job => {
     const busy = ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const chosen = exportSelected.has(job.id);

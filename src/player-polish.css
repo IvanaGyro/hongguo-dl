@@ -158,3 +158,107 @@ media-status-announcer {
   overflow:hidden!important; clip-path:inset(50%)!important;
   white-space:nowrap!important; pointer-events:none!important;
 }
+
+
+/* Brand reference: the published Hongguo icon contains orange #FD7528,
+   apricot #F0B16B, sage #BEC891 and mint #9BDFC0.
+   In OKLCH: h~45.5,67.9,116.5,164.5 degrees. Sage is the
+   logo-native midpoint on the *hue arc*, not muddy RGB averaging.
+   Load Google Fonts with display=swap; robust local fallbacks remain. */
+:root {
+  --brand-middle: #BEC891;
+  --brand-warm-bridge: #F0B16B;
+  --brand-complete: #9BDFC0;
+  --brand-primary: #FD7528;
+  font-family: "Space Grotesk", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  font-synthesis: none;
+}
+h1, h2, h3, .section-title h2 { font-family:inherit; font-weight:700; letter-spacing:-.035em; }
+input, select, button { font-family:inherit; }
+.skip-to-content {
+  position:fixed; z-index:1000; top:8px; left:8px;
+  width:1px; height:1px; overflow:hidden; padding:0;
+  clip-path:inset(50%); white-space:nowrap;
+  background:#BEC891; color:#10130F;
+  font:700 1rem/1.4 "Noto Sans TC",sans-serif;
+  text-decoration:none; border:2px solid #10130F;
+}
+.skip-to-content:focus-visible {
+  width:auto; height:auto; overflow:visible;
+  clip-path:none; padding:.75rem 1rem;
+  outline:3px solid #FD7528; outline-offset:2px;
+}
+:where(button,a,input,select,textarea,summary,media-play-button,media-mute-button,
+  media-fullscreen-button,media-time-slider):focus-visible {
+  outline:3px solid #9BDFC0; outline-offset:3px;
+}
+:where(button,input:not([type="checkbox"]):not([type="radio"]),select,textarea):not(:disabled) { min-height:44px; }
+#main-content:focus { outline:none; }
+/* Sharp geometry is shared by typography, cards and forms. Native
+   circular transport affordances (play/mute/fullscreen) stay round. */
+.episode, .episode.play-episode, .episode.selected,
+.input-row input, .settings select, .episode-jump input,
+.episode-jump button, .episode-range-switch button,
+.player-settings-menu, .player-settings-row, .player-settings-choice,
+.player-settings-heading button, .recent-list button,
+.job, .alert, .empty, .status, .queue-export, .toolbar #choose-folder {
+  border-radius:2px;
+}
+.player-settings-menu { border-radius:2px; }
+.player-control-group > :is(button,media-play-button,media-mute-button,media-fullscreen-button) {
+  width:44px; height:44px; min-width:44px; min-height:44px;
+}
+.player-settings-heading button { width:44px; height:44px; min-width:44px; min-height:44px; }
+.player-settings-choice { min-height:44px; }
+.episode-range-switch button, .episode-jump input,
+.episode-jump button { min-height:44px; }
+.episode-range-switch button { min-width:44px; width:44px; }
+.episode-jump label, .episode-range-switch span,
+.player-settings-value, .section-eyebrow,
+.lookup label, .player-settings-heading, .player-clock {
+  font-size:.875rem;
+}
+/* A logo-derived tertiary accent has a distinct purpose:
+   apricot = quality/speed metadata, sage = partially watched,
+   mint = completed, orange = active/current/primary. */
+.player-settings-row > svg { color:var(--brand-middle); }
+.player-settings-value { color:var(--brand-warm-bridge); }
+.section-eyebrow, .episode-range-switch span { color:var(--brand-middle); }
+.episode.play-episode.in-progress {
+  --tile-progress:var(--brand-middle);
+}
+.episode.play-episode.watched {
+  --tile-progress:var(--brand-complete);
+  --tile-background:var(--brand-complete);
+}
+.episode.play-episode.current {
+  --tile-progress:var(--brand-primary);
+  --tile-background:#282d23;
+}
+.episode.play-episode.current.watched {
+  --tile-progress:var(--brand-primary);
+  --tile-background:var(--brand-primary);
+}
+/* Per-episode percentage is still encoded in the entire button background.
+   Put numerals over a fixed dark ink-ground so partial gradients never
+   accidentally place pale numerals on pale sage or mint (WCAG 1.4.3). */
+.episode.play-episode > span:first-child {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:27px; min-height:26px;
+  background:#141B15; color:#F5F2E8;
+  border-radius:0; padding:0 .2rem;
+  font-variant-numeric:tabular-nums;
+}
+.episode.play-episode .watched-check { color:#10130F; }
+.episode.play-episode.current .watched-check { color:#10130F; }
+.episode.play-episode:focus-visible { outline:3px solid var(--brand-mint); outline-offset:2px; }
+/* Diagnostics remain accessible, while the actual UI states use both
+   explicit text/aria and the logo-derived colours. */
+.player-settings-choice[aria-pressed="true"] {
+  border-left:3px solid var(--brand-primary);
+  padding-left:calc(.8rem - 3px);
+}
+@media (max-width:590px) {
+  .episode-jump { justify-content:space-between; }
+  .episode-jump input { flex:1; width:min(110px,35vw); }
+}

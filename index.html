@@ -3,11 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" />
   <meta name="theme-color" content="#10120f" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
 </head>
 <body>
+  <a class="skip-to-content" href="#main-content">跳至主要內容</a>
   <div id="app">
     <header class="topbar">
       <a class="brand" href="#app" aria-label="Hongguo DL 回到頁面頂端">
@@ -16,7 +20,7 @@
       </a>
       <span class="topbar-note">短劇播放 <span aria-hidden="true">/</span> 下載管理</span>
     </header>
-    <main class="layout">
+    <main class="layout" id="main-content" tabindex="-1">
       <section class="hero" aria-labelledby="home-title">
         <h1 id="home-title">短劇，從這裡接著看<span class="hero-accent">。</span></h1>
         <p>輸入影集 ID 或分享網址，播放、續看，或選擇集數下載。</p>
@@ -26,65 +30,19 @@
         <button id="mode-play" type="button" aria-pressed="false">播放模式</button>
       </nav>
       <section class="panel">
-        <div id="recent-series" class="recent-library" aria-label="最近看過的影集"></div>
         <form id="lookup-form" class="lookup">
           <label for="input-url">影集 ID 或網址</label>
           <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
         </form>
         <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
         <div id="lookup-error" class="alert" hidden role="alert"></div>
-        <details class="api-settings" id="worker-settings">
-          <summary>Cloudflare Worker API 設定</summary>
-          <form id="api-settings-form">
-            <label for="worker-origin">Worker 網址（可覆寫網站預設值）</label>
-            <div class="input-row">
-              <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
-              <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
-            </div>
-            <p id="worker-status" class="help"></p>
-            <p class="help">查詢和下載會透過此 Worker；只有自訂網址會保存在目前裝置。</p>
-            <div id="api-settings-error" class="alert" role="alert" hidden></div>
-          </form>
-        </details>
-        <details class="api-settings" id="codec-diagnostics">
-          <summary>此裝置影片編碼支援檢測</summary>
-          <p class="help">僅讀取瀏覽器公開能力宣告，不會傳送影片、金鑰或裝置識別資料。即使顯示支援 HEVC，仍須實際影格測試才能確認。</p>
-          <div class="actions">
-            <button id="codec-diag-run" type="button" class="quiet">檢查此裝置</button>
-            <button id="codec-diag-copy" type="button" class="quiet" hidden>複製診斷結果</button>
-          </div>
-          <pre id="codec-diag-results" class="codec-diag-results" aria-live="polite"></pre>
-        </details>
         <div id="series" hidden>
           <div class="section-title"><div><h2 id="series-title">劇集</h2><p id="series-count" class="subtle"></p></div>
             <div class="actions">
-              <button id="share-series" type="button" class="quiet" title="複製此影集連結" aria-label="複製影集連結">分享連結</button>
+              <button id="share-series" type="button" class="quiet" title="複製此影集連結" aria-label="分享連結（複製影集連結）">分享連結</button>
               <button id="select-all" type="button" class="quiet">全選</button>
               <button id="select-none" type="button" class="quiet">清空</button>
             </div>
-          </div>
-          <nav id="episode-navigation" class="episode-navigation" aria-label="分集導覽" hidden>
-            <div class="episode-range-switch">
-              <button id="episode-prev-range" type="button" aria-label="上一百集">‹</button>
-              <span id="episode-range" aria-live="polite"></span>
-              <button id="episode-next-range" type="button" aria-label="下一百集">›</button>
-            </div>
-            <form id="episode-jump-form" class="episode-jump">
-              <label for="episode-jump">跳到第</label>
-              <input id="episode-jump" type="number" inputmode="numeric" min="1" step="1" required placeholder="集數" />
-              <button type="submit">前往</button>
-            </form>
-          </nav>
-          <div id="episodes" class="episode-grid" aria-label="分集選擇"></div>
-          <div id="download-controls">
-          <h3 class="download-section-heading">下載設定</h3>
-          <div class="settings">
-            <label>畫質 <select id="quality"><option value="auto">最佳可取得</option></select></label>
-            <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
-            <label>同時下載 <select id="concurrency"><option value="1">1 集</option><option value="2" selected>2 集</option><option value="3">3 集</option></select></label>
-          </div>
-          <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
-          <div id="browser-note" class="browser-note" role="status" hidden></div>
           </div>
         <section id="player-panel" hidden aria-label="影集播放器">
           <div class="player-header">
@@ -165,7 +123,53 @@
             </media-container>
           </video-player>
         </section>
+          <nav id="episode-navigation" class="episode-navigation" aria-label="分集導覽" hidden>
+            <div class="episode-range-switch">
+              <button id="episode-prev-range" type="button" aria-label="上一百集">‹</button>
+              <span id="episode-range" aria-live="polite"></span>
+              <button id="episode-next-range" type="button" aria-label="下一百集">›</button>
+            </div>
+            <form id="episode-jump-form" class="episode-jump">
+              <label for="episode-jump">跳到第</label>
+              <input id="episode-jump" type="number" inputmode="numeric" min="1" step="1" required placeholder="集數" />
+              <button type="submit">前往</button>
+            </form>
+          </nav>
+          <div id="episodes" class="episode-grid" role="group" aria-label="分集選擇"></div>
+          <div id="download-controls">
+          <h3 class="download-section-heading">下載設定</h3>
+          <div class="settings">
+            <label>畫質 <select id="quality"><option value="auto">最佳可取得</option></select></label>
+            <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
+            <label>同時下載 <select id="concurrency"><option value="1">1 集</option><option value="2" selected>2 集</option><option value="3">3 集</option></select></label>
+          </div>
+          <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
+          <div id="browser-note" class="browser-note" role="status" hidden></div>
+          </div>
         </div>
+        <div id="recent-series" class="recent-library" role="region" aria-label="最近看過的影集"></div>
+        <details class="api-settings" id="worker-settings">
+          <summary>Cloudflare Worker API 設定</summary>
+          <form id="api-settings-form">
+            <label for="worker-origin">Worker 網址（可覆寫網站預設值）</label>
+            <div class="input-row">
+              <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
+              <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
+            </div>
+            <p id="worker-status" class="help"></p>
+            <p class="help">查詢和下載會透過此 Worker；只有自訂網址會保存在目前裝置。</p>
+            <div id="api-settings-error" class="alert" role="alert" hidden></div>
+          </form>
+        </details>
+        <details class="api-settings" id="codec-diagnostics">
+          <summary>此裝置影片編碼支援檢測</summary>
+          <p class="help">僅讀取瀏覽器公開能力宣告，不會傳送影片、金鑰或裝置識別資料。即使顯示支援 HEVC，仍須實際影格測試才能確認。</p>
+          <div class="actions">
+            <button id="codec-diag-run" type="button" class="quiet">檢查此裝置</button>
+            <button id="codec-diag-copy" type="button" class="quiet" hidden>複製診斷結果</button>
+          </div>
+          <pre id="codec-diag-results" class="codec-diag-results" aria-live="polite"></pre>
+        </details>
       </section>
       <section id="queue-panel" class="panel">
         <div class="section-title"><div><h2>下載佇列</h2><p id="queue-summary" class="subtle">尚未加入任何下載</p></div>
@@ -183,7 +187,7 @@
             <button id="queue-next-range" type="button" aria-label="下一百筆下載">›</button>
           </div>
         </nav>
-        <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">尚無下載項目</div></div>
+        <div id="queue" class="queue" aria-live="polite"><div class="empty">尚無下載項目</div></div>
         <div class="queue-export">
           <div><strong id="queue-selected-count">尚未選取集數</strong></div>
           <div class="actions">

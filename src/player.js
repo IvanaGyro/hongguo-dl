@@ -16,7 +16,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
-import { blockHevcFullFileFallback, bvc2PlaybackMode } from './playback-policy.js';
+import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -41,6 +41,7 @@ export function createPlayer({
   diagnostics = () => {}
 }) {
   let current = null;
+  let settingsView = 'root';
   let controller = null, token = 0, activeUrl = null;
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
@@ -48,7 +49,7 @@ export function createPlayer({
   let sourceRefreshCount = 0, cencRetryTier = null;
   let cencTriedUrls = new Set(), candidateIds = new Map();
   let streamFailure = null;
-  let lastVariants = null, lastWinnerVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
+  let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let lastVariantsPartial = false;
   let pendingSourceExpansion = null, triedSourceUrls = new Set();
   let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
@@ -69,7 +70,9 @@ export function createPlayer({
     console.info('[Hongguo startup] E' + current.index + ' ' + stage + ': ' +
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
-  const bvc2Mode = bvc2PlaybackMode(location.search);
+  // Experimental only: actual proprietary BTY2 picture decoding remains unverified.
+  const experimentalBvc2Stream = new URLSearchParams(location.search)
+    .get('bvc2_stream') === 'experimental';
   const mimeSupport = mime => video.canPlayType(mime);
   // Source selection uses a provisional HEVC probe; openClearKeyStream later
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
@@ -83,14 +86,12 @@ export function createPlayer({
   ]) {
     if (value && Array.from(select.options).some(o => o.value === value)) select.value = value;
   }
-  let pendingQuality = null;
-  const selection = () => pendingQuality !== null
-    ? { quality: pendingQuality, codec: 'auto' } : parseRenditionValue(qualitySelect.value);
+  const selection = () => parseRenditionValue(qualitySelect.value);
   function selectRendition(quality, codec = 'auto') {
     const options = renditionOptions(lastVariants || []);
     qualitySelect.value = matchingRenditionValue(options, { quality, codec }) || 'auto';
   }
-  qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
+  // Playback quality is session-only; never restore it on a fresh page load.
   function persistPrefs() {
     try {
       storage.setItem(PREF_KEY, JSON.stringify({
@@ -98,27 +99,30 @@ export function createPlayer({
       }));
     } catch { /* storage might be disabled */ }
   }
-  persistPrefs(); // Migrate legacy stored quality/codec; only speed persists.
   function setStatus(value) { status.textContent = value; }
   function updateRenditionOptions(variants, requested = selection()) {
-    pendingQuality = null;
-    const options = renditionOptions(playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport));
+    // Download UI sees every output codec, but the *playback* menu only offers
+    // codecs this browser can decode/transcode. This also applies to late
+    // Web/App CDN list updates while the settings submenu is already open.
+    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport);
+    const options = renditionOptions(supported);
     let value = matchingRenditionValue(options, requested);
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
     qualitySelect.value = value || 'auto';
-    updateSettingsSummaries();
-    if (!settingsMenu.hidden && settingsViews.some(view =>
-      view.dataset.settingsView === 'quality' && !view.hidden)) showSettingsView('quality');
-  }
-  function refreshBvc2Choices(variants, signal) {
-    if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
-    void bvc2BridgeAvailable().then(available => {
-      if (signal.aborted || lastVariants !== variants || available === canTranscodeBvc2) return;
-      canTranscodeBvc2 = available;
-      updateRenditionOptions(variants);
-      log('source.menu.updated', { bvc2Available: available });
-    }).catch(() => {});
+    // Updating CDN variants must also update the custom open submenu.
+    // Preserve keyboard focus when the choice that held focus still exists.
+    if (settingsView === 'quality' && !settingsMenu.hidden &&
+        settingsMenu.querySelector?.('#player-quality-options')) {
+      const list = settingsMenu.querySelector('#player-quality-options');
+      const focused = list.contains?.(document.activeElement)
+        ? document.activeElement?.dataset?.choiceValue : null;
+      showSettingsView('quality');
+      if (focused != null) {
+        [...list.querySelectorAll('button')].find(node =>
+          node.dataset.choiceValue === focused)?.focus();
+      }
+    }
   }
   function ordered() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
@@ -370,10 +374,10 @@ export function createPlayer({
       report('正在重新取得同畫質影片來源…');
     }
     const sourceQuery = sourceQueryForPlayback(quality);
-    const list = options.variants?.length ? { variants: options.variants, winnerVariants: options.winnerVariants }
+    const list = options.variants?.length ? { variants: options.variants }
       : episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
-      : sameList ? { variants: lastVariants, winnerVariants: lastWinnerVariants }
+      : sameList ? { variants: lastVariants }
         : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
           { refresh: !quiet && attempt > 0 && !sameList });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -410,49 +414,26 @@ export function createPlayer({
       key = episodeCacheKey(seriesId, episode.vid, quality, codec);
     }
     // A 1080p HEVC selection must not wait for unrelated ByteVC2 assets.
-    let policyVariants = quality === 'auto'
-      ? list.winnerVariants || variants : variants;
-    const nativeChoice = playbackRendition(policyVariants, { quality, codec: 'auto' }, mimeSupport, 0, false, mseSupport).source;
-    if (!quiet) for (const option of renditionOptions(variants)) {
-      const candidates = variants.filter(v => qualityId(v) === option.quality &&
-        (codecId(v.codec) || 'auto') === option.codec);
-      log('source.rendition', {
-        quality: option.quality, codec: option.codec, candidates: candidates.length,
-        encrypted: candidates.some(v => Boolean(v.contentKey)),
-        nativeSupported: Boolean(playbackRendition(candidates, option,
-          mimeSupport, 0, false, mseSupport).source)
-      });
-    }
-    log('source.selection.policy', { quality, codec, nativeAvailable: Boolean(nativeChoice), bvc2Mode });
-    const needsBvc2 = policyVariants.some(v => codecId(v.codec) === 'bytevc2' &&
+    const nativeChoice = playbackRendition(variants, { quality, codec }, mimeSupport, 0, false, mseSupport).source;
+    const needsBvc2 = !nativeChoice && variants.some(v => codecId(v.codec) === 'bytevc2' &&
       (quality === 'auto' || qualityId(v) === quality) &&
-      (!nativeChoice || parseInt(qualityId(v), 10) > parseInt(qualityId(nativeChoice), 10)));
+      (codec === 'auto' || codec === 'bytevc2'));
     if (needsBvc2) report('正在檢查 ByteVC2 播放工具…');
     const checkStarted = performance.now();
-    const bvc2Available = needsBvc2 ? await bvc2BridgeAvailable() : canTranscodeBvc2;
+    const bvc2Available = needsBvc2 ? await bvc2BridgeAvailable() : false;
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     canTranscodeBvc2 = bvc2Available;
     log('source.bvc2.check', {
       required: needsBvc2, available: canTranscodeBvc2,
       elapsedMs: Math.round(performance.now() - checkStarted)
     });
-    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport);
-    const supportedSelection = reconcileRendition(supported, { quality, codec });
-    if (quality !== supportedSelection.quality || codec !== supportedSelection.codec) {
-      quality = supportedSelection.quality; codec = supportedSelection.codec;
-      key = episodeCacheKey(seriesId, episode.vid, quality, codec);
-      log('source.selection.reconciled', { quality, codec, reason: 'supported-codecs' });
-    }
-    policyVariants = quality === 'auto' ? list.winnerVariants || variants : variants;
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     if (!quiet) {
       lastVariants = variants;
-      lastWinnerVariants = list.winnerVariants || variants.slice();
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
       lastVariantsPartial = sourceQuery.partial;
       updateRenditionOptions(variants, { quality, codec });
-      refreshBvc2Choices(variants, signal);
       persistPrefs();
       // An independently resolved web/App source may arrive after playback
       // has already started. Merge it for future quality changes and retries,
@@ -473,7 +454,6 @@ export function createPlayer({
             lastVariantsAt = Date.now();
             log('source.list.extended', { added, variants: variants.length });
             updateRenditionOptions(variants);
-            refreshBvc2Choices(variants, signal);
           }
         }).catch(() => {});
         pendingSourceExpansion = { vid: episode.vid, promise: expansion };
@@ -493,7 +473,7 @@ export function createPlayer({
     const selectableVariants = !quiet && cencRetryTier
       ? sameTierPlaybackCandidates(variants, { quality, codec }, cencRetryTier)
         .filter(source => !cencTriedUrls.has(source.url))
-      : policyVariants;
+      : variants;
     const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
       ? 0 : attempt;
     let resolved = playbackRendition(selectableVariants,
@@ -552,10 +532,9 @@ export function createPlayer({
         'ByteVC2 HLS 尚未支援；目前的 WASM 路徑只接受 MP4');
       // Do not transcode a whole second episode during playback. Prefetch
       // metadata now; take over when the user actually switches episodes.
-      if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants,
-        winnerVariants: list.winnerVariants || variants.slice() };
-      if (bvc2Mode === 'stream') {
-      setStatus('正在準備 ByteVC2 → H.264 增量串流…');
+      if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
+      if (experimentalBvc2Stream) {
+      setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
       const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
       const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(), fetch, undefined, source.userAgent);
       const url = transport.mode === 'direct' ? source.url : proxyUrl;
@@ -745,7 +724,7 @@ export function createPlayer({
     let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
     if (resolved?.bvc2Pending) {
       resolved = await sourceForEpisode(episode, signal, attempt,
-        { variants: resolved.variants, winnerVariants: resolved.winnerVariants });
+        { variants: resolved.variants });
     }
     if (resolved?.nativePending) {
       await keyCleanup;
@@ -938,7 +917,7 @@ export function createPlayer({
       hasNext: !!next
     })) return;
     const seriesId = getSeries().seriesId, quality = selection().quality;
-    const codec = 'auto'; // The next episode inherits a quality, never this episode's codec.
+    const codec = selection().codec;
     const key = episodeCacheKey(seriesId, next.vid, quality, codec);
     if (prefetched?.key === key || cache.getEntry(key)) return;
     cancelPrefetch();
@@ -953,20 +932,15 @@ export function createPlayer({
   }
   function open(episode, autoPlay = true, keepSettings = false) {
     // Mode activation already opens its suggested episode. A repeated click
-    // must not cancel/restart that selection, even if it became ready while
-    // the pointer action was settling. Settings changes explicitly restart.
-    if (current?.vid === episode.vid && controller && !controller.signal.aborted && !keepSettings &&
-        (loading || readyForHistory && !failure && !streamFailure && !video.error &&
-          !video.ended && video.getAttribute('src'))) {
-      if (!loading && autoPlay && video.paused) {
-        try { void Promise.resolve(video.play()).catch(() => {}); } catch { /* controls can resume */ }
-      }
-      return;
-    }
+    // must not cancel/restart that same in-flight selection; settings changes
+    // explicitly pass keepSettings and still restart with the new rendition.
+    if (current?.vid === episode.vid && controller && !controller.signal.aborted &&
+        !video.ended && !video.error && !keepSettings) return;
     if (current?.vid !== episode.vid) {
       const quality = selection().quality;
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
-      pendingQuality = quality;
+      if (quality !== 'auto') qualitySelect.add(new Option(quality + '（待確認）', renditionValue(quality, 'auto')));
+      qualitySelect.value = renditionValue(quality, 'auto');
     }
     if (!episode) return;
     const key = episodeCacheKey(getSeries()?.seriesId, episode.vid,
@@ -994,7 +968,6 @@ export function createPlayer({
     retryError = null;
     if (lastVariantsVid !== episode.vid) {
       lastVariants = null;
-      lastWinnerVariants = null;
       lastVariantsVid = null;
       lastVariantsPartial = false;
     }
@@ -1003,7 +976,6 @@ export function createPlayer({
     sourceInfo.textContent = '';
     if (!keepSettings) showSettings(false);
     const signal = (controller = new AbortController()).signal;
-    loading = true; // Source discovery and WASM preparation are part of loading too.
     const currentToken = ++token;
     loadStartedAt = performance.now();
     startupStages = new Set();
@@ -1217,6 +1189,7 @@ export function createPlayer({
       speedSelect.selectedOptions[0]?.textContent || '1×';
   }
   function showSettingsView(view = 'root') {
+    settingsView = view;
     if (!settingsViews.length) return;
     for (const element of settingsViews) element.hidden = element.dataset.settingsView !== view;
     backButton.hidden = view === 'root';
@@ -1252,12 +1225,16 @@ export function createPlayer({
     settingsToggle.setAttribute('aria-expanded', String(visible));
   }
   settingsToggle.addEventListener('click', () => showSettings(settingsMenu.hidden));
-  settingsClose.addEventListener('click', () => showSettings(false));
+  settingsClose.addEventListener('click', () => { showSettings(false); settingsToggle.focus?.(); });
   settingsMenu.addEventListener('click', event => {
     const target = event.target?.closest?.('button[data-settings-target], button[data-choice-for]');
     if (!target) return;
     if (target.dataset.settingsTarget) {
-      showSettingsView(target.dataset.settingsTarget);
+      const nextView = target.dataset.settingsTarget;
+      const oldView = settingsView;
+      showSettingsView(nextView);
+      (nextView === 'root' ? settingsMenu.querySelector(`[data-settings-target="${oldView}"]`) :
+        settingsMenu.querySelector(`[data-settings-view="${nextView}"] .player-settings-choice`))?.focus?.();
       return;
     }
     const select = target.dataset.choiceFor === 'quality' ? qualitySelect : speedSelect;
@@ -1265,7 +1242,22 @@ export function createPlayer({
       select.value = target.dataset.choiceValue;
       select.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    const finishedView = settingsView;
     showSettingsView('root');
+    settingsMenu.querySelector(`[data-settings-target="${finishedView}"]`)?.focus?.();
+  });
+  settingsMenu.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (settingsView === 'root') {
+      showSettings(false);
+      settingsToggle.focus?.();
+    } else {
+      const previousView = settingsView;
+      showSettingsView('root');
+      settingsMenu.querySelector(`[data-settings-target="${previousView}"]`)?.focus?.();
+    }
   });
   document.addEventListener('pointerdown', event => {
     if (!settingsMenu.hidden && !settingsMenu.contains(event.target) &&
@@ -1274,7 +1266,6 @@ export function createPlayer({
   prevButton.addEventListener('click', () => step(-1));
   nextButton.addEventListener('click', () => step(1));
   qualitySelect.addEventListener('change', () => {
-    pendingQuality = null;
     if (lastVariants) updateRenditionOptions(lastVariants);
     persistPrefs();
     updateSettingsSummaries();
@@ -1320,10 +1311,9 @@ export function createPlayer({
     stop() {
       cancelPrefetch();
       savePosition(); current = null; disposeSource(); token++;
-      lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
-      pendingQuality = null;
+      // New series should never inherit a previous series's quality.
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
-      updateSettingsSummaries(); showSettings(false);
+      lastVariants = null; lastVariantsVid = null;
       label.textContent = '尚未播放'; refreshButtons();
     },
     pause() { if (readyForHistory) savePosition(); video.pause(); },
