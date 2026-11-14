@@ -20,6 +20,7 @@ import '@videojs/html/ui/status-announcer';
 import './styles.css';
 import './redesign.css';
 import './open-layout.css';
+import './player-polish.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
@@ -90,6 +91,9 @@ function resetApiSettings() {
 const MAX_BROWSER_BLOB = 300 * 1024 * 1024;
 let series = null;
 let selected = new Set();
+const EPISODES_PER_PAGE = 100;
+let episodePage = 0;
+let lastFollowedEpisode = null;
 let directory = null;
 let jobs = restoreJobs();
 const active = new Map();
@@ -243,7 +247,23 @@ function renderEpisodes() {
   if (!series) return;
   const watch = watchRecords(localStorage);
   const current = player?.current()?.vid;
-  $('episodes').innerHTML = series.episodes.map(ep => {
+  if (currentMode === 'play' && current !== lastFollowedEpisode) {
+    lastFollowedEpisode = current;
+    const index = series.episodes.findIndex(ep => ep.vid === current);
+    if (index >= 0) episodePage = Math.floor(index / EPISODES_PER_PAGE);
+  }
+  const pages = Math.max(1, Math.ceil(series.episodes.length / EPISODES_PER_PAGE));
+  episodePage = Math.max(0, Math.min(episodePage, pages - 1));
+  const start = episodePage * EPISODES_PER_PAGE;
+  const visibleEpisodes = series.episodes.slice(start, start + EPISODES_PER_PAGE);
+  $('episode-navigation').hidden = pages <= 1;
+  $('episode-range').textContent = (start + 1) + '–' +
+    Math.min(start + EPISODES_PER_PAGE, series.episodes.length) +
+    ' / ' + series.episodes.length + ' 集';
+  $('episode-prev-range').disabled = episodePage === 0;
+  $('episode-next-range').disabled = episodePage === pages - 1;
+  $('episode-jump').max = String(Math.max(...series.episodes.map(ep => Number(ep.index) || 0), 1));
+  $('episodes').innerHTML = visibleEpisodes.map(ep => {
     const record = watch[playbackKey(series.seriesId, ep.vid)];
     const watched = !!record?.completed;
     const seconds = Number(record?.seconds) || 0;
@@ -298,6 +318,8 @@ function showSeries(result, fromHistory = false) {
   player?.stop();
   series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
   selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
+  episodePage = 0;
+  lastFollowedEpisode = null;
   void loadDownloadQualitySample(series);
   $('series-title').textContent = series.title || '未命名短劇';
   document.title = (series.title || '短劇') + ' · Hongguo DL';
@@ -925,10 +947,9 @@ player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
   qualitySelect: $('player-quality'),
-  speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
+  speedSelect: $('player-speed'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
-  settingsClose: $('player-settings-close'), pipButton: $('player-pip'),
-  sourceInfo: $('player-source-info'),
+  settingsClose: $('player-settings-close'),
   getSeries: () => series, sourceFor: getSource,
   fetchBytes, getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
@@ -976,6 +997,33 @@ $('select-all').addEventListener('click', () => {
   selected = new Set(series.episodes.map(e => e.vid)); renderEpisodes();
 });
 $('select-none').addEventListener('click', () => { selected.clear(); if (series) renderEpisodes(); });
+$('episode-prev-range').addEventListener('click', () => {
+  if (!series || episodePage === 0) return;
+  episodePage--; renderEpisodes();
+});
+$('episode-next-range').addEventListener('click', () => {
+  if (!series || (episodePage + 1) * EPISODES_PER_PAGE >= series.episodes.length) return;
+  episodePage++; renderEpisodes();
+});
+$('episode-jump').addEventListener('input', () => $('episode-jump').setCustomValidity(''));
+$('episode-jump-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!series) return;
+  const index = Number($('episode-jump').value);
+  const found = Number.isInteger(index) ?
+    series.episodes.findIndex(ep => Number(ep.index) === index) : -1;
+  if (found < 0) {
+    $('episode-jump').setCustomValidity('這部影集沒有這個集數');
+    $('episode-jump').reportValidity();
+    return;
+  }
+  episodePage = Math.floor(found / EPISODES_PER_PAGE);
+  renderEpisodes();
+  const target = $('episodes').querySelectorAll('.episode')[found % EPISODES_PER_PAGE];
+  target?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  if (target?.matches('button')) target.focus({ preventScroll: true });
+  $('episode-jump').value = '';
+});
 $('episodes').addEventListener('click', e => {
   if (currentMode !== 'play' || !series) return;
   const control = e.target.closest('button[data-play-vid]');
