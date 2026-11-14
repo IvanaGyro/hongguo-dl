@@ -18,9 +18,8 @@
     </header>
     <main class="layout">
       <section class="hero" aria-labelledby="home-title">
-        <span class="hero-kicker"><span class="kicker-dot" aria-hidden="true"></span> YOUR SHORT DRAMA LIBRARY</span>
-        <h1 id="home-title">好劇不間斷<span class="hero-accent">，</span><br />隨時接著看<span class="hero-accent">。</span></h1>
-        <p>貼上影集 ID 或分享網址，繼續播放、挑選集數，或一次整理下載。</p>
+        <h1 id="home-title">短劇，從這裡接著看<span class="hero-accent">。</span></h1>
+        <p>輸入影集 ID 或分享網址，播放、續看，或選擇集數下載。</p>
       </section>
       <nav class="mode-tabs" aria-label="操作模式">
         <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
@@ -66,6 +65,7 @@
           </div>
           <div id="episodes" class="episode-grid" aria-label="分集選擇"></div>
           <div id="download-controls">
+          <h3 class="download-section-heading">下載設定</h3>
           <div class="settings">
             <label>畫質 <select id="quality"><option value="auto">最佳可取得</option></select></label>
             <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
@@ -76,7 +76,7 @@
           </div>
         <section id="player-panel" hidden aria-label="影集播放器">
           <div class="player-header">
-            <div class="player-heading"><span class="section-eyebrow">NOW PLAYING</span><h2 id="player-episode">尚未播放</h2></div>
+            <div class="player-heading"><span class="section-eyebrow">正在播放</span><h2 id="player-episode">尚未播放</h2></div>
             <span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span>
           </div>
           <video-player id="videojs-player" class="videojs-player">

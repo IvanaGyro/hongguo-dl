@@ -19,6 +19,7 @@ import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
 import './styles.css';
 import './redesign.css';
+import './open-layout.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
@@ -257,7 +258,9 @@ function renderEpisodes() {
         (watched ? 'watched ' : seconds > 0.5 ? 'in-progress ' : '') +
         (ep.vid === current ? 'current' : '') +
         '" data-play-vid="' + escapeHtml(ep.vid) + '" aria-label="' +
-        escapeHtml(label) + '" style="--watch-progress:' + percent + '%"><span>' +
+        escapeHtml(label) + '" data-watch-percent="' + percent +
+        '"' + (ep.vid === current ? ' aria-current="true"' : '') +
+        ' style="--watch-progress:' + percent + '%"><span>' +
         (series.kind === 'direct' ? '媒體直連' : ep.index) +
         '</span>' +
         (watched ? '<span class="watched-check" aria-hidden="true">✓</span>' : '') +
@@ -299,6 +302,7 @@ function showSeries(result, fromHistory = false) {
   $('series-title').textContent = series.title || '未命名短劇';
   document.title = (series.title || '短劇') + ' · Hongguo DL';
   $('series').hidden = false;
+  document.body.dataset.hasSeries = 'true';
   if (series.kind === 'series') rememberSeries(localStorage, series);
   renderRecentSeries();
   renderEpisodes();
