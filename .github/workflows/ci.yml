@@ -84,6 +84,7 @@ jobs:
           done
           node tests/rendition-menu.browser.mjs
           node tests/quality-contract.browser.mjs
+          node tests/codec-diagnostics.browser.mjs
           node tests/design-layout.browser.mjs
           node tests/watch-progress.browser.mjs
           node tests/player-1000.browser.mjs
