@@ -1,4 +1,4 @@
-name: "Registration policy E - paired A/B 180s"
+name: "Registration policy E - 90s control and probe"
 on:
   push:
     branches:
@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: bun ci
       - name: Syntax-check experiment before any real upstream requests
-        run: node --check scripts/live-registration-ab180.mjs
+        run: node --check scripts/live-registration-ab90.mjs
       - name: Run adaptive E against real upstream (no media/source requests)
         shell: bash
         run: |
@@ -36,7 +36,7 @@ jobs:
             sleep 1
           done
           if [ "$ready" -ne 1 ]; then cat /tmp/registration-adaptive-e/workerd.log; exit 1; fi
-          node scripts/live-registration-ab180.mjs
+          node scripts/live-registration-ab90.mjs
       - name: Upload redacted data and exact IDs (1-day retention)
         if: always()
         uses: actions/upload-artifact@v4
