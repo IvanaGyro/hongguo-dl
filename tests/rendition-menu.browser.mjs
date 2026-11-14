@@ -61,7 +61,9 @@ try {
   assert.deepEqual(await page.locator('#player-quality option').allTextContents(),
     ['自動最佳','1080p','720p（H.264）','720p（ByteVC2）']);
   await page.locator('#player-settings-toggle').click();
-  await page.locator('#player-quality').selectOption('720p|h264');
+  assert.equal(await page.locator('#player-settings [data-settings-view="root"] .player-settings-row').count(), 2);
+  await page.locator('#player-settings [data-settings-target="quality"]').click();
+  await page.locator('#player-quality-options [data-choice-value="720p|h264"]').click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1') || '{}').codec === 'auto');
   assert.deepEqual(await page.evaluate(() => {
     const {quality,codec} = JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1'));
