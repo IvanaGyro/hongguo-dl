@@ -59,17 +59,17 @@ try {
   assert(mediaCalls > 0, 'Retry must actually enter CENC bounded metadata probe');
   assert.equal(await page.locator('#player-codec').count(),0);
   assert.deepEqual(await page.locator('#player-quality option').allTextContents(),
-    ['自動最佳','1080p','720p（H.264）','720p（ByteVC2）']);
+    ['自動最佳','1080p','720p']);
   await page.locator('#player-settings-toggle').click();
   assert.equal(await page.locator('#player-settings [data-settings-view="root"] .player-settings-row').count(), 2);
   await page.locator('#player-settings [data-settings-target="quality"]').click();
   await page.locator('#player-quality-options [data-choice-value="720p|h264"]').click();
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1') || '{}').codec === 'auto');
+  assert.equal(await page.locator('#player-quality').inputValue(), '720p|h264');
   assert.deepEqual(await page.evaluate(() => {
-    const {quality,codec} = JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1'));
-    return {quality,codec};
-  }), {quality:'720p',codec:'auto'});
+    const prefs = JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1'));
+    return {hasQuality: Object.hasOwn(prefs, 'quality'), hasCodec: Object.hasOwn(prefs, 'codec')};
+  }), {hasQuality:false,hasCodec:false});
   assert.equal(sourceCalls.filter(vid=>vid==='1005').length,1);
   assert.deepEqual(errors,[]);
-  console.log('PASS unified menus, single-episode download sample, preference pair, CENC initialization after initial source failure');
+  console.log('PASS unified menus, single-episode download sample, session-only quality and CENC initialization after initial source failure');
 } finally { await browser.close(); }

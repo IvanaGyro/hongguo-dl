@@ -143,8 +143,10 @@ try {
   await page.waitForFunction(() => document.querySelector('#player-video')?.playbackRate === 1.25);
   await page.waitForFunction(() =>
     document.querySelector('#player-source-info')?.textContent?.includes('1280×720'));
-  assert.equal(await page.locator('#player-quality option[value="540p|bytevc2"]').isDisabled(), false,
-    'Player should expose available 540p rendition');
+  assert.equal(await page.locator('#player-quality option[value="540p|bytevc2"]').count(), 0,
+    'Player must hide ByteVC2 when its playback bridge is unavailable');
+  assert.equal(await page.locator('#quality option[value="540p|bytevc2"]').count(), 1,
+    'Download choices must retain codecs independently of browser playback support');
   assert(calls.some(c => c.includes('sid=') && c.includes('vid=') &&
     !c.includes('quality=') && !c.includes('codec=')),
     'Player must request unfiltered sources without quality/codec query parameters');
@@ -378,19 +380,17 @@ try {
     'Handoff to prefetched episode must reuse the in-flight source, without duplicate lookup');
 
   // The actual episode-30 source has encrypted HEVC at 1080p, and encrypted
-  // ByteVC2/VVC at 720p. It must fail clearly and BEFORE fetching 720p bytes.
+  // ByteVC2/VVC at 720p. Without the bridge it must not be offered for playback.
   await page.goto(base + '?id=770', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
   await page.locator('#mode-play').click();
+  await page.waitForFunction(() => document.querySelector('#playback-log')?.value.includes('source.bvc2.check'));
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-settings [data-settings-target="quality"]').click();
-  await page.locator('#player-quality-options [data-choice-value="720p|bytevc2"]').click();
+  assert.equal(await page.locator('#player-quality-options [data-choice-value="720p|bytevc2"]').count(), 0);
   assert.equal(await page.locator('#player-codec').count(), 0);
-  assert.equal(await page.locator('#player-quality').inputValue(), '720p|bytevc2',
-    'Unsupported known tier must remain selected, not silently become 1080p');
-  await page.waitForFunction(() =>
-    document.querySelector('#player-status')?.textContent.includes('無法播放'));
-  assert.match(await page.locator('#player-status').textContent(), /720p.*ByteVC2/);
+  assert.equal(await page.locator('#player-quality').inputValue(), 'auto',
+    'A new series must reset its quality instead of restoring an unsupported tier');
   console.log('Firefox multi-id, reload resume, in-player settings, staged queue, 60-episode ZIP PASSED:',
     statSync(fullPath).size, 'bytes');
   if (errors.length) console.log('Browser console diagnostics:', errors);

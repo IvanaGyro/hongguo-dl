@@ -58,6 +58,7 @@ export function chooseRendition(variants, preferences = {}) {
   return renditionForAttempt(variants, preferences);
 }
 
+
 // A quality tier does not imply a codec. For example Nova episode 30 has
 // encrypted HEVC at 1080p, but encrypted ByteVC2/VVC at 720p and below.
 export function codecsAtQuality(variants, quality = 'auto') {
@@ -92,6 +93,13 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
   // path; a support declaration does not prove that a frame can be decoded.
   return HEVC_MSE_PROBES.some(mime => Boolean(canPlayType?.(mime)) ||
     Boolean(variant?.contentKey && isMseTypeSupported?.(mime)));
+}
+
+// Player menus and Auto use the same supported pool. Download menus must keep
+// using the unfiltered metadata because output conversion is independent.
+export function playableVariants(variants, canPlayType, canTranscodeBvc2 = false, isMseTypeSupported = null) {
+  return (variants || []).filter(variant => browserCanPlayVariant(variant,
+    canPlayType, canTranscodeBvc2, isMseTypeSupported));
 }
 
 // Preserve an explicitly selected, advertised quality tier, even when its

@@ -31,7 +31,8 @@ export function createEpisodeSourceStore(fetchSource, onUpdate = () => {}, limit
         .then(data => {
           active.resolved = true;
           active.channel = data.sourceChannel || '';
-          active.variants = [...(data.variants || [])];
+          active.winnerVariants = [...(data.variants || [])];
+          active.variants = [...active.winnerVariants];
           const merge = extras => {
             if (entries.get(key) !== active) return [];
             const seen = new Set(active.variants.map(v => v.url));
@@ -56,7 +57,8 @@ export function createEpisodeSourceStore(fetchSource, onUpdate = () => {}, limit
     }
     entry = await abortable(entry.first, signal);
     if (complete) await abortable(entry.later, signal);
-    return { variants: [...entry.variants], sourceChannel: entry.channel, fromCache, shared,
+    return { variants: [...entry.variants], winnerVariants: [...entry.winnerVariants],
+      sourceChannel: entry.channel, fromCache, shared,
       lateVariants: complete ? null : entry.later };
   };
   return { get, abortAll() { for (const controller of controllers) controller.abort(); controllers.clear(); entries.clear(); }, invalidate(sid, vid) { entries.delete(keyFor(sid, vid)); },

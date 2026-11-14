@@ -25,7 +25,10 @@ test('merge asynchronously arriving App renditions and publish update', async ()
   assert.equal(first.variants.length,1);
   finish([{url:'https://cdn.example/hevc',quality:'1080p'}]);
   await first.lateVariants;
-  assert.equal((await store.get('series','ep',{complete:true})).variants.length,2);
+  const complete = await store.get('series','ep',{complete:true});
+  assert.equal(complete.variants.length,2);
+  assert.deepEqual(complete.winnerVariants, first.variants,
+    'A later higher tier must not replace the first successful list used by Auto');
   assert.deepEqual(updates,[1,2]);
 });
 test('sample first restricted episode and never invent unobserved tiers', () => {
