@@ -19,6 +19,8 @@ try {
   for (const first of ['web', 'app']) {
     const context = await browser.newContext();
     const page = await context.newPage();
+    // The app opens in watch mode; this suite was written against a download-mode start.
+    await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
     const errors = [], held = [];
     let releaseLate = false;
     page.on('pageerror', error => errors.push(error.message));
@@ -129,6 +131,8 @@ try {
   {
     const context = await browser.newContext();
     const page = await context.newPage();
+    // The app opens in watch mode; this suite was written against a download-mode start.
+    await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await context.addInitScript(() => {

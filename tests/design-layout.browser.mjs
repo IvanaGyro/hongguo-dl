@@ -7,6 +7,8 @@ import { chromium } from 'playwright';
 const browser = await chromium.launch({ headless: true,
   ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
 const page = await browser.newPage({ deviceScaleFactor: 1, reducedMotion: 'reduce' });
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 const shots = 'test-results/design-layout';

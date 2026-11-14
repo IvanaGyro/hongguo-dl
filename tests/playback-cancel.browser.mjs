@@ -6,6 +6,8 @@ const bytes = readFileSync(process.argv[2]);
 const name = process.env.CENC_BROWSER === 'firefox' ? 'firefox' : 'chromium';
 const browser = await (name === 'firefox' ? firefox : chromium).launch({ headless: true });
 const page = await browser.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 await page.addInitScript(() => localStorage.setItem('hongguo-dl-player-preferences-v1',
   JSON.stringify({ quality: 'auto', codec: 'auto', autoNext: false })));
 await page.route(url => url.pathname.includes('/bvc2/'), async route => {

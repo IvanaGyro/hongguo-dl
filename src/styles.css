@@ -147,122 +147,53 @@ button.quiet:hover:not(:disabled) { background: var(--surface-strong); border-co
 .theme-toggle svg { width: 20px; height: 20px; }
 :root[data-theme="light"] .icon-sun, :root:not([data-theme="light"]) .icon-moon { display: none; }
 
-/* ---------- Home: one orange block and four tiles broken off it ---------- */
-.hero-inner {
-  padding-block: 12px 0;
-}
-body:not([data-has-series="true"]) .hero-block { --danger: #8f1d15; --danger-tint: #ffe3dc; }
-.hero-block {
-  position: relative; overflow: hidden;
-  display: flex; flex-direction: column; justify-content: flex-end;
-  min-height: min(60vh, 500px); padding: clamp(24px, 4vw, 56px);
-  border-radius: var(--r-lg); background: var(--brand-orange); color: var(--ink);
-}
-.hero-block > * { position: relative; z-index: 1; }
-/* A bunch of fruit in the other three brand colours, cropped by the block's edge. */
-.hero-block::before {
-  content: ""; position: absolute; right: -4%; top: -14%; width: min(44%, 520px); aspect-ratio: 1;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 560 560'%3E%3Ccircle cx='352' cy='196' r='196' fill='%23f0b16b'/%3E%3Ccircle cx='168' cy='330' r='128' fill='%239bdfc0'/%3E%3Ccircle cx='392' cy='436' r='104' fill='%23c4e384'/%3E%3C/svg%3E") center / contain no-repeat;
-}
-.lookup { max-width: 860px; }
+/* ---------- Search: sits in the gap between the logo and the mode buttons ---------- */
+.hero-inner { padding-block: 0 8px; }
 .hero h1 {
-  font-size: clamp(1.75rem, 5.2vw, 4.25rem);
-  font-weight: 850; line-height: 1.16; letter-spacing: -.02em;
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
 }
-.hero h1 span { display: block; }
-.hero-lead { margin-top: 20px; max-width: 34em; font-size: 1.125rem; font-weight: 500; line-height: 1.7; }
-.lookup { margin-top: 36px; }
-.lookup label { display: block; margin-bottom: 8px; font-size: .875rem; font-weight: 700; }
+.lookup label {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
 .input-row { display: flex; gap: 10px; }
 .input-row input {
   flex: 1; min-width: 0; min-height: 48px; padding: 0 16px;
-  border: 1.5px solid var(--line-strong); border-radius: var(--r-sm);
+  border: 1.5px solid var(--line-strong); border-radius: var(--r-md);
   background: var(--surface); color: var(--fg);
 }
 .input-row input::placeholder { color: var(--fg-soft); opacity: 1; }
 .input-row input:hover { border-color: var(--fg); }
-.lookup .input-row input {
-  min-height: 64px; padding: 0 22px;
-  border: 2px solid var(--ink); border-radius: var(--r-md);
-  background: var(--paper); color: var(--ink);
-  font-size: 1.0625rem; font-weight: 500;
-}
-.lookup .input-row input::placeholder { color: #6a5a4e; }
-.lookup .input-row input:focus-visible { outline-color: var(--ink); }
-.lookup .input-row button {
-  min-height: 64px; min-width: 152px; padding: 0 28px; border-radius: var(--r-md);
-  background: var(--ink); border-color: var(--ink); color: var(--paper); font-size: 1.0625rem;
-}
-.lookup .input-row button:hover:not(:disabled) { background: #3d281b; border-color: #3d281b; }
-.lookup .input-row button:focus-visible { outline-color: var(--ink); }
-.linked-series:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
-.linked-series .subtle { color: inherit; font-weight: 600; }
+.lookup .input-row button { min-height: 48px; padding: 0 20px; }
+.linked-series:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.linked-series .subtle { font-weight: 600; }
 .series-chip {
   min-height: 44px; padding: 0 16px;
   font-size: .875rem; font-weight: 650; max-width: 100%;
   white-space: normal; overflow-wrap: anywhere; text-align: left;
 }
-.hero-block button.series-chip { background: var(--paper); border-color: var(--ink); color: var(--ink); }
-.hero-block button.series-chip:hover:not(:disabled) { background: #ffe9d2; }
 span.series-chip.error {
   display: inline-flex; align-items: center; border-radius: var(--r-md);
   background: var(--danger-tint); color: var(--danger); border: 1.5px solid var(--danger);
 }
 .alert {
-  margin-top: 16px; padding: 14px 18px;
+  margin-top: 12px; padding: 14px 18px;
   border: 1.5px solid var(--danger); border-radius: var(--r-md);
   background: var(--danger-tint); color: var(--danger); font-weight: 600; overflow-wrap: anywhere;
 }
-
-/* Once a series is open the hero folds down to a search field between the logo and the mode switch. */
-body[data-has-series="true"] .hero-block::before,
-body[data-has-series="true"] .hero-lead,
-body[data-has-series="true"] .lookup label { display: none; }
-body[data-has-series="true"] .hero-inner { padding-block: 0 8px; }
-body[data-has-series="true"] .hero-block {
-  display: block; min-height: 0; padding: 0; overflow: visible; background: none; color: var(--fg);
-}
-body[data-has-series="true"] .hero h1 {
-  position: absolute; width: 1px; height: 1px; overflow: hidden;
-  clip-path: inset(50%); white-space: nowrap;
-}
-body[data-has-series="true"] .lookup { margin-top: 0; max-width: none; }
-body[data-has-series="true"] .lookup .input-row input {
-  min-height: 48px; padding: 0 16px; border: 1.5px solid var(--line-strong);
-  background: var(--surface); color: var(--fg); font-size: 1rem;
-}
-body[data-has-series="true"] .lookup .input-row input::placeholder { color: var(--fg-soft); }
-body[data-has-series="true"] .lookup .input-row input:focus-visible,
-body[data-has-series="true"] .lookup .input-row button:focus-visible { outline-color: var(--fg); }
-body[data-has-series="true"] .lookup .input-row button,
-body[data-has-series="true"] .lookup .input-row button:hover:not(:disabled) {
-  min-height: 48px; min-width: 0; padding: 0 20px; font-size: .9375rem;
-  background: var(--brand-orange); border-color: var(--brand-orange); color: var(--ink);
-}
-body[data-has-series="true"] .lookup .input-row button:hover:not(:disabled) { background: var(--orange-bright); border-color: var(--orange-bright); }
-body[data-has-series="true"] .hero-block button.series-chip { background: transparent; border-color: var(--line-strong); color: var(--fg); }
-body[data-has-series="true"] .hero-block button.series-chip:hover:not(:disabled) { background: var(--surface); }
 @media (min-width: 900px) {
-  body[data-has-series="true"] .hero { margin-top: -62px; }
-  body[data-has-series="true"] .lookup { margin-inline: 200px 304px; }
-  body[data-has-series="true"] .linked-series:not([hidden]),
-  body[data-has-series="true"] .alert { margin-inline: 200px 304px; }
+  .hero { margin-top: -62px; }
+  .lookup, .linked-series:not([hidden]), .hero .alert { margin-inline: 200px 304px; }
 }
-
-@media (prefers-reduced-motion: no-preference) {
-  .hero-block { animation: hero-rise .7s var(--ease) both; }
-  .hero-block::before { animation: tile-drop .9s .15s var(--ease) both; }
-  body[data-has-series="true"] .hero-block { animation: none; }
-}
-@keyframes hero-rise { from { opacity: 0; transform: translateY(18px); } }
-@keyframes tile-drop { from { opacity: 0; transform: translateY(-28px); } }
 
 /* ---------- Page body ---------- */
 .layout { padding-bottom: 96px; }
 .layout > section.panel { display: flex; flex-direction: column; }
 #series { order: 1; }
-#recent-series { order: 0; }
-body[data-has-series="true"] #recent-series { order: 2; }
+#recent-series { order: 2; }
+.start-hint { order: 0; margin-top: 56px; text-wrap: balance; max-width: 22em; font-size: clamp(1.5rem, 3.4vw, 2.25rem); font-weight: 800; line-height: 1.35; }
+body[data-has-series="true"] .start-hint { display: none; }
 .subtle, .help, .job-meta { color: var(--fg-soft); }
 .help { margin-top: 12px; max-width: 62ch; font-size: .875rem; line-height: 1.7; }
 .actions, .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -646,10 +577,6 @@ media-status-announcer {
 @media (max-width: 1100px) {
   body[data-mode="play"] #series { grid-template-columns: minmax(0, 1fr) minmax(210px, 250px); gap: 0 20px; }
 }
-@media (max-width: 899px) {
-  .hero-block { min-height: 0; padding-top: clamp(96px, 26vw, 180px); }
-  .hero-block::before { width: 200px; right: -56px; top: -76px; }
-}
 @media (max-width: 820px) {
   .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings label:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
@@ -674,14 +601,6 @@ media-status-announcer {
 }
 @media (max-width: 640px) {
   .topbar-inner { min-height: 64px; }
-  .hero-lead { font-size: 1rem; }
-  .lookup { margin-top: 28px; }
-  .lookup .input-row { flex-direction: column; }
-  .lookup .input-row input, .lookup .input-row button { min-height: 56px; width: 100%; }
-  .lookup .input-row input { padding: 0 22px; font-size: 1rem; }
-  body[data-has-series="true"] .lookup .input-row { flex-direction: row; }
-  body[data-has-series="true"] .lookup .input-row input { min-height: 48px; }
-  body[data-has-series="true"] .lookup .input-row button { width: auto; min-height: 48px; padding: 0 16px; }
   .section-title, body[data-mode="play"] #series > .section-title { margin: 28px 0 16px; }
   .section-title .actions { width: 100%; }
   .episode-grid { grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); }

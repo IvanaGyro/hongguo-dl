@@ -99,7 +99,7 @@ let queuePage = 0;
 const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
-let currentMode = 'download';
+let currentMode = 'play';
 let pageSuspended = false;
 let player = null;
 let bulkController = null;
@@ -1125,7 +1125,9 @@ if (!window.showDirectoryPicker) {
   $('folder-status').hidden = true;
 }
 renderQueue();
-setMode('download');
+// The app opens in watch mode. Browser suites written against a download-mode
+// start set this flag before load.
+setMode(globalThis.__HONGGUO_START_MODE === 'download' ? 'download' : 'play');
 const initialIds = idsFromUrl(new URL(location.href));
 if (initialIds.length) {
   $('input-url').value = initialIds.join(', ');

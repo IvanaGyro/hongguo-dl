@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
 const page = await browser.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors = [], sourceCalls = [];
 let firstPlaybackSource = true, mediaCalls = 0;
 const variants = [

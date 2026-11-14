@@ -13,6 +13,8 @@ const browser = await firefox.launch({
 });
 const context = await browser.newContext({ acceptDownloads: true, serviceWorkers: 'allow' });
 const page = await context.newPage();
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const errors = [];
 const calls = [];
 let downloadEvents = 0;

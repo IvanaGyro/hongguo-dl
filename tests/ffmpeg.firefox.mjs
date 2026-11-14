@@ -7,6 +7,8 @@ import { firefox } from 'playwright';
 const sample = readFileSync(process.argv[2]);
 const browser = await firefox.launch({ headless: true });
 const page = await browser.newPage({ acceptDownloads: true });
+// The app opens in watch mode; this suite was written against a download-mode start.
+await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
 const diagnostics = [];
 const assetStatus = new Map();
 page.on('pageerror', e => diagnostics.push('pageerror: ' + e.message));
