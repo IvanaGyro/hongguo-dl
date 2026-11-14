@@ -11,6 +11,8 @@ export function abortable(task, signal) {
   });
   return Promise.race([task, interrupted]).finally(() => signal?.removeEventListener('abort', onAbort));
 }
+// One response-body pump per source. Decoder requests wait on the byte cache;
+// enabling read-ahead only allows that same pump to continue without a waiter.
 export function createCachedMediaReader({ fileSize, budget,
   initialRanges = [], durationSeconds = 0, onStage = () => {}, ...options }) {
   const environment = typeof navigator === 'undefined' ? {} : navigator;
@@ -19,23 +21,32 @@ export function createCachedMediaReader({ fileSize, budget,
   budget ??= (saveData || lowMemory ? 16 : 32) * 1024 * 1024;
   const cache = createMediaByteCache({ fileSize, budget });
   for (const { offset, data } of initialRanges) cache.write(offset, data, true);
-  let closed = false, enabled = false, focus = 0, pumping = false, demand = 0;
-  let queue = Promise.resolve(), downloadedBytes = 0, requests = 0, lastLog = 0, reportedComplete = false;
+  let closed = false, enabled = false, focus = 0, pumping = false, packet = null;
+  let speculationFailed = false, failure = null, downloadedBytes = 0, requests = 0, lastLog = 0, reportedComplete = false;
+  const catchupMs = Math.min(1000, options.timeoutMs || 10000);
+  const reads = new Set();
   const notify = force => {
     const complete = cache.firstMissing(0, fileSize) === null;
     if (force || complete !== reportedComplete || performance.now() - lastLog > 2000) {
-      reportedComplete = complete;
-      lastLog = performance.now();
+      reportedComplete = complete; lastLog = performance.now();
       onStage('media.cache', { ...cache.stats, downloadedBytes, requests });
     }
   };
-  const network = createHttpStreamReader({ ...options, fileSize, externalCache: cache,
+  const settle = error => {
+    for (const read of reads) {
+      const bytes = error ? null : cache.read(read.start, read.size);
+      if (!error && !bytes) continue;
+      reads.delete(read); read.cleanup();
+      if (error) read.reject(error); else read.resolve(bytes);
+    }
+  };
+  const network = createHttpStreamReader({ ...options, fileSize, durationSeconds, externalCache: cache,
+    onSlow: fields => onStage('media.slow', fields),
     maxPacketBytes: fileSize <= budget ? budget : Math.max(4 * 1024 * 1024, budget / 2),
     onChunk: (offset, data) => {
       cache.write(offset, data);
-      // A persistent HTTP packet can overlap metadata already supplied by
-      // the caller (notably normalized bv2C in a moov at EOF). Keep those
-      // authoritative bytes instead of restoring the original configuration.
+      // Retain authoritative metadata overlays even when the persistent body
+      // overlaps a normalized ByteVC2 configuration in a moov at EOF.
       for (const range of initialRanges) {
         const start = Math.max(offset, range.offset);
         const end = Math.min(offset + data.length, range.offset + range.data.length);
@@ -43,51 +54,71 @@ export function createCachedMediaReader({ fileSize, budget,
           range.data.subarray(start - range.offset, end - range.offset), true);
       }
       downloadedBytes += data.length;
+      settle();
     },
     onResponse: fields => { requests = fields.requests; options.onResponse?.(fields); }
   });
-  const serial = action => {
-    const result = queue.then(action);
-    queue = result.catch(() => {});
-    return result;
+  const aheadOffset = () => {
+    if (!enabled || speculationFailed || failure) return null;
+    const ahead = durationSeconds > 0 ? fileSize / durationSeconds * 120 : 8 * 1024 * 1024;
+    const end = fileSize <= budget ? fileSize : Math.min(fileSize,
+      focus + Math.min(budget / 2, Math.max(4 * 1024 * 1024, ahead)));
+    return cache.firstMissing(fileSize <= budget ? 0 : focus, end);
   };
-  async function acquire(start, size) {
-    let bytes = cache.read(start, size);
-    while (!bytes) {
-      const missing = cache.firstMissing(start, start + size);
-      await network.read(missing, Math.min(65536, fileSize - missing));
-      bytes = cache.read(start, size);
-    }
-    notify(false); return bytes;
-  }
   const pump = async () => {
-    if (pumping || !enabled || closed) return;
+    if (pumping || closed) return;
     pumping = true;
-    const before = downloadedBytes;
     try {
-      // Short episodes can finish downloading without remuxing them all.
-      // Long files use an independent, bounded byte lookahead, not MSE size.
-      const ahead = durationSeconds > 0 ? fileSize / durationSeconds * 120 : 8 * 1024 * 1024;
-      while (enabled && !closed) {
-        if (demand) break;
-        const end = fileSize <= budget ? fileSize : Math.min(fileSize,
-          focus + Math.min(budget / 2, Math.max(4 * 1024 * 1024, ahead)));
-        const missing = cache.firstMissing(fileSize <= budget ? 0 : focus, end);
-        if (missing === null) break;
-        await serial(() => acquire(missing, Math.min(65536, end - missing)));
-        // Yield to queued seeks/ACKs instead of monopolizing a cached stream.
-        await new Promise(resolve => setTimeout(resolve, 0));
+      while (!closed) {
+        settle();
+        const read = reads.values().next().value;
+        const target = read ? cache.firstMissing(read.start, read.start + read.size) : aheadOffset();
+        let offset = target;
+        if (offset === null) break;
+        const { position, bytesPerSecond } = network.stats;
+        const remainingMs = read ? catchupMs - (performance.now() - read.requestedAt) : 0;
+        // Use positions and measured speed, not a caller's operation label.
+        // Keep a fast existing body when it can reach the missing bytes soon.
+        if (read && position !== null && target > position && bytesPerSecond > 0 &&
+            (target - position) * 1000 / bytesPerSecond < remainingMs) offset = position;
+        const current = { controller: new AbortController(), offset };
+        const deadline = offset !== target ? setTimeout(() => current.controller.abort(), remainingMs) : null;
+        packet = current;
+        try {
+          // Consume the next available packet, not an arbitrary 64 KiB unit.
+          // No second reader queues behind speculative retries on this body.
+          await network.read(offset, 1, { signal: current.controller.signal, speculative: !read });
+          if (read) speculationFailed = false;
+          notify(false);
+        } catch (error) {
+          if (closed) break;
+          if (current.controller.signal.aborted) continue; // Position change/cancel.
+          if (error?.code === 'CENC_SOURCE_SLOW') failure = error;
+          if (!read) {
+            speculationFailed = true;
+            onStage('media.prefetch.stopped', { code:
+              /^CENC_[A-Z_]+$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP' });
+          }
+          // A waiter arriving during speculation observes the failure promptly;
+          // source recovery belongs to its normal processing-layer error path.
+          settle(error);
+          if (failure) break;
+        } finally { clearTimeout(deadline); if (packet === current) packet = null; }
+        if (!read) await new Promise(resolve => setTimeout(resolve, 0));
       }
-      notify(downloadedBytes !== before);
-    } catch (error) {
-      // Speculation must not fail playback. A demanded read retains the
-      // existing status-aware recovery/error path and can retry later.
-      if (!closed) onStage('media.prefetch.stopped', { code:
-        /^CENC_[A-Z_]+$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP' });
-    } finally { pumping = false; }
+      notify(false);
+    } finally {
+      pumping = false;
+      if (!closed && reads.size) void pump();
+    }
   };
-  const close = () => { closed = true; enabled = false; network.close(); };
+  const close = () => {
+    if (closed) return;
+    closed = true; enabled = false; packet?.controller.abort(); network.close();
+    settle(canceled()); options.signal?.removeEventListener('abort', close);
+  };
   options.signal?.addEventListener('abort', close, { once: true });
+  if (options.signal?.aborted) close();
   return {
     async read(start, wanted, readSignal) {
       if (closed || readSignal?.aborted) throw canceled();
@@ -97,13 +128,36 @@ export function createCachedMediaReader({ fileSize, budget,
       focus = start;
       const hit = cache.read(start, size);
       if (hit) { if (enabled) void pump(); return hit; }
-      demand++;
-      try { return await abortable(serial(() => acquire(start, size)), readSignal); }
-      finally { demand--; if (enabled) void pump(); }
+      if (failure) throw failure;
+      return new Promise((resolve, reject) => {
+        const entry = { start, size, resolve, reject, requestedAt: performance.now(), timer: null,
+          cleanup: () => { clearTimeout(entry.timer); readSignal?.removeEventListener('abort', abort); } };
+        const abort = () => {
+          reads.delete(entry); entry.cleanup(); reject(canceled());
+          if (!reads.size && !enabled) packet?.controller.abort();
+        };
+        reads.add(entry); readSignal?.addEventListener('abort', abort, { once: true });
+        if (packet && reads.values().next().value === entry) {
+          const missing = cache.firstMissing(start, start + size);
+          const distance = missing - packet.offset, rate = network.stats.bytesPerSecond;
+          const canCatchUp = distance >= 0 && (distance < 65536 || rate > 0 && distance * 1000 / rate < catchupMs);
+          if (!canCatchUp) packet.controller.abort();
+          else if (distance > 0) {
+            const current = packet;
+            entry.timer = setTimeout(() => {
+              if (packet === current && reads.has(entry)) current.controller.abort();
+            }, catchupMs);
+          }
+        }
+        void pump();
+      });
     },
     prefetch(active) {
       const next = active && !closed && !saveData;
-      if (enabled !== next) onStage('media.prefetch', { active: next });
+      if (enabled !== next) {
+        onStage('media.prefetch', { active: next });
+        if (next) speculationFailed = false;
+      }
       enabled = next; if (enabled) void pump();
     },
     get networkStats() { return { requests, downloadedBytes }; },

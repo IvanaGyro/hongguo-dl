@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // HTTP access/network failures concern a candidate, not necessarily all
-// official HEVC renditions. Rotate only across distinct alternatives already
+// official renditions. Rotate only across distinct alternatives already
 // supplied by /api/source at the same codec and quality. There is no retry
 // on 429 or decoder/MSE failures; signed URLs/keys never enter logs.
 import { candidateRenditions, codecId, qualityId } from './source-options.js';
+
+export function isRecoverableMediaSourceError(code) {
+  return ['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP',
+    'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW'].includes(code);
+}
 
 export function canTryNextCencSource({
   code, variants, variantsVid, episodeVid, tried, quality = 'auto',
   codec = 'auto', triedUrls = null, tier = null
 }) {
-  if (!['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP',
-    'CENC_RANGE_TIMEOUT'].includes(code) ||
+  if (!isRecoverableMediaSourceError(code) ||
       !Array.isArray(variants) || variantsVid !== episodeVid ||
       !Number.isSafeInteger(tried) || tried < 1) return false;
   if (triedUrls && tier) return sameTierPlaybackCandidates(variants, { quality, codec }, tier)
@@ -47,13 +51,13 @@ export function sameTierHevcCandidates(variants, { quality = 'auto', codec = 'au
   });
 }
 
-// Candidate rotation/refresh applies equally to ByteVC2 transport failures.
+// A locked tier can rotate encrypted H.264/HEVC or ByteVC2 transport failures.
 export function sameTierPlaybackCandidates(variants, preferences = {}, tier = null) {
-  if (!tier || !['hevc', 'bytevc2'].includes(tier.codec) || !tier.quality) return [];
+  if (!tier || !['h264', 'hevc', 'bytevc2'].includes(tier.codec) || !tier.quality) return [];
   const seen = new Set();
   return candidateRenditions(variants, preferences).filter(v => {
     if (codecId(v.codec) !== tier.codec || qualityId(v) !== tier.quality ||
-        (tier.codec === 'hevc' && !v.contentKey) || !v.url || seen.has(v.url)) return false;
+        (tier.codec !== 'bytevc2' && !v.contentKey) || !v.url || seen.has(v.url)) return false;
     seen.add(v.url); return true;
   });
 }

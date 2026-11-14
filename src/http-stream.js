@@ -6,11 +6,24 @@ const fail = (code, status = 0) => Object.assign(new Error(code), { code, status
 const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
   recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onChunk = () => {}, externalCache = null,
-  maxPacketBytes = 4 * 1024 * 1024 }) {
+  maxPacketBytes = 4 * 1024 * 1024, durationSeconds = 0, onSlow = () => {} }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
   const bytes = externalCache ? null : new Uint8Array(8 * 1024 * 1024);
   let networkOffset = 0;
   let requests = 0, receivedBytes = 0, validator = null;
+  const requiredRate = durationSeconds > 0 ? fileSize / durationSeconds : 0;
+  let sampleBytes = 0, activeMs = 0, bytesPerSecond = 0;
+  const measure = (bytesRead, elapsed) => {
+    sampleBytes += bytesRead; activeMs += elapsed;
+    bytesPerSecond = sampleBytes * 1000 / Math.max(1, activeMs);
+    // Measure only awaited body I/O, never time paused at MSE/decoder ACKs.
+    if (activeMs < Math.min(8000, timeoutMs)) return;
+    const slow = requiredRate > 0 && bytesPerSecond < requiredRate * 0.75 &&
+      (!externalCache || externalCache.firstMissing(0, fileSize) !== null);
+    const fields = { bytesPerSecond, requiredBytesPerSecond: requiredRate, activeMs };
+    sampleBytes = 0; activeMs = 0;
+    if (slow) { onSlow(fields); throw fail('CENC_SOURCE_SLOW'); }
+  };
   const drop = () => {
     const old = session;
     session = null;
@@ -21,28 +34,28 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
   };
   const close = () => { closed = true; drop(); signal?.removeEventListener('abort', close); };
   signal?.addEventListener('abort', close, { once: true });
-  const check = () => {
-    if (closed || signal?.aborted) throw fail('CANCELED');
+  const check = readSignal => {
+    if (closed || signal?.aborted || readSignal?.aborted) throw fail('CANCELED');
   };
-  async function io(action) {
-    check();
+  async function io(action, readSignal) {
+    check(readSignal);
     let timer, onAbort;
     const interrupted = new Promise((_, reject) => {
       timer = setTimeout(() => { drop(); reject(fail('CENC_RANGE_TIMEOUT')); }, timeoutMs);
-      onAbort = () => reject(fail('CANCELED'));
-      signal?.addEventListener('abort', onAbort, { once: true });
+      onAbort = () => { reject(fail('CANCELED')); drop(); };
+      readSignal?.addEventListener('abort', onAbort, { once: true });
     });
-    try { return await Promise.race([Promise.resolve().then(action), interrupted]); }
+    try { return await Promise.race([Promise.resolve().then(() => { check(readSignal); return action(); }), interrupted]); }
     catch (error) {
-      check();
+      check(readSignal);
       throw /^CENC_[A-Z_]+$/.test(error?.code || '') || error?.code === 'CANCELED'
         ? error : fail('CENC_RANGE_HTTP');
     } finally {
       clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
+      readSignal?.removeEventListener('abort', onAbort);
     }
   }
-  async function open(offset) {
+  async function open(offset, readSignal) {
     drop();
     const current = { controller: new AbortController(), reader: null, end: fileSize };
     session = current;
@@ -57,7 +70,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
         throw fail('CANCELED');
       }
       return result;
-    });
+    }, readSignal);
     // An adapter may finish after a timeout/cancellation. Dispose that response.
     if (session !== current || closed) {
       void response.body?.cancel().catch(() => {});
@@ -87,12 +100,14 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     current.end = offset + expected;
     current.reader = response.body.getReader();
   }
-  async function fill(end) {
+  async function fill(end, readSignal) {
     while (base + length < end) {
-      check();
+      check(readSignal);
       const offset = base + length;
-      if (!session || offset === session.end) await open(offset);
-      const { done, value } = await io(() => session.reader.read());
+      if (!session || offset === session.end) await open(offset, readSignal);
+      const started = performance.now();
+      const { done, value } = await io(() => session.reader.read(), readSignal);
+      check(readSignal);
       if (done) throw fail('CENC_RANGE_HTTP'); // Premature EOF can resume at offset.
       if (!(value instanceof Uint8Array) || value.length > 4 * 1024 * 1024 ||
           offset + value.length > session.end) throw fail('CENC_RANGE_INVALID');
@@ -104,14 +119,17 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       onChunk(offset, value);
       bytes.set(value, head + length); length += value.length;
       receivedBytes += value.length;
+      measure(value.length, performance.now() - started);
     }
   }
-  async function readExternal(start, end) {
+  async function readExternal(start, end, readSignal) {
     let result = externalCache.read(start, end - start);
     while (!result) {
       const missing = externalCache.firstMissing(start, end);
-      if (!session || networkOffset !== missing || networkOffset === session.end) await open(missing);
-      const { done, value } = await io(() => session.reader.read());
+      if (!session || networkOffset !== missing || networkOffset === session.end) await open(missing, readSignal);
+      const started = performance.now();
+      const { done, value } = await io(() => session.reader.read(), readSignal);
+      check(readSignal);
       if (done) throw fail('CENC_RANGE_HTTP');
       if (!(value instanceof Uint8Array) || !value.length || value.length > maxPacketBytes ||
           networkOffset + value.length > session.end) throw fail('CENC_RANGE_INVALID');
@@ -120,33 +138,35 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       // never force it through the demuxer's small rewind buffer.
       onChunk(networkOffset, value);
       networkOffset += value.length; receivedBytes += value.length;
+      measure(value.length, performance.now() - started);
       result = externalCache.read(start, end - start);
     }
     return result;
   }
   return {
-    async read(start, wanted) {
-      check();
+    async read(start, wanted, { signal: requestedSignal, speculative = false } = {}) {
+      const readSignal = requestedSignal && signal ? AbortSignal.any([requestedSignal, signal]) : requestedSignal || signal;
+      check(readSignal);
       if (!Number.isSafeInteger(start) || start < 0 || start >= fileSize ||
           !Number.isInteger(wanted) || wanted < 1 || wanted > 1024 * 1024)
         throw fail('CENC_RANGE_INVALID');
       const end = Math.min(fileSize, start + wanted);
       if (externalCache) {
         const once = async () => {
-          try { return await readExternal(start, end); }
+          try { return await readExternal(start, end, readSignal); }
           catch (error) { drop(); throw error; }
         };
-        return recovery ? recovery.read(once, signal) : once();
+        return recovery && !speculative ? recovery.read(once, readSignal) : once();
       }
       if (start < base || start > base + length) {
         drop(); base = start; head = 0; length = 0;
       }
       const once = async () => {
-        try { await fill(end); }
+        try { await fill(end, readSignal); }
         catch (error) { drop(); throw error; }
         return bytes.slice(head + start - base, head + end - base);
       };
-      const output = recovery ? await recovery.read(once, signal) : await once();
+      const output = recovery && !speculative ? await recovery.read(once, readSignal) : await once();
       // Keep a small rewind window, regardless of total episode length.
       if (end - base > KEEP) {
         const trim = end - base - KEEP;
@@ -155,6 +175,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
       return output;
     },
     close,
-    get stats() { return { requests, receivedBytes, cachedBytes: length }; }
+    get stats() { return { requests, receivedBytes, cachedBytes: length, bytesPerSecond,
+      position: session ? externalCache ? networkOffset : base + length : null }; }
   };
 }

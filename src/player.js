@@ -634,7 +634,7 @@ export function createPlayer({
     const transport = media.takeFailure();
     const knownCodes = [
       'CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'CENC_RANGE_INVALID',
-      'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_REMUX_FAILED'
+      'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW', 'CENC_REMUX_FAILED'
     ];
     const parsed = transport && knownCodes.includes(transport.code)
       ? { code: transport.code, message: playbackErrorSummary(transport) }

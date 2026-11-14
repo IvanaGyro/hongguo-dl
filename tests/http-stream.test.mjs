@@ -120,3 +120,39 @@ test('large read-ahead packets retain unread bytes instead of reopening HTTP', a
     assert.equal(calls, 1);
   } finally { stream.close(); }
 });
+
+test('a continuously trickling response below the media rate fails over instead of waiting forever', async () => {
+  let calls = 0, stopped = false, retries = 0;
+  const stream = createHttpStreamReader({ url: 'PRIVATE', fileSize: data.length,
+    durationSeconds: 1, timeoutMs: 40,
+    recovery: createCencRangeRecovery({ retryInitial: true, wait: async () => { retries++; } }),
+    fetchImpl: async () => {
+      calls++;
+      return new Response(new ReadableStream({
+        async pull(c) {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          if (!stopped) c.enqueue(new Uint8Array(1024));
+        }, cancel() { stopped = true; }
+      }), { status: 206, headers: { 'Content-Range': `bytes 0-${data.length - 1}/${data.length}` } });
+    }
+  });
+  try {
+    await assert.rejects(stream.read(0, 65536), { code: 'CENC_SOURCE_SLOW' });
+    assert.equal(calls, 1);
+    assert.equal(retries, 0, 'An inadequate source needs a different candidate, not repeated reconnects');
+    assert(stopped);
+  } finally { stream.close(); }
+});
+
+test('time spent waiting for the consumer does not count as inadequate download throughput', async () => {
+  let calls = 0;
+  const stream = createHttpStreamReader({ url: 'private', fileSize: data.length,
+    durationSeconds: 1, timeoutMs: 20,
+    fetchImpl: async () => { calls++; return response(0); } });
+  try {
+    await stream.read(0, 32768);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(await stream.read(32768, 32768), data.slice(32768, 65536));
+    assert.equal(calls, 1);
+  } finally { stream.close(); }
+});

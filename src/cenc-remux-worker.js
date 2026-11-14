@@ -54,7 +54,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
   let rangeRequests = 0, receivedBytes = 0;
   lastRangeError = null;
   const rangeRecovery = createCencRangeRecovery({
-    retryInitial: retrySameSource,
+    retryInitial: retrySameSource, maxRetries: retrySameSource ? 2 : 0,
     onRetry: event => self.postMessage({
       type: 'stage', stage: 'media-range-retry', code: event.code, status: event.status,
       attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining

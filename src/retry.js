@@ -30,6 +30,7 @@ export function playbackErrorSummary(error) {
   const messages = {
     CENC_RANGE_TIMEOUT: '影片來源回應逾時', PLAYBACK_TIMEOUT: '載入影片逾時', PLAYBACK_ERROR: '影片解碼或串流中斷',
     CENC_RANGE_HTTP: '影片範圍讀取失敗', CENC_RANGE_INVALID: '來源回傳的影片範圍無效',
+    CENC_SOURCE_SLOW: '影片來源下載速度持續不足',
     CENC_UNAVAILABLE: '串流初始化失敗',
     CENC_SOURCE_EXHAUSTED: '同畫質來源均拒絕存取或失效',
     CENC_REMUX_FAILED: '增量封裝器中斷',

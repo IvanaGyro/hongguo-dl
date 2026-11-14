@@ -9,7 +9,7 @@ import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { clampStreamSeek } from './cenc-seek.js';
-import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
+import { canTryNextCencSource, sameTierPlaybackCandidates, isRecoverableMediaSourceError } from './cenc-source-fallback.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaDownload } from './media-download.js';
 import { clearMediaProcessors } from './media-processor.js';
@@ -42,9 +42,9 @@ export function createMediaSession({
       log('source.menu.updated', { bvc2Available: available });
     }).catch(() => {});
   }
-  function retryCurrentSource(variants, source) {
+  function retryCurrentSource(variants, source, tried = cencTriedUrls) {
     return !(variants || []).some(other => other.url && other.url !== source.url &&
-      other.contentKey && !cencTriedUrls.has(other.url) &&
+      other.contentKey && !tried.has(other.url) &&
       codecId(other.codec) === codecId(source.codec) && qualityId(other) === qualityId(source));
   }
   async function prepareNativeStream(args) {
@@ -67,11 +67,12 @@ export function createMediaSession({
   function maybeStartPrefetchedProcessing() {
     if (!context().stream || context().stream.finished?.()) prefetched?.prepared?.native?.startProcessing?.();
   }
-  function streamStageReporter(signal, attempt, quiet = false, episode = context().episode) {
+  function streamStageReporter(signal, attempt, quiet = false, episode = context().episode, observe = () => {}) {
     return (stage, fields = {}) => {
       if (signal.aborted) return;
       if (quiet && context().episode?.vid !== episode?.vid) {
         log('prefetch.stage', { episode: Number(episode?.index) || 0, phase: stage, ...fields });
+        observe(stage, fields);
       } else {
         log('cenc.stage', { phase: stage, elapsedMs: ageMs(), ...fields });
         if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
@@ -89,7 +90,7 @@ export function createMediaSession({
     let codec = options.codec ?? selection().codec;
     const quiet = !!options.quiet;
     const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
-    const onStage = streamStageReporter(signal, attempt, quiet, episode);
+    const onStage = streamStageReporter(signal, attempt, quiet, episode, options.onPrefetchStage);
     log('source.resolve.begin', {
       attempt: attempt + 1, quality, codec, prefetch: quiet, elapsedMs: ageMs()
     });
@@ -139,7 +140,7 @@ export function createMediaSession({
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList ? { variants: lastVariants, winnerVariants: lastWinnerVariants }
         : await requestSources(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
-          { refresh: !quiet && attempt > 0 && !sameList });
+          { refresh: Boolean(options.refresh || !quiet && attempt > 0 && !sameList) });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
     // A public unknown-quality URL cannot satisfy an explicit rendition
@@ -255,12 +256,12 @@ export function createMediaSession({
     }
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
-    const selectableVariants = !quiet && cencRetryTier
-      ? sameTierPlaybackCandidates(variants, { quality, codec }, cencRetryTier)
-        .filter(source => !cencTriedUrls.has(source.url))
+    const tier = quiet ? options.tier : cencRetryTier;
+    const tried = quiet ? options.triedUrls || new Set() : cencTriedUrls;
+    const selectableVariants = tier
+      ? sameTierPlaybackCandidates(variants, { quality, codec }, tier).filter(source => !tried.has(source.url))
       : policyVariants;
-    const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
-      ? 0 : attempt;
+    const candidateIndex = (tier || !quiet && !triedSourceUrls.size) ? 0 : attempt;
     let resolved = playbackRendition(selectableVariants,
       { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport);
     if (!quiet && !cencRetryTier && triedSourceUrls.size) {
@@ -269,9 +270,10 @@ export function createMediaSession({
       if (next?.source) resolved = next;
     }
     const source = resolved.source;
-    if (source?.url && !candidateIds.has(source.url)) candidateIds.set(source.url, candidateIds.size + 1);
+    const ids = options.candidateIds || candidateIds;
+    if (source?.url && !ids.has(source.url)) ids.set(source.url, ids.size + 1);
     log('source.selected', {
-      candidate: source?.url ? candidateIds.get(source.url) : 0,
+      candidate: source?.url ? ids.get(source.url) : 0, episode: Number(episode.index) || 0,
       quality: source ? qualityId(source) || 'unknown' : 'none',
       codec: source ? codecId(source.codec) || 'unknown' : 'none',
       encrypted: Boolean(source?.contentKey),
@@ -279,7 +281,7 @@ export function createMediaSession({
       fallback: resolved.fallback, attempt: attempt + 1, elapsedMs: ageMs()
     });
     if (!source?.url) {
-      if (cencRetryTier && !quiet)
+      if (tier)
         throw errorWith('CENC_SOURCE_EXHAUSTED',
           '已無與原本畫質／編碼相同的可用官方影片來源。');
       const tiers = availableRenditions(variants);
@@ -290,6 +292,7 @@ export function createMediaSession({
         ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
         '。ByteVC2 須部署 Librempeg WASM 轉碼器；HEVC 需瀏覽器支援。');
     }
+    options.onSource?.(source, variants);
     if (!quiet) {
       triedSourceUrls.add(source.url);
       cencTriedUrls.add(source.url);
@@ -308,7 +311,7 @@ export function createMediaSession({
       }
     }
     if (!quiet && !cencRetryTier && (codecId(source.codec) === 'bytevc2' ||
-        codecId(source.codec) === 'hevc' && source.contentKey) && !isHlsUrl(source.url))
+        ['h264', 'hevc'].includes(codecId(source.codec)) && source.contentKey) && !isHlsUrl(source.url))
       cencRetryTier = { codec: codecId(source.codec), quality: qualityId(source) };
     if (codecId(source.codec) === 'bytevc2') {
       if (isHlsUrl(source.url)) throw errorWith('PLAYBACK_UNSUPPORTED',
@@ -329,7 +332,7 @@ export function createMediaSession({
         const native = await openCencProgressiveStream({
           video, url: transport.mode === 'direct' ? source.url : proxyUrl,
           proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
-          codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source),
+          codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source, options.triedUrls),
           key: source.contentKey || '', signal, bridge: 'bvc2', preload: quiet && options.nativePrefetch,
           durationSeconds: metadata.movieDurationSeconds || source.duration || null,
           startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
@@ -396,7 +399,7 @@ export function createMediaSession({
         preload: quiet && options.nativePrefetch, video, source, codec: codecId(source.codec),
         workerOrigin: getWorkerOrigin(), signal,
         startSeconds: savedResumeSeconds(episode, seriesId), onStage,
-        retrySameSource: retryCurrentSource(variants, source)
+        retrySameSource: retryCurrentSource(variants, source, options.triedUrls)
       });
       if (native) {
         if (!quiet && native.kind === 'cenc-remux') retryIncrementalCenc = true;
@@ -490,25 +493,84 @@ export function createMediaSession({
     if (prefetched?.key === key) { maybeStartPrefetchedProcessing(); return; }
     if (cache.getEntry(key)) return;
     cancelPrefetch();
-    const preloadController = new AbortController();
-    const entry = { vid: next.vid, key, controller: preloadController, prepared: null };
+    const entry = { vid: next.vid, key, episode: next, quality, codec, seriesId,
+      controller: new AbortController(), attemptController: null, prepared: null,
+      variants: null, source: null, tier: null, triedUrls: new Set(), candidateIds: new Map(),
+      refreshAttempted: false, refreshed: false, ready: false, error: null };
     log('prefetch.begin', { episode: Number(next.index) || 0,
       processingFinished: Boolean(context().stream?.finished?.()) });
-    const promise = sourceForEpisode(next, preloadController.signal, 0, {
-      quiet: true, quality, codec, seriesId, nativePrefetch: true
-    }).then(prepared => {
-      if (preloadController.signal.aborted) { void prepared?.native?.close(); return null; }
+    prefetched = entry;
+    preparePrefetch(entry);
+  }
+  function recoverPrefetch(entry, code) {
+    if (prefetched !== entry || entry.controller.signal.aborted) return;
+    if (entry.source?.url) entry.triedUrls.add(entry.source.url);
+    log('prefetch.recover', { episode: Number(entry.episode.index), code, ready: entry.ready,
+      tried: entry.triedUrls.size });
+    preparePrefetch(entry);
+  }
+  function preparePrefetch(entry) {
+    entry.attemptController?.abort();
+    const controller = new AbortController();
+    entry.attemptController = controller;
+    const signal = AbortSignal.any([entry.controller.signal, controller.signal]);
+    const remaining = entry.tier && entry.variants
+      ? sameTierPlaybackCandidates(entry.variants, { quality: entry.quality, codec: entry.codec }, entry.tier)
+        .filter(source => !entry.triedUrls.has(source.url)) : null;
+    let refresh = false;
+    if (remaining && !remaining.length) {
+      if (entry.refreshAttempted) {
+        entry.error = errorWith('CENC_SOURCE_EXHAUSTED', '預載的同畫質來源及刷新來源均已失敗');
+        entry.prepared = null; entry.ready = false; entry.promise = Promise.resolve(null);
+        log('prefetch.failed', { episode: Number(entry.episode.index), code: entry.error.code });
+        return;
+      }
+      refresh = true; entry.refreshAttempted = true;
+      log('prefetch.refresh', { episode: Number(entry.episode.index) });
+    }
+    entry.source = null; entry.prepared = null; entry.ready = false; entry.error = null;
+    entry.promise = Promise.resolve().then(() => sourceForEpisode(entry.episode, signal, 0, {
+      quiet: true, quality: entry.quality, codec: entry.codec, seriesId: entry.seriesId,
+      nativePrefetch: true, variants: refresh ? null : entry.variants,
+      tier: entry.tier, triedUrls: entry.triedUrls, refresh, candidateIds: entry.candidateIds,
+      onSource: (source, variants) => {
+        entry.source = source; entry.variants = variants;
+        if (source.contentKey || codecId(source.codec) === 'bytevc2')
+          entry.tier ||= { codec: codecId(source.codec), quality: qualityId(source) };
+        if (refresh) entry.refreshed = true;
+      },
+      onPrefetchStage: (stage, fields) => {
+        if (stage === 'preload.buffer' && fields.ready && !entry.ready) {
+          entry.ready = true;
+          log('prefetch.ready', { episode: Number(entry.episode.index), bytes: fields.bytes, units: fields.units });
+        }
+        const code = stage === 'media.slow' ? 'CENC_SOURCE_SLOW' : fields.code;
+        if (!['media.slow', 'media.prefetch.stopped', 'media-range-retry',
+          'range.retry', 'media-range-failed', 'mse.failed'].includes(stage) || !code) return;
+        if (entry.tier && isRecoverableMediaSourceError(code)) recoverPrefetch(entry, code);
+        else if (stage === 'mse.failed' || stage === 'media.prefetch.stopped') {
+          entry.error = errorWith(code, '預載媒體讀取失敗');
+          entry.prepared = null; entry.promise = Promise.resolve(null); controller.abort();
+        }
+      }
+    })).then(prepared => {
+      if (signal.aborted) { void prepared?.native?.close(); return null; }
       entry.prepared = prepared;
       if (prefetched === entry) maybeStartPrefetchedProcessing();
-      log('prefetch.prepared', { episode: Number(next.index) || 0, media: Boolean(prepared?.native) });
+      log('prefetch.prepared', { episode: Number(entry.episode.index), media: Boolean(prepared?.native),
+        ready: entry.ready });
       return prepared;
     }).catch(error => {
-      if (!preloadController.signal.aborted)
-        log('prefetch.failed', { episode: Number(next.index) || 0, code: error?.code || 'UNKNOWN' });
+      if (signal.aborted) return null;
+      entry.error = error;
+      if (entry.source?.url && isRecoverableMediaSourceError(error?.code)) entry.triedUrls.add(entry.source.url);
+      if (entry.tier && isRecoverableMediaSourceError(error?.code) && prefetched === entry)
+        recoverPrefetch(entry, error.code);
+      else {
+        log('prefetch.failed', { episode: Number(entry.episode.index), code: error?.code || 'UNKNOWN' });
+      }
       return null;
     });
-    entry.promise = promise;
-    prefetched = entry;
   }
   return {
     async request(episode, signal, handoff = null) {
@@ -517,7 +579,21 @@ export function createMediaSession({
       log('playback.attempt', { attempt: attempt + 1, elapsedMs: ageMs() });
       if (handoff && attempt === 0)
         reportStartup('正在接續預取的影片來源…', signal, attempt);
-      const prepared = handoff && attempt === 0 ? await handoff.promise : null;
+      let prepared = null;
+      if (handoff && attempt === 0) {
+        let pending;
+        do { pending = handoff.promise; prepared = await pending; } while (pending !== handoff.promise);
+        // Keep failed source identities and retry budgets across the handoff.
+        for (const url of handoff.triedUrls) { triedSourceUrls.add(url); cencTriedUrls.add(url); }
+        candidateIds = new Map(handoff.candidateIds);
+        if (handoff.variants) {
+          lastVariants = handoff.variants; lastWinnerVariants = handoff.variants;
+          lastVariantsVid = episode.vid;
+        }
+        cencRetryTier = handoff.tier;
+        sourceRefreshCount = handoff.refreshed ? 1 : 0;
+        if (!prepared && handoff.error) throw handoff.error;
+      }
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -528,7 +604,7 @@ export function createMediaSession({
           cencRetryTier = { codec: codecId(prepared.source.codec), quality: qualityId(prepared.source) };
         }
         if (prepared.native.kind === 'cenc-remux') retryIncrementalCenc = true;
-        log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true });
+        log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true, ready: handoff.ready });
       }
       if (resolved?.bvc2Pending) {
         resolved = await sourceForEpisode(episode, signal, attempt,

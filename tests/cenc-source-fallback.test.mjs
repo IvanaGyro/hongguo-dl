@@ -70,7 +70,7 @@ test('timeouts and 520 network errors rotate by actual tried URLs, ignoring API 
   const base = { variants, variantsVid:'101', episodeVid:'101', quality:'1080p', codec:'hevc',
     tier: { quality:'1080p', codec:'hevc' }, tried: 7,
     triedUrls: new Set(['https://cdn-a.example/1']) };
-  for (const code of ['CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT']) {
+  for (const code of ['CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW']) {
     assert.equal(canTryNextCencSource({ ...base, code }), true);
     assert.equal(canTryNextCencSource({ ...base, code,
       triedUrls: new Set(['https://cdn-a.example/1','https://cdn-b.example/1']) }), false);

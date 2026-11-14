@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCachedMediaReader } from '../src/cached-media-reader.js';
+import { createCencRangeRecovery } from '../src/cenc-range-recovery.js';
 const data = Uint8Array.from({ length: 512 * 1024 }, (_, i) => i % 251);
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 function fixture(options = {}) {
@@ -112,4 +113,113 @@ test('background HTTP packets preserve normalized metadata overlays at EOF', asy
     assert.deepEqual(await reader.read(offset + 400, 100), data.slice(offset + 400, offset + 500));
     assert.equal(starts.length, 1, 'A single overlapping HTTP response is sufficient');
   } finally { reader.close(); }
+});
+
+test('a demanded seek interrupts stalled speculative headers without losing cached metadata', async () => {
+  const starts = [];
+  let canceled = false;
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
+    timeoutMs: 2000, initialRanges: [{ offset: 0, data: data.slice(0, 100) }],
+    fetchImpl: async (_, options) => {
+      const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]); starts.push(start);
+      if (starts.length === 1) {
+        options.signal.addEventListener('abort', () => { canceled = true; });
+        return new Promise(() => {}); // An adapter need not honor AbortSignal.
+      }
+      return new Response(data.slice(start), { status: 206,
+        headers: { 'Content-Range': `bytes ${start}-${data.length - 1}/${data.length}` } });
+    }
+  });
+  let deadline;
+  try {
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && !starts.length; i++) await tick();
+    const result = await Promise.race([reader.read(400000, 1000), new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('Speculation blocked the demanded seek')), 500);
+    })]);
+    assert.deepEqual(result, data.slice(400000, 401000));
+    assert(canceled);
+    assert.deepEqual(await reader.read(0, 100), data.slice(0, 100));
+  } finally { clearTimeout(deadline); reader.close(); }
+});
+
+test('speculative timeout does not spend the recovery budget needed by a demanded read', async () => {
+  let calls = 0, stopped = false;
+  const recovery = createCencRangeRecovery({ maxRetries: 1, wait: async () => {} });
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
+    timeoutMs: 20, recovery,
+    onStage: stage => { if (stage === 'media.prefetch.stopped') stopped = true; },
+    fetchImpl: async (_, options) => {
+      const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
+      calls++;
+      if (calls === 2) return new Response('', { status: 503 });
+      if (calls === 1) return new Response(new ReadableStream({
+        start(c) { c.enqueue(data.slice(0, 32768)); }
+      }), { status: 206, headers: { 'Content-Range': `bytes 0-${data.length - 1}/${data.length}` } });
+      return new Response(data.slice(start), { status: 206,
+        headers: { 'Content-Range': `bytes ${start}-${data.length - 1}/${data.length}` } });
+    }
+  });
+  try {
+    await reader.read(0, 100);
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && !stopped; i++) await tick();
+    assert(stopped);
+    assert.equal(recovery.totalRetries, 0);
+    assert.deepEqual(await reader.read(32768, 100), data.slice(32768, 32868));
+    assert.equal(recovery.totalRetries, 1);
+  } finally { reader.close(); }
+});
+
+test('a fast persistent body can reach a later requested offset without another HTTP request', async () => {
+  const { reader, starts } = fixture();
+  try {
+    await reader.read(0, 100);
+    assert.deepEqual(await reader.read(400000, 1000), data.slice(400000, 401000));
+    assert.equal(starts.length, 1);
+  } finally { reader.close(); }
+});
+
+test('one episode stalled in headers does not queue or cancel another episode download', async () => {
+  let blockedCalls = 0;
+  const blocked = createCachedMediaReader({ url: 'episode-a', fileSize: data.length,
+    fetchImpl: () => { blockedCalls++; return new Promise(() => {}); } });
+  const { reader, starts } = fixture();
+  try {
+    blocked.prefetch(true);
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && !reader.snapshot().complete; i++) await tick();
+    assert.equal(blockedCalls, 1);
+    assert(reader.snapshot().complete, 'Independent episodes must download concurrently');
+    blocked.close();
+    assert.deepEqual(await reader.read(400000, 1000), data.slice(400000, 401000));
+    assert.equal(starts.length, 1);
+  } finally { blocked.close(); reader.close(); }
+});
+
+test('a partly cached request waits at its missing byte without reopening the current body', async () => {
+  let calls = 0, release, reads = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
+    fetchImpl: async (_, options) => {
+      calls++;
+      const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
+      let position = start;
+      return new Response(new ReadableStream({ async pull(c) {
+        reads++;
+        if (position >= 20) await gate;
+        if (position === data.length) return c.close();
+        const end = position < 20 ? 20 : data.length;
+        c.enqueue(data.slice(position, end)); position = end;
+      } }), { status: 206, headers: { 'Content-Range': `bytes ${start}-${data.length - 1}/${data.length}` } });
+    }
+  });
+  try {
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && reads < 2; i++) await tick();
+    const pending = reader.read(16, 16);
+    await tick(); release();
+    assert.deepEqual(await pending, data.slice(16, 32));
+    assert.equal(calls, 1, 'Use the first missing position, not the already cached prefix');
+  } finally { release(); reader.close(); }
 });
