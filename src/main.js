@@ -96,6 +96,8 @@ let episodePage = 0;
 let lastFollowedEpisode = null;
 let directory = null;
 let jobs = restoreJobs();
+const JOBS_PER_PAGE = 100;
+let queuePage = 0;
 const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
@@ -125,7 +127,7 @@ function restoreJobs() {
   try {
     // Recover the series length for queue entries created before this field existed.
     const totals = new Map(recentSeries(localStorage).map(item => [String(item.seriesId), item.total]));
-    return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 300).map(item => ({
+    return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 2000).map(item => ({
       ...item, seriesTotal: item.seriesTotal ?? totals.get(String(item.seriesId)) ?? null,
       directUrl: null, progress: null, segment: null, controller: null,
       status: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'failed' : item.status,
@@ -186,11 +188,20 @@ function renderQueue() {
     !jobs.some(job => ['completed', 'canceled'].includes(job.status));
   $('queue-select-all').disabled = !jobs.length;
   $('queue-select-none').disabled = !selectedJobs.length;
+  const pages = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
+  queuePage = Math.max(0, Math.min(queuePage, pages - 1));
+  const pageStart = queuePage * JOBS_PER_PAGE;
+  $('queue-navigation').hidden = pages <= 1;
+  $('queue-range').textContent = (pageStart + 1) + '–' +
+    Math.min(pageStart + JOBS_PER_PAGE, jobs.length) +
+    ' / ' + jobs.length + ' 筆';
+  $('queue-prev-range').disabled = queuePage === 0;
+  $('queue-next-range').disabled = queuePage === pages - 1;
   if (!jobs.length) {
     $('queue').innerHTML = '<div class="empty">尚無下載項目</div>';
     return;
   }
-  $('queue').innerHTML = orderQueueSelection(jobs).map(job => {
+  $('queue').innerHTML = orderQueueSelection(jobs).slice(pageStart, pageStart + JOBS_PER_PAGE).map(job => {
     const busy = ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const chosen = exportSelected.has(job.id);
     const progress = job.status === 'completed' ? 100 :
@@ -1038,6 +1049,14 @@ $('episodes').addEventListener('change', e => {
   if (checkbox.checked) selected.add(checkbox.dataset.vid);
   else selected.delete(checkbox.dataset.vid);
   renderEpisodes();
+});
+$('queue-prev-range').addEventListener('click', () => {
+  if (queuePage > 0) { queuePage--; renderQueue(); }
+});
+$('queue-next-range').addEventListener('click', () => {
+  if ((queuePage + 1) * JOBS_PER_PAGE < jobs.length) {
+    queuePage++; renderQueue();
+  }
 });
 $('queue').addEventListener('change', event => {
   const box = event.target.closest('input[data-export-id]');
