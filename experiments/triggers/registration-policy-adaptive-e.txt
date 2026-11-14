@@ -1,1 +1,1 @@
-Adaptive E continuation, 2026-11-14: start with 150 seconds, known successful 180-second base. If 150s zero, wait remaining 30 seconds and confirm recovery at 180s before next trigger. Keep early zero-ID triggers (do not require >=100 successes).
+Paired A/B 180-second experiment, 2026-11-14. A: silent until 180s. B: intermediate 135s probe then 180s. 600s between rounds. Exact IDs only in short-lived artifact.
