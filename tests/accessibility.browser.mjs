@@ -4,7 +4,8 @@ import { chromium } from 'playwright';
 import AxeBuilder from '@axe-core/playwright';
 const browser=await chromium.launch({headless:true,
   ...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
-const page=await browser.newPage({viewport:{width:1440,height:900},reducedMotion:'reduce'});
+const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'});
+const page=await context.newPage();
 const errors=[];
 page.on('pageerror',e=>errors.push(e.message));
 await page.route(url=>url.pathname.startsWith('/api/'),async route=>{
