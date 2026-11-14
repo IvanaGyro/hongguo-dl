@@ -71,7 +71,10 @@ export function classifyError(error) {
     : code === 'MEDIA_RATE_LIMITED'
       ? '媒體 CDN 限制請求頻率（HTTP 429），請勿連續重試'
       : rawMessage || descriptions[code] || '下載失敗';
-  return { code, message: message.slice(0, 300) };
+  return { code, message: message.slice(0, 300),
+    ...(error?.stage === 'source-api' ? { stage: 'source-api' } : {}),
+    ...(Number.isInteger(error?.status) ? { status: error.status } : {})
+  };
 }
 export function errorWith(code, message) {
   return Object.assign(new Error(message), { code });

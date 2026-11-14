@@ -49,7 +49,9 @@ const $ = id => {
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
 const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
-const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.VITE_API_ORIGIN || '');
+// A deployment URL in .env must not bypass Vite's local /api proxy in dev.
+// Explicit per-browser overrides remain available through the API settings.
+const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.DEV ? '' : import.meta.env.VITE_API_ORIGIN || '');
 let workerOrigin = defaultWorkerOrigin;
 try { workerOrigin = chooseWorkerOrigin(localStorage.getItem(API_STORE), defaultWorkerOrigin); }
 catch { /* localStorage can be blocked; use the site-provided PROXY default */ }
@@ -355,9 +357,13 @@ function setMode(mode) {
 }
 async function apiJson(route, signal) {
   const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' }, signal });
+  const apiError = (code, message) => Object.assign(errorWith(code, message), {
+    status: response.status,
+    ...(route.startsWith('/api/source?') ? { stage: 'source-api' } : {})
+  });
   let data;
-  try { data = await response.json(); } catch { throw errorWith('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
-  if (!response.ok) throw errorWith(data?.error?.code || 'HTTP_' + response.status,
+  try { data = await response.json(); } catch { throw apiError('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
+  if (!response.ok) throw apiError(data?.error?.code || 'HTTP_' + response.status,
     data?.error?.message || '請求失敗（HTTP ' + response.status + '）');
   return data;
 }
@@ -409,7 +415,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
     } catch (error) {
       if (!signal?.aborted) trace('source.channel.failed', {
         channel, elapsedMs: performance.now() - begin,
-        code: error?.code || 'SOURCE_UNAVAILABLE'
+        code: error?.code || 'SOURCE_UNAVAILABLE', status: error?.status
       });
       throw error;
     }
@@ -442,7 +448,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
     }
   } catch (error) {
     trace('source.api.failed', {
-      elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN'
+      elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN', status: error?.status
     });
     throw error;
   } finally {

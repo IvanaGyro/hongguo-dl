@@ -1,0 +1,14 @@
+# Preserve the exact bytes pinned by the WASM release manifests.
+/public/bvc2/bvc2-core.mjs text eol=lf
+/public/cenc/cenc-core.mjs text eol=lf
+/scripts/build-bvc2-wasm-transcode.sh text eol=lf
+/scripts/build-cenc-stream-wasm.sh text eol=lf
+/scripts/build-video-encoders.sh text eol=lf
+/scripts/bvc2-avio.h text eol=lf
+/scripts/bvc2-transcoder.c text eol=lf
+/scripts/cenc-stream-remux.c text eol=lf
+/scripts/patch-bvc2-mov.py text eol=lf
+/scripts/patch-x265-single-thread.py text eol=lf
+/scripts/vendor/libvvenc.c text eol=lf
+/public/cenc/cenc-core.wasm binary
+/public/bvc2/bvc2-core.wasm binary

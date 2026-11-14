@@ -29,6 +29,10 @@ export function createMediaSession({
   let lastVariants = null, lastWinnerVariants = null, lastVariantsVid = null;
   let pendingSourceExpansion = null, triedSourceUrls = new Set();
   let prefetched = null, retryIncrementalCenc = false, canTranscodeBvc2 = false;
+  async function requestSources(...args) {
+    try { return await sourceFor(...args); }
+    catch (error) { throw Object.assign(error, { stage: 'source-api' }); }
+  }
   function refreshBvc2Choices(variants, signal) {
     if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
     void bvc2BridgeAvailable().then(available => {
@@ -134,30 +138,36 @@ export function createMediaSession({
       : episode.vid === 'direct'
       ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
       : sameList ? { variants: lastVariants, winnerVariants: lastWinnerVariants }
-        : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
+        : await requestSources(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
           { refresh: !quiet && attempt > 0 && !sameList });
     if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
     const variants = list.variants || [];
-    if (refreshingCencSources) {
-      if (!variants.length) throw errorWith('SOURCE_UNAVAILABLE', '刷新未取得可用片源');
-      // An API failure does not start a new cycle. Keep all failed URLs marked
-      // until a refresh actually succeeds, so retry cannot revive the old list.
-      sourceRefreshCount++;
-      cencTriedUrls.clear();
-      log('source.list.refreshed', { variants: variants.length, refreshed: sourceRefreshCount });
-    }
-
     // A public unknown-quality URL cannot satisfy an explicit rendition
     // request. Await the other query only when the initial source lacks it.
-    if (list.lateVariants && (quality !== 'auto' || codec !== 'auto') &&
+    if (list.lateVariants && (refreshingCencSources ||
+        (quality !== 'auto' || codec !== 'auto') &&
         !variants.some(v => (quality === 'auto' || qualityId(v) === quality) &&
-          (codec === 'auto' || codecId(v.codec) === codec))) {
+          (codec === 'auto' || codecId(v.codec) === codec)))) {
       const extra = await list.lateVariants;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       const seen = new Set(variants.map(v => v.url));
       for (const v of extra || []) if (v?.url && !seen.has(v.url)) {
         variants.push(v); seen.add(v.url);
       }
+    }
+    if (refreshingCencSources) {
+      if (!variants.length) throw errorWith('SOURCE_UNAVAILABLE', '刷新未取得可用片源');
+      const fresh = sameTierPlaybackCandidates(variants, { quality, codec }, cencRetryTier)
+        .filter(source => !cencTriedUrls.has(source.url));
+      if (!fresh.length) {
+        log('source.list.stale', { variants: variants.length });
+        throw errorWith('CENC_SOURCE_EXHAUSTED', '刷新未取得同畫質／編碼的新候選網址，已停止重試失敗來源。');
+      }
+      // A successful API response is not proof of fresh media. Retain failed
+      // URL identities even when the new list also contains usable candidates.
+      sourceRefreshCount++;
+      log('source.list.refreshed', { variants: variants.length, freshCandidates: fresh.length,
+        refreshed: sourceRefreshCount });
     }
     log('source.list.ready', {
       variants: variants.length, fromCache: sameList || Boolean(list.fromCache), sharedRequest: Boolean(list.shared),

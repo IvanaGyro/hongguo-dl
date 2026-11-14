@@ -24,6 +24,19 @@ test('valid CORS-visible 206 Range uses CDN without proxy', async () => {
   assert.equal(transport.mode, 'direct');
   assert.deepEqual(seen, [[direct, 'cors', 'omit']]);
 });
+
+test('a CDN that rejects the page Referer remains directly readable', async () => {
+  const transport = createMediaTransport({ directUrl: direct, proxyUrl: proxy,
+    fetchImpl: async (url, options) => {
+      assert.equal(url, direct, 'A valid signed URL must not require the proxy for its Referer');
+      return options.referrerPolicy === 'no-referrer' ? range() : response(403);
+    }
+  });
+  const result = await transport.fetch(direct, { headers: { Range: 'bytes=0-15' },
+    referrerPolicy: 'unsafe-url' });
+  assert.equal(result.status, 206);
+  assert.equal(transport.mode, 'direct');
+});
 test('network/CORS error selects proxy for all further requests', async () => {
   const seen = [];
   const transport = createMediaTransport({ directUrl: direct, proxyUrl: proxy,

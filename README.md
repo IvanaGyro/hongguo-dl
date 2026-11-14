@@ -75,7 +75,9 @@ bun run dev:worker   # http://127.0.0.1:8787
 bun run dev          # http://localhost:5173
 ```
 
-Vite 會將本機的 `/api/` 轉發到 Worker。不要在本機設定 `VITE_API_ORIGIN`，即可使用此代理。
+Vite 開發模式預設將同來源的 `/api/` 轉發到本機 Worker；`.env` 的 `VITE_API_ORIGIN` 僅作正式建置的預設 API。瀏覽器已儲存的自訂 API 仍優先；本機要改回代理，可在 API 設定按「恢復網站預設」。
+
+媒體請求不傳送頁面的 Referer，包含 JavaScript 下載與原生影片讀取；CDN 直連失敗時仍可改走 Worker。CENC／ByteVC2 固定版本的 JS 與建置輸入必須保留 LF 換行，`.gitattributes` 會避免 Windows checkout 將其轉成 CRLF，否則會造成 manifest 雜湊驗證失敗。
 
 ## 驗收狀態與已知限制
 

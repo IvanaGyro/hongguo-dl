@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPlayer } from '../src/player.js';
+import { playbackErrorSummary } from '../src/retry.js';
 
 class Element extends EventTarget {
   constructor() { super(); this.style = {}; this.textContent = ''; }
@@ -138,4 +139,47 @@ test('unsupported HEVC stays out of the player menu and makes no media request',
   assert.equal(requests, 0, 'Ordinary entry must keep unsupported HEVC filtered');
   assert.deepEqual(standard.labels, ['自動最佳']);
   assert(!standard.logs.some(row => row.event === 'cenc.prepare.begin'));
+});
+
+test('refreshing the same failed signed URLs stops without reopening them', async () => {
+  let calls = 0;
+  const requested = [];
+  const { logs } = await runScenario(async () => {
+    calls++;
+    return { variants: [source('a'), source('b')] };
+  }, async url => {
+    requested.push(new URL(url, 'https://worker.example').searchParams.get('url'));
+    return new Response('', { status: 403 });
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(requested, [source('a').url, source('b').url]);
+  assert(logs.some(row => row.event === 'playback.retry.stopped' && row.code === 'CENC_SOURCE_EXHAUSTED'));
+});
+
+test('a refreshed list containing old failures only tries its new same-tier candidate', async () => {
+  let calls = 0;
+  const requested = [];
+  await runScenario(async () => ({ variants: ++calls === 1
+    ? [source('a'), source('b')] : [source('a'), source('c')] }), async url => {
+    const target = new URL(url, 'https://worker.example').searchParams.get('url');
+    requested.push(target);
+    return new Response('', { status: target === source('c').url ? 429 : 403 });
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(requested, ['a', 'b', 'c'].map(name => source(name).url));
+});
+
+test('source API 502 and media CDN failures retain separate diagnoses', async () => {
+  let calls = 0;
+  const { logs } = await runScenario(async () => {
+    if (++calls === 1) throw Object.assign(failure('EMPTY_RESPONSE'), { status: 502 });
+    return { variants: [source('a')] };
+  }, async () => new Response('', { status: 429 }));
+  const attempts = logs.filter(row => row.event === 'playback.attempt.failed');
+  assert.equal(attempts[0].stage, 'source-api');
+  assert.equal(attempts[0].status, 502);
+  assert.match(playbackErrorSummary(attempts[0]), /片源 API.*HTTP 502/);
+  assert.equal(attempts[1].stage, 'media');
+  assert.equal(attempts[1].code, 'CENC_RATE_LIMITED');
+  assert.match(playbackErrorSummary({ code: 'HTTP_403', stage: 'source-api', status: 403 }), /片源 API/);
 });

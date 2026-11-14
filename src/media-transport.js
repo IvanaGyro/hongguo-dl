@@ -45,7 +45,11 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
     if (!useDirect) return fetchImpl(proxyUrl, options);
     let response;
     try {
-      response = await fetchImpl(directUrl, { ...options, mode: 'cors', credentials: 'omit' });
+      // Some CDN candidates reject a localhost/site Referer even when the
+      // signed URL is valid. Origin/CORS still apply with no-referrer.
+      response = await fetchImpl(directUrl, {
+        ...options, mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer'
+      });
     } catch {
       if (options.signal?.aborted) throw Object.assign(new Error('Canceled'), { code: 'CANCELED' });
       useDirect = false;

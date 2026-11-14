@@ -380,7 +380,8 @@ export function createPlayer({
         if (signal.aborted || currentToken !== token) return;
         const parsed = classifyError(error);
         log('playback.attempt.failed', {
-          code: parsed.code || 'UNKNOWN', attempt: media.attempt, elapsedMs: ageMs()
+          code: parsed.code || 'UNKNOWN', attempt: media.attempt, elapsedMs: ageMs(),
+          stage: parsed.stage || 'media', status: parsed.status
         });
         handoff = null;
         if (nativeStream) {

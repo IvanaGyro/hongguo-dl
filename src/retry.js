@@ -19,6 +19,10 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
 // Keep retry explanations short and independent of signed media URLs.
 export function playbackErrorSummary(error) {
   const code = error?.code || '';
+  if (error?.stage === 'source-api' || code === 'EMPTY_RESPONSE') {
+    const status = error?.status >= 400 && error.status <= 599 ? '（HTTP ' + error.status + '）' : '';
+    return (code === 'EMPTY_RESPONSE' ? '片源 API 回傳空白資料' : '片源 API 讀取失敗') + status;
+  }
   if (['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'HTTP_403'].includes(code))
     return 'CDN 拒絕存取（HTTP 403）';
   if (['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'HTTP_429'].includes(code))
@@ -46,7 +50,9 @@ export function playbackAttemptMessage(message, attempt = 0, error = null) {
 // Include the last actual error so a failed real source is diagnosable rather
 // than a misleading "one identical error" after twenty alternating failures.
 export function playbackFailureMessage(failure, error, repeatedLimit = 5) {
-  const detail = String(error?.message || '未知播放錯誤').slice(0, 180);
+  const rawDetail = String(error?.message || '未知播放錯誤').slice(0, 180);
+  const detail = error?.stage === 'source-api'
+    ? playbackErrorSummary(error) + ' · ' + rawDetail : rawDetail;
   const code = error?.code ? ' [' + error.code + ']' : '';
   if (failure.retry) return playbackErrorSummary(error) + ' · ' +
     (failure.delay / 1000).toFixed(1) + ' 秒後進行第 ' + failure.attempts + ' 次重試';
