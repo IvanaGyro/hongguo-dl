@@ -73,21 +73,42 @@ export async function verifyRealHevcReloadAndEof(page) {
 
   // Let the actual media reach EOF (no synthetic ended event, no direct
   // currentTime = duration jump). This exercises final fragments and Worker
-  // end-of-stream propagation rather than only metadata.
-  await page.waitForFunction(() => {
-    const v = document.querySelector('#player-video');
+  // end-of-stream propagation rather than only metadata. Capture the trusted
+  // event before the app's normal ended handler saves completion and starts
+  // the next episode; the active video must no longer be assumed unchanged.
+  await page.evaluate(() => {
+    window.__liveHevcEof = null;
+    document.querySelector('#player-video').addEventListener('ended', event => {
+      const v = event.currentTarget;
+      window.__liveHevcEof = {
+        videoId: document.querySelector('#episodes button.current[data-play-vid]')?.dataset.playVid,
+        trusted: event.isTrusted, ended: v.ended, currentTime: v.currentTime,
+        duration: v.duration, totalFrames: v.getVideoPlaybackQuality?.().totalVideoFrames || 0,
+        mediaError: v.error?.code ?? null
+      };
+    }, { capture: true, once: true });
+  });
+  await page.waitForFunction(historyKey => {
+    const record = JSON.parse(localStorage.getItem('hongguo-dl-playback-history-v1') || '{}')[historyKey];
     const status = document.querySelector('#player-status')?.textContent || '';
-    return v?.ended || /播放完成|已停止播放|無法播放/.test(status);
-  }, null, { timeout: 135000 }).catch(() => {});
-  const finished = await page.evaluate(readCurrent);
+    return window.__liveHevcEof && record?.completed || /已停止播放|無法播放/.test(status);
+  }, before.historyKey, { timeout: 135000 }).catch(() => {});
+  const finished = await page.evaluate(({ historyKey, videoId }) => ({
+    eof: window.__liveHevcEof,
+    completed: Boolean(JSON.parse(localStorage.getItem('hongguo-dl-playback-history-v1') || '{}')[historyKey]?.completed),
+    autoAdvanced: document.querySelector('#episodes button.current[data-play-vid]')?.dataset.playVid !== videoId
+  }), { historyKey: before.historyKey, videoId: before.videoId });
+  const eof = finished.eof;
   console.log('macOS WebKit real HEVC EOF:', JSON.stringify({
-    sameEpisode: finished.videoId === before.videoId,
-    atEnd: finished.ended, currentTime: finished.currentTime,
-    duration: finished.duration, completedRecord: finished.completed,
-    mediaError: finished.mediaError
+    sameEpisodeAtEof: eof?.videoId === before.videoId,
+    atEnd: eof?.ended || false, trusted: eof?.trusted || false,
+    currentTime: eof?.currentTime ?? null, duration: eof?.duration ?? null,
+    totalFrames: eof?.totalFrames ?? 0, completedRecord: finished.completed,
+    autoAdvanced: finished.autoAdvanced, mediaError: eof?.mediaError ?? null
   }));
-  assert(finished.ended && finished.completed &&
-    finished.mediaError == null && finished.currentTime >= finished.duration - 2,
+  assert(eof?.trusted && eof.ended && eof.videoId === before.videoId &&
+    eof.totalFrames > 2 && eof.mediaError == null &&
+    eof.currentTime >= eof.duration - 2 && finished.completed,
     'Real HEVC playback did not reach EOF and persist completed watch progress');
   console.log('PASS real Hongguo HEVC actual EOF and persisted completion');
 }

@@ -41,7 +41,7 @@ try {
   }
   await context.addInitScript(() => {
     localStorage.setItem('hongguo-dl-player-preferences-v1', JSON.stringify({
-      quality: '1080p', codec: 'hevc', speed: '1', autoNext: false
+      speed: '1'
     }));
     // Instrument only aggregate SourceBuffer activity. Never inspect or
     // serialize the copyrighted media bytes, signed URL or CENC key.
@@ -96,13 +96,18 @@ try {
     await page.locator('#mode-play').click();
     await page.locator('#player-panel').waitFor({ state: 'visible', timeout: 30000 });
     // The quality menu is now populated from real per-episode source
-    // metadata, not hard-coded HTML. Prefer the saved 1080p selection, and
-    // wait for the dynamic option before asserting that it is selectable.
+    // metadata, not hard-coded HTML. Quality resets to Auto on reload; choose
+    // 1080p through the visible menu instead of its hidden native select.
     await page.waitForFunction(() => Array.from(
       document.querySelector('#player-quality')?.options || [])
       .some(option => option.value === '1080p|hevc'), null, { timeout: 30000 });
-    if (await page.locator('#player-quality').inputValue() !== '1080p|hevc')
-      await page.locator('#player-quality').selectOption('1080p|hevc');
+    if (await page.locator('#player-quality').inputValue() !== '1080p|hevc') {
+      await page.locator('#player-stage').hover();
+      await page.locator('#player-settings-toggle').click();
+      await page.locator('#player-settings [data-settings-target="quality"]').click();
+      await page.locator('#player-quality-options [data-choice-value="1080p|hevc"]').click();
+      await page.locator('#player-settings-close').click();
+    }
     assert.equal(await page.locator('#player-quality').inputValue(), '1080p|hevc');
     assert.equal(await page.locator('#player-codec').count(), 0);
     // The same video element receives successive MediaSource objects. Count

@@ -358,7 +358,10 @@ try {
         return text.includes('"HEVC + AAC"') && text.includes('"mseSupported"');
       }, null, { timeout: 15000 });
       const report = JSON.parse(await page.locator('#codec-diag-results').textContent());
-      assert.equal(report.schema, 1);
+      assert.equal(report.schema, 2);
+      assert(report.formats.every(format => format.videoOnly && format.audioOnly &&
+        typeof format.fileCapabilitiesStatus === 'string'),
+      'Schema 2 must distinguish separate tracks and file playback diagnostics');
       assert(report.formats.some(format => format.codec === 'HEVC + AAC'));
       assert(!JSON.stringify(report).includes('00112233445566778899aabbccddeeff'),
         'Local codec report must never disclose media decryption keys');
@@ -588,8 +591,10 @@ try {
       assert.equal(before.remoteTargetBuffered, false,
         'Fixture target must not already be buffered: ' + JSON.stringify(before));
       // A new MediaSource must not reset the UI's selected speed.
+      await page.locator('#player-stage').hover();
       await page.locator('#player-settings-toggle').click();
-      await page.locator('#player-speed').selectOption('1.25');
+      await page.locator('#player-settings [data-settings-target="speed"]').click();
+      await page.locator('#player-speed-options [data-choice-value="1.25"]').click();
       await page.locator('#player-settings-close').click();
       assert.equal(await page.locator('#player-video').evaluate(v => v.playbackRate), 1.25);
       const firstSeekRequest = mediaRequests.length;
@@ -634,8 +639,10 @@ try {
       }));
       assert.deepEqual(seekRates, { playbackRate: 1.25, defaultPlaybackRate: 1.25 },
         'Unbuffered CENC MSE seek must preserve 1.25x rate after video.load()');
+      await page.locator('#player-stage').hover();
       await page.locator('#player-settings-toggle').click();
-      await page.locator('#player-speed').selectOption('1');
+      await page.locator('#player-settings [data-settings-target="speed"]').click();
+      await page.locator('#player-speed-options [data-choice-value="1"]').click();
       await page.locator('#player-settings-close').click();
       const jumped = mediaRequests.slice(firstSeekRequest);
       assert(jumped.some(request => request.first > input.length * 0.5),
