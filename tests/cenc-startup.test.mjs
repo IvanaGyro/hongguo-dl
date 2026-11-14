@@ -76,7 +76,7 @@ test('CENC startup releases object URLs on Worker constructor and postMessage fa
     ...base, codec: 'hevc', videoCodecString: 'hvc1.2.4.L120.90',
     video: { canPlayType: () => '' }
   }), /Worker 無法建立/);
-  assert.equal(selectedMime, 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"');
+  assert.equal(selectedMime, 'video/mp4; codecs="hev1.2.4.L120.90, mp4a.40.2"');
   assert.deepEqual(revoked, minted);
 });
 
@@ -349,4 +349,30 @@ test('CENC abort closes Worker and object URL even with a blocked MSE ACK', asyn
     'Failure before SourceBuffer creation must revoke its object URL');
   await ended.close();
   assert.equal(revoked.length, 3);
+});
+
+
+test('actual HEVC metadata remains gated by exact MIME after diagnostic admission', async t => {
+  const previous = globalThis.MediaSource;
+  t.after(() => {
+    if (previous === undefined) delete globalThis.MediaSource;
+    else globalThis.MediaSource = previous;
+  });
+  let workers = 0;
+  globalThis.MediaSource = class {
+    static isTypeSupported() { return false; }
+    constructor() { workers++; }
+  };
+  const stages = [];
+  const stream = await openCencProgressiveStream({
+    video: { canPlayType: () => '' }, url: 'https://example.test/movie.mp4',
+    fileSize: 10240, codec: 'hevc', hasAac: true,
+    videoCodecString: 'hvc1.1.6.L186', key: '00112233445566778899aabbccddeeff',
+    onStage: (phase, fields) => stages.push({ phase, ...fields })
+  });
+  assert.equal(stream, null);
+  assert.equal(workers, 0, 'Negative exact support must not create a MediaSource');
+  assert.deepEqual(stages, [{ phase: 'mse.codec-check', codec: 'hevc',
+    codecString: 'hvc1.1.6.L186', hasAac: true,
+    primarySupported: false, alternateSupported: false }]);
 });

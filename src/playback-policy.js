@@ -14,3 +14,9 @@ export function blockHevcFullFileFallback(source) {
   return codecId(source?.codec) === 'hevc' &&
     Boolean(source?.contentKey) && !isHlsUrl(source?.url || '');
 }
+
+// A diagnostic URL changes preliminary admission only, never native decoding,
+// actual-hvcC validation, source access, or the whole-file fallback policy.
+export function hevcMetadataProbeEnabled(search = '') {
+  return new URLSearchParams(search).get('hevc_probe') === 'actual';
+}

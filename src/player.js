@@ -16,7 +16,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
-import { blockHevcFullFileFallback, bvc2PlaybackMode } from './playback-policy.js';
+import { blockHevcFullFileFallback, bvc2PlaybackMode, hevcMetadataProbeEnabled } from './playback-policy.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -70,6 +70,8 @@ export function createPlayer({
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
   const bvc2Mode = bvc2PlaybackMode(location.search);
+  const probeHevcMetadata = hevcMetadataProbeEnabled(location.search);
+  if (probeHevcMetadata) log('source.hevc.probe-mode', { mode: 'actual-metadata' });
   const mimeSupport = mime => video.canPlayType(mime);
   // Source selection uses a provisional HEVC probe; openClearKeyStream later
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
@@ -102,7 +104,7 @@ export function createPlayer({
   function setStatus(value) { status.textContent = value; }
   function updateRenditionOptions(variants, requested = selection()) {
     pendingQuality = null;
-    const options = renditionOptions(playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport));
+    const options = renditionOptions(playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport, probeHevcMetadata));
     let value = matchingRenditionValue(options, requested);
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
@@ -412,7 +414,7 @@ export function createPlayer({
     // A 1080p HEVC selection must not wait for unrelated ByteVC2 assets.
     let policyVariants = quality === 'auto'
       ? list.winnerVariants || variants : variants;
-    const nativeChoice = playbackRendition(policyVariants, { quality, codec: 'auto' }, mimeSupport, 0, false, mseSupport).source;
+    const nativeChoice = playbackRendition(policyVariants, { quality, codec: 'auto' }, mimeSupport, 0, false, mseSupport, probeHevcMetadata).source;
     if (!quiet) for (const option of renditionOptions(variants)) {
       const candidates = variants.filter(v => qualityId(v) === option.quality &&
         (codecId(v.codec) || 'auto') === option.codec);
@@ -436,7 +438,7 @@ export function createPlayer({
       required: needsBvc2, available: canTranscodeBvc2,
       elapsedMs: Math.round(performance.now() - checkStarted)
     });
-    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport);
+    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport, probeHevcMetadata);
     const supportedSelection = reconcileRendition(supported, { quality, codec });
     if (quality !== supportedSelection.quality || codec !== supportedSelection.codec) {
       quality = supportedSelection.quality; codec = supportedSelection.codec;
@@ -497,10 +499,10 @@ export function createPlayer({
     const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
       ? 0 : attempt;
     let resolved = playbackRendition(selectableVariants,
-      { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport);
+      { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport, probeHevcMetadata);
     if (!quiet && !cencRetryTier && triedSourceUrls.size) {
       const next = untriedPlaybackRendition(selectableVariants,
-        { quality, codec }, mimeSupport, triedSourceUrls, canTranscodeBvc2, mseSupport);
+        { quality, codec }, mimeSupport, triedSourceUrls, canTranscodeBvc2, mseSupport, probeHevcMetadata);
       if (next?.source) resolved = next;
     }
     const source = resolved.source;
@@ -513,6 +515,9 @@ export function createPlayer({
       hls: Boolean(source && isHlsUrl(source.url)),
       fallback: resolved.fallback, attempt: attempt + 1, elapsedMs: ageMs()
     });
+    if (source && probeHevcMetadata && codecId(source.codec) === 'hevc')
+      log('source.hevc.admission', { mode: 'actual-metadata',
+        preliminarySupported: Boolean(playbackRendition([source], {}, mimeSupport, 0, false, mseSupport).source) });
     if (!source?.url) {
       if (cencRetryTier && !quiet)
         throw errorWith('CENC_SOURCE_EXHAUSTED',

@@ -1,6 +1,6 @@
 # Hongguo DL — 專案進度與當前目標
 
-更新：2026-11-14。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
+更新：2026-11-15。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
 
 ## 階段總覽
 
@@ -46,6 +46,8 @@
 - `index.html` 只調整排列（搜尋列在橘色區塊、模式切換在頂列、設定與診斷集中於頁尾），所有 id 與控制項不變；版面驗收見 `tests/design-layout.browser.mjs`。
 
 ## 工作原則與驗收入口
+
+- **Windows Firefox HEVC 排除調查**：使用者回報加入能力限制前曾能播放，不能僅憑固定 MIME 診斷的 false 宣告實播不可能。`?id=7698294694886788121&hevc_probe=actual` 是暫時、明確 opt-in 的比較入口：只讓加密 HEVC MP4 通過初步選單／來源 admission，接著仍須通過實際 hvcC、輸出 init MIME、MSE／EME 與首影格驗證；不偽造能力、不啟用 HEVC 轉碼或整集備援。正常入口維持原有不支援編碼過濾。新 Log 包含 `source.hevc.admission.preliminarySupported`、metadata codecString、`mse.codec-check` 的 hvc1/hev1 支援結果、`mse.output-codec` 及 EME 失敗名稱。必須取得該 Windows Firefox 第五集的實際 playback Log 才能判定固定探測誤擋、真正支援不足或來源變動；現有附件只是 capability report。Git history 顯示來源層 HEVC 排除在 `08258a8`（2026-11-13 台北時間）之前已存在，`b3e186c` 才把過濾擴及選單，故不能只由時間先後斷言後者造成實播退化。
 
 - **瀏覽器測試介面契約**：編碼診斷為 `schema: 2`，分開記錄視訊／音訊、合併 MSE 與檔案播放；舊版 `schema: 1` 斷言須同步更新。播放器的原生畫質／速度 `select` 刻意隱藏，互動驗收應使用設定按鈕、第二層選項及關閉按鈕，不可對隱藏 select 使用 `selectOption()`。切換影集／重新載入會重設畫質，測試若要求固定 1080p 應明確經由可見選單選取，不能依賴儲存的畫質偏好。
 - **真實 EOF 驗收**：自動下一集永遠開啟；以捕獲階段記錄上一集的可信 `ended` 事件、結尾時間與解碼影格，並檢查該集的完成紀錄，不可假定事件處理後播放器仍停在上一集。不得用人工 `ended` 事件或跳到結尾取代實際播畢。

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { browserCanPlayVariant, playbackRendition } from '../src/source-options.js';
+import { browserCanPlayVariant, playbackRendition, playableVariants, untriedPlaybackRendition } from '../src/source-options.js';
 
 const encryptedHevc = { codec: 'hevc', quality: '1080p',
   contentKey: '00112233445566778899aabbccddeeff' };
@@ -54,4 +54,25 @@ test('HEVC encrypted rendition is selectable with only hev1 MSE support', () => 
   assert.equal(selected.source, encryptedHevc);
   assert.equal(browserCanPlayVariant(
     { ...encryptedHevc, contentKey: null }, unsupportedCanPlay, false, mseSupport), false);
+});
+
+
+test('actual-metadata diagnostic admits encrypted HEVC without claiming native support', () => {
+  const source = { ...encryptedHevc, url: 'https://example.test/movie.mp4' };
+  const noNative = () => '';
+  const noMse = () => false;
+  assert.deepEqual(playableVariants([source], noNative, false, noMse), []);
+  assert.equal(browserCanPlayVariant(source, noNative, false, noMse), false);
+  assert.equal(playbackRendition([source], {}, noNative, 0, false, noMse, true).source, source);
+  assert.equal(untriedPlaybackRendition([source], {}, noNative,
+    new Set(), false, noMse, true).source, source);
+  assert.equal(untriedPlaybackRendition([source], {}, noNative,
+    new Set([source.url]), false, noMse, true), null);
+  assert.deepEqual(playableVariants([source], noNative, false, noMse, true), [source]);
+  for (const candidate of [
+    { ...source, contentKey: null },
+    { ...source, url: 'https://example.test/movie.m3u8?token=fixture' },
+    { ...source, codec: 'bytevc2' },
+    { ...source, codec: 'h264' }
+  ]) assert.equal(browserCanPlayVariant(candidate, noNative, false, noMse, true), false);
 });

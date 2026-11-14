@@ -80,7 +80,7 @@ const HEVC_MSE_PROBES = [
   'video/mp4; codecs="hev1.2.4.L120.90, mp4a.40.2"'
 ];
 export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = false,
-  isMseTypeSupported = null) {
+  isMseTypeSupported = null, probeHevcMetadata = false) {
   const codec = codecId(variant?.codec);
   // ByteVC2 is not interchangeable with ISO VVC. A native vvc1 capability
   // says nothing about this proprietary bitstream.
@@ -93,6 +93,11 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
   };
   if (canPlayType?.(codecs[codec])) return true;
   if (codec !== 'hevc') return false;
+  // Opt-in diagnostic admission only. This does not establish decoder support:
+  // the actual hvcC, output init MIME and native playback checks still apply.
+  // Never admit clear MP4/HLS through an encrypted-MP4 metadata diagnostic.
+  if (probeHevcMetadata && variant?.contentKey && variant?.url &&
+      !/\.m3u8(?:[?#]|$)/i.test(variant.url)) return true;
   // Some browsers reject bare hvc1 via canPlayType but accept a complete
   // Main/Main10 MIME via MSE. Only encrypted renditions can use the remux
   // path; a support declaration does not prove that a frame can be decoded.
@@ -102,9 +107,9 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
 
 // Player menus and Auto use the same supported pool. Download menus must keep
 // using the unfiltered metadata because output conversion is independent.
-export function playableVariants(variants, canPlayType, canTranscodeBvc2 = false, isMseTypeSupported = null) {
+export function playableVariants(variants, canPlayType, canTranscodeBvc2 = false, isMseTypeSupported = null, probeHevcMetadata = false) {
   return (variants || []).filter(variant => browserCanPlayVariant(variant,
-    canPlayType, canTranscodeBvc2, isMseTypeSupported));
+    canPlayType, canTranscodeBvc2, isMseTypeSupported, probeHevcMetadata));
 }
 
 // Preserve an explicitly selected, advertised quality tier, even when its
@@ -112,11 +117,11 @@ export function playableVariants(variants, canPlayType, canTranscodeBvc2 = false
 // switch to another resolution; the UI must report the unavailable codec.
 // A fallback remains possible only when the requested tier does not exist.
 export function playbackRendition(variants, preferences = {}, canPlayType, attempt = 0,
-  canTranscodeBvc2 = false, isMseTypeSupported = null) {
+  canTranscodeBvc2 = false, isMseTypeSupported = null, probeHevcMetadata = false) {
   const requestedQuality = preferences.quality || 'auto';
   const requestedCodec = preferences.codec || 'auto';
   const playable = source => browserCanPlayVariant(source, canPlayType,
-    canTranscodeBvc2, isMseTypeSupported);
+    canTranscodeBvc2, isMseTypeSupported, probeHevcMetadata);
   const exact = candidateRenditions(variants, { quality: requestedQuality, codec: requestedCodec })
     .filter(playable);
   if (exact.length) return { source: exact[Math.max(0, attempt) % exact.length], fallback: false };
@@ -143,12 +148,12 @@ export function playbackRendition(variants, preferences = {}, canPlayType, attem
 // A late second channel can insert higher-quality variants before the first
 // source in sorting order. Retry an untried URL, not an index in a new list.
 export function untriedPlaybackRendition(variants, preferences, canPlayType,
-  triedUrls, canTranscodeBvc2 = false, isMseTypeSupported = null) {
+  triedUrls, canTranscodeBvc2 = false, isMseTypeSupported = null, probeHevcMetadata = false) {
   const candidates = (variants || []).filter(variant =>
     variant?.url && !triedUrls?.has(variant.url));
   if (!candidates.length) return null;
   return playbackRendition(candidates, preferences, canPlayType, 0,
-    canTranscodeBvc2, isMseTypeSupported);
+    canTranscodeBvc2, isMseTypeSupported, probeHevcMetadata);
 }
 
 export function sourceQueryForPlayback(quality = 'auto') {

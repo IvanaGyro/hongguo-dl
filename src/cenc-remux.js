@@ -115,9 +115,14 @@ export async function openCencProgressiveStream({
   // MOV muxer has not emitted its clear hvc1/hev1 sample entry yet. Permit
   // either preflight declaration, and require the *actual* init MIME at append.
   const alternateMime = codec === 'hevc' ? toMime('hev1' + videoCodec.slice(4)) : null;
+  const primarySupported = typeof MediaSource !== 'undefined' &&
+    Boolean(MediaSource.isTypeSupported?.(mime));
+  const alternateSupported = typeof MediaSource !== 'undefined' &&
+    Boolean(alternateMime && MediaSource.isTypeSupported?.(alternateMime));
+  onStage('mse.codec-check', { codec, codecString: videoCodec, hasAac,
+    primarySupported, alternateSupported });
   if (typeof MediaSource === 'undefined' ||
-      !(MediaSource.isTypeSupported?.(mime) ||
-        (alternateMime && MediaSource.isTypeSupported?.(alternateMime))) ||
+      !(primarySupported || alternateSupported) ||
       (codec !== 'hevc' && !video.canPlayType(mime)) ||
       !await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable())) return null;
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
@@ -309,7 +314,9 @@ export async function openCencProgressiveStream({
           const actualCodec = assertHevcInitCodecMatches(
             new Uint8Array(data.bytes), videoCodec);
           mime = toMime(actualCodec);
-          if (!MediaSource.isTypeSupported?.(mime))
+          const supported = Boolean(MediaSource.isTypeSupported?.(mime));
+          onStage('mse.output-codec', { codecString: actualCodec, hasAac, supported });
+          if (!supported)
             throw Object.assign(new Error('HEVC output MIME unsupported'),
               { code: 'HEVC_INIT_UNSUPPORTED' });
         }

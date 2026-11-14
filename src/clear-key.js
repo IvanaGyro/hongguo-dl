@@ -380,7 +380,7 @@ export async function openClearKeyStream({
   // Only report a stage and an error type. Media URLs and content keys are
   // deliberately excluded from diagnostics (even on failures).
   const declined = (stage, error = null) => {
-    onStage('cenc.declined', { reason: stage, code: error?.code || 'none' });
+    onStage('cenc.declined', { reason: stage, code: error?.code || 'none', errorName: error?.name || 'none' });
     console.info('[Hongguo EME] native stream unavailable:', stage,
       error?.name || '');
     return null;
@@ -422,7 +422,8 @@ export async function openClearKeyStream({
     hasKid: Boolean(kid), fragmented: Boolean(metadata.fragmented),
     fileBytes: metadata.fileSize || 0, hasAac: Boolean(metadata.hasAac),
     duration: metadata.movieDurationSeconds || 0,
-    codec: metadata.videoCodec || 'unknown'
+    codec: metadata.videoCodec || 'unknown',
+    codecString: metadata.hevcCodecString || 'unknown'
   });
   if (!kid) return declined('no-cenc-kid');
   if (metadata.videoCodec &&
