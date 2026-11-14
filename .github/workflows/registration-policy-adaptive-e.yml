@@ -1,4 +1,4 @@
-name: "Registration policy E - adaptive recovery (150s first, 180s base)"
+name: "Registration policy E - paired A/B 180s"
 on:
   push:
     branches:
@@ -9,7 +9,7 @@ on:
 jobs:
   observe:
     runs-on: ubuntu-latest
-    timeout-minutes: 39
+    timeout-minutes: 55
     permissions:
       contents: read
     steps:
@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: bun ci
       - name: Syntax-check experiment before any real upstream requests
-        run: node --check scripts/live-registration-adaptive-e.mjs
+        run: node --check scripts/live-registration-ab180.mjs
       - name: Run adaptive E against real upstream (no media/source requests)
         shell: bash
         run: |
@@ -36,7 +36,7 @@ jobs:
             sleep 1
           done
           if [ "$ready" -ne 1 ]; then cat /tmp/registration-adaptive-e/workerd.log; exit 1; fi
-          node scripts/live-registration-adaptive-e.mjs
+          node scripts/live-registration-ab180.mjs
       - name: Upload redacted data and exact IDs (1-day retention)
         if: always()
         uses: actions/upload-artifact@v4
