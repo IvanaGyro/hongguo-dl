@@ -352,7 +352,7 @@ test('CENC abort closes Worker and object URL even with a blocked MSE ACK', asyn
 });
 
 
-test('actual HEVC metadata remains gated by exact MIME after diagnostic admission', async t => {
+test('actual HEVC metadata remains gated by exact MIME', async t => {
   const previous = globalThis.MediaSource;
   t.after(() => {
     if (previous === undefined) delete globalThis.MediaSource;

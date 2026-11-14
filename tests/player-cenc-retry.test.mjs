@@ -15,13 +15,13 @@ class Select extends Element {
   replaceChildren(...options) { this.options = options; this.value = options[0]?.value || ''; }
 }
 
-async function runScenario(sourceFor, fetchImpl, { search = '', canPlayType = () => 'probably' } = {}) {
+async function runScenario(sourceFor, fetchImpl, { canPlayType = () => 'probably' } = {}) {
   const globals = ['location', 'window', 'document', 'Option', 'fetch'];
   const previous = globals.map(key => Object.getOwnPropertyDescriptor(globalThis, key));
   let player, timer;
   const logs = [];
   try {
-    globalThis.location = { search, hostname: 'localhost' };
+    globalThis.location = { search: '', hostname: 'localhost' };
     globalThis.window = new Element();
     globalThis.document = new Element();
     globalThis.Option = class { constructor(text, value) { this.textContent = text; this.value = value; } };
@@ -126,7 +126,7 @@ test('single-source metadata recovers transient 520 without another source API c
 });
 
 
-test('HEVC diagnostic reaches real metadata while ordinary unsupported admission stays filtered', async () => {
+test('unsupported HEVC stays out of the player menu and makes no media request', async () => {
   const sourceFor = async () => ({ variants: [source('metadata-diagnostic')] });
   let requests = 0;
   const fetchImpl = async (_url, options) => {
@@ -138,13 +138,4 @@ test('HEVC diagnostic reaches real metadata while ordinary unsupported admission
   assert.equal(requests, 0, 'Ordinary entry must keep unsupported HEVC filtered');
   assert.deepEqual(standard.labels, ['自動最佳']);
   assert(!standard.logs.some(row => row.event === 'cenc.prepare.begin'));
-  const diagnostic = await runScenario(sourceFor, fetchImpl,
-    { search: '?hevc_probe=actual', canPlayType: () => '' });
-  assert.equal(requests, 1, 'Diagnostic must reach the bounded metadata request');
-  assert.deepEqual(diagnostic.labels, ['自動最佳', '1080p']);
-  assert(diagnostic.logs.some(row => row.event === 'source.hevc.admission' &&
-    row.preliminarySupported === false));
-  assert(diagnostic.logs.some(row => row.event === 'cenc.prepare.failed' &&
-    row.code === 'CENC_RATE_LIMITED'), 'Access restrictions must still stop playback');
-  assert(!diagnostic.logs.some(row => row.event === 'playback.fallback.whole-file'));
 });

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDiagnosticBuffer } from '../src/playback-diagnostics.js';
-import { blockHevcFullFileFallback, bvc2PlaybackMode, hevcMetadataProbeEnabled } from '../src/playback-policy.js';
+import { blockHevcFullFileFallback, bvc2PlaybackMode } from '../src/playback-policy.js';
 
 test('BVC2 playback streams by default and only an explicit whole-file option opts out', () => {
   assert.equal(bvc2PlaybackMode('?id=7698294694886788121'), 'stream');
@@ -58,10 +58,7 @@ test('diagnostics preserve complete numeric buffer/cache intervals but reject ne
 });
 
 
-test('HEVC actual metadata admission is explicit and diagnostics retain codec declarations', () => {
-  for (const query of ['', '?hevc_probe=unknown', '?hevc_probe=false'])
-    assert.equal(hevcMetadataProbeEnabled(query), false);
-  assert.equal(hevcMetadataProbeEnabled('?id=42&hevc_probe=actual'), true);
+test('diagnostics retain exact HEVC codec declarations and support results', () => {
   const b = createDiagnosticBuffer(() => 0);
   b.log('cenc.stage', { phase: 'mse.codec-check', codecString: 'hvc1.1.6.L186',
     primarySupported: false, alternateSupported: true });
