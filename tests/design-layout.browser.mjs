@@ -15,6 +15,10 @@ try {
   await page.goto(process.env.TEST_BASE_URL || 'http://127.0.0.1:4173/', {waitUntil:'networkidle'});
   await page.evaluate(() => {
     document.body.dataset.mode = 'play';
+    document.getElementById('queue-panel').hidden = true;
+    document.getElementById('download-controls').hidden = true;
+    document.getElementById('select-all').hidden = true;
+    document.getElementById('select-none').hidden = true;
     const series = document.getElementById('series');
     const player = document.getElementById('player-panel');
     series.hidden = false;
@@ -33,6 +37,13 @@ try {
   });
   for (const width of [1440, 1024, 768, 390, 320]) {
     await page.setViewportSize({width, height: 900});
+    if (width <= 390) {
+      await page.evaluate(() => {
+        const stage = document.getElementById('player-stage');
+        stage.dataset.orientation = 'portrait';
+        stage.style.setProperty('--media-aspect', '9 / 16');
+      });
+    }
     const layout = await page.evaluate(() => {
       const rect = id => {
         const r = document.getElementById(id).getBoundingClientRect();
@@ -50,6 +61,11 @@ try {
     });
     console.log('LAYOUT ' + width + 'px: ' + JSON.stringify(layout));
     await page.screenshot({path: shots + '/hongguo-' + width + '.png', fullPage: true});
+    if (width <= 390) {
+      const videoRect = await page.locator('#player-video').boundingBox();
+      assert(videoRect.height > videoRect.width * 1.4,
+        width + 'px: portrait short drama should use a taller player');
+    }
     assert(layout.scrollWidth <= width + 1,
       width + 'px: document horizontal overflow '+JSON.stringify(layout));
     if (width > 820) assert(layout.player.right < layout.episodes.left,

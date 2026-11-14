@@ -902,6 +902,21 @@ $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
 void supportsIndependentSourceChannels().catch(() => {});
+// The player follows the source aspect ratio rather than forcing portrait dramas into 16:9.
+const playbackVideo = $('player-video');
+const playbackStage = $('player-stage');
+function syncPlaybackAspectRatio() {
+  const width = playbackVideo.videoWidth;
+  const height = playbackVideo.videoHeight;
+  const isPortrait = width > 0 && height > width;
+  playbackStage.dataset.orientation = isPortrait ? 'portrait' : 'landscape';
+  if (width > 0 && height > 0)
+    playbackStage.style.setProperty('--media-aspect', width + ' / ' + height);
+  else playbackStage.style.removeProperty('--media-aspect');
+}
+for (const event of ['loadedmetadata', 'resize', 'emptied'])
+  playbackVideo.addEventListener(event, syncPlaybackAspectRatio);
+syncPlaybackAspectRatio();
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),

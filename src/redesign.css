@@ -430,3 +430,17 @@ body[data-mode="play"] #series > #download-controls { display: none; }
   .player-control-group { justify-content: space-around; width: 100%; }
   .player-clock { bottom: 105px; }
 }
+
+/* Real media dimensions determine the player canvas; portrait short dramas
+   remain comfortably tall on phones, while native full-screen retains its sizing. */
+.player-stage > #player-video { aspect-ratio: var(--media-aspect, 16 / 9); }
+@media (max-width: 820px) {
+  body[data-mode="play"] .player-stage[data-orientation="portrait"] {
+    width: min(100%, 400px);
+    margin-inline: auto;
+  }
+  body[data-mode="play"] .player-stage[data-orientation="portrait"] > #player-video {
+    aspect-ratio: var(--media-aspect, 9 / 16);
+    max-height: min(76dvh, 730px);
+  }
+}
