@@ -35,8 +35,8 @@ function printableSource(source) {
 }
 export function createPlayer({
   video, status, label, prevButton, nextButton, qualitySelect,
-  speedSelect, fitSelect, autoNextInput, settingsToggle, settingsMenu,
-  settingsClose, pipButton, sourceInfo,
+  speedSelect, settingsToggle, settingsMenu,
+  settingsClose,
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress,
   diagnostics = () => {}
 }) {
@@ -81,7 +81,7 @@ export function createPlayer({
   video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
-    [speedSelect, preferences.speed], [fitSelect, preferences.fit]
+    [speedSelect, preferences.speed]
   ]) {
     if (value && Array.from(select.options).some(o => o.value === value)) select.value = value;
   }
@@ -95,13 +95,11 @@ export function createPlayer({
     qualitySelect.add(new Option(preferences.quality + '（待確認）', value));
     qualitySelect.value = value;
   }
-  if (typeof preferences.autoNext === 'boolean') autoNextInput.checked = preferences.autoNext;
   function persistPrefs() {
     try {
       storage.setItem(PREF_KEY, JSON.stringify({
         quality: selection().quality, codec: 'auto',
-        speed: speedSelect.value, fit: fitSelect.value,
-        autoNext: autoNextInput.checked
+        speed: speedSelect.value
       }));
     } catch { /* storage might be disabled */ }
   }
@@ -790,7 +788,7 @@ export function createPlayer({
     // HTMLMediaElement.load() may reset playbackRate to defaultPlaybackRate.
     // Keep the chosen speed across quality/codec changes, resume and next episode.
     video.defaultPlaybackRate = selectedRate;
-    video.style.objectFit = fitSelect.value;
+    video.style.objectFit = 'contain';
     video.load();
     video.playbackRate = selectedRate;
     reportStartup(resolved.fullFileFallback
@@ -902,7 +900,7 @@ export function createPlayer({
     if (!shouldPrefetchNext({
       duration: video.duration, position: video.currentTime,
       startupSeconds: lastStartupSeconds, paused: video.paused,
-      autoNext: autoNextInput.checked, saveData: !!navigator.connection?.saveData,
+      autoNext: true, saveData: !!navigator.connection?.saveData,
       hasNext: !!next
     })) return;
     const seriesId = getSeries().seriesId, quality = selection().quality;
@@ -1111,7 +1109,7 @@ export function createPlayer({
     savePosition(true);
     const index = ordered().findIndex(ep => ep.vid === current.vid);
     const next = ordered()[index + 1];
-    if (next && autoNextInput.checked) open(next);
+    if (next) open(next);
     else setStatus('播放完成');
   });
   video.addEventListener('error', () => {
@@ -1164,17 +1162,78 @@ export function createPlayer({
       if (currentToken === token && !signal.aborted) void run(current, currentToken, signal, true, prior);
     });
   });
+  // Two-level Video.js settings, only video quality and playback rate.
+  // The native selects remain the single source of truth for stored preferences.
+  const settingsStage = video.closest('media-container');
+  const settingsViews = [...settingsMenu.querySelectorAll('[data-settings-view]')];
+  const backButton = settingsMenu.querySelector('#player-settings-back');
+  const settingsHeading = settingsMenu.querySelector('#player-settings-heading');
+  function updateSettingsSummaries() {
+    settingsMenu.querySelector('#player-quality-summary').textContent =
+      qualitySelect.selectedOptions[0]?.textContent || '自動最佳';
+    settingsMenu.querySelector('#player-speed-summary').textContent =
+      speedSelect.selectedOptions[0]?.textContent || '1×';
+  }
+  function showSettingsView(view = 'root') {
+    for (const element of settingsViews) element.hidden = element.dataset.settingsView !== view;
+    backButton.hidden = view === 'root';
+    settingsHeading.textContent = view === 'quality' ? '畫質' :
+      view === 'speed' ? '播放速度' : '播放設定';
+    updateSettingsSummaries();
+    if (view === 'root') return;
+    const select = view === 'quality' ? qualitySelect : speedSelect;
+    const list = settingsMenu.querySelector(view === 'quality' ?
+      '#player-quality-options' : '#player-speed-options');
+    list.replaceChildren(...Array.from(select.options).map(option => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'player-settings-choice';
+      button.dataset.choiceFor = view;
+      button.dataset.choiceValue = option.value;
+      button.setAttribute('aria-pressed', String(option.value === select.value));
+      button.textContent = option.textContent;
+      if (option.value === select.value) {
+        const mark = document.createElement('span');
+        mark.textContent = '✓';
+        mark.className = 'player-choice-check';
+        mark.setAttribute('aria-hidden', 'true');
+        button.append(mark);
+      }
+      return button;
+    }));
+  }
   function showSettings(visible) {
+    if (visible) showSettingsView('root');
     settingsMenu.hidden = !visible;
+    settingsStage.dataset.settingsOpen = String(visible);
     settingsToggle.setAttribute('aria-expanded', String(visible));
   }
   settingsToggle.addEventListener('click', () => showSettings(settingsMenu.hidden));
   settingsClose.addEventListener('click', () => showSettings(false));
+  settingsMenu.addEventListener('click', event => {
+    const target = event.target.closest('button[data-settings-target], button[data-choice-for]');
+    if (!target) return;
+    if (target.dataset.settingsTarget) {
+      showSettingsView(target.dataset.settingsTarget);
+      return;
+    }
+    const select = target.dataset.choiceFor === 'quality' ? qualitySelect : speedSelect;
+    if (select.value !== target.dataset.choiceValue) {
+      select.value = target.dataset.choiceValue;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    showSettingsView('root');
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!settingsMenu.hidden && !settingsMenu.contains(event.target) &&
+        !settingsToggle.contains(event.target)) showSettings(false);
+  });
   prevButton.addEventListener('click', () => step(-1));
   nextButton.addEventListener('click', () => step(1));
   qualitySelect.addEventListener('change', () => {
     if (lastVariants) updateRenditionOptions(lastVariants);
     persistPrefs();
+    updateSettingsSummaries();
     if (current) open(current, true, true);
   });
   speedSelect.addEventListener('change', () => {
@@ -1182,20 +1241,10 @@ export function createPlayer({
     video.defaultPlaybackRate = rate;
     video.playbackRate = rate;
     persistPrefs();
+    updateSettingsSummaries();
   });
-  fitSelect.addEventListener('change', () => { video.style.objectFit = fitSelect.value; persistPrefs(); });
-  autoNextInput.addEventListener('change', () => {
-    persistPrefs();
-    if (!autoNextInput.checked) cancelPrefetch();
-    else maybePrefetchNext();
-  });
-  video.style.objectFit = fitSelect.value;
-  if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') {
-    pipButton.hidden = false;
-    pipButton.addEventListener('click', () => {
-      video.requestPictureInPicture().catch(() => setStatus('目前無法啟用子母畫面'));
-    });
-  }
+  video.style.objectFit = 'contain';
+  updateSettingsSummaries();
   // pagehide also fires when a document enters the back/forward cache.
   // Explicitly abort the active Range/Worker before suspension, rather than
   // relying on the browser to tear down a still-live CENC remux.
