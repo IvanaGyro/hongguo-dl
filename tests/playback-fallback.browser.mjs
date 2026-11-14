@@ -39,14 +39,14 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
   }] }});
   assert.equal(url.pathname, '/api/media');
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
-  if (!range) {
+  if (!range || range[1] === '0' && range[2] === '') {
     wholeFileRequests++;
     const status = await page.locator('#player-status').textContent();
     assert.match(status, /⚠.*整集下載備援.*完成後才能播放/,
       'Warn before starting the full-file request');
     await new Promise(resolve => setTimeout(resolve,100));
-    return route.fulfill({ status:200, contentType:'video/mp4',
-      headers:{'Content-Length':String(input.length)}, body:input });
+    return route.fulfill({ status: range ? 206 : 200, contentType:'video/mp4',
+      headers:{'Content-Length':String(input.length), ...(range ? { 'Content-Range':`bytes 0-${input.length - 1}/${input.length}` } : {})}, body:input });
   }
   const start = Number(range[1]), end = Math.min(Number(range[2]) || input.length-1,input.length-1);
   return route.fulfill({ status:206, contentType:'video/mp4', headers:{

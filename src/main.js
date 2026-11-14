@@ -27,7 +27,7 @@ import { createPlayer } from './player.js';
 import { createPlaybackDiagnostics } from './playback-diagnostics.js';
 import { createMediaTransportForSource } from './media-transport.js';
 import { createEpisodeSourceStore } from './episode-source-store.js';
-import { initialDownloadQualityEpisode, hasExactDownloadQuality } from './download-quality-options.js';
+import { initialDownloadQualityEpisode } from './download-quality-options.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -205,7 +205,7 @@ function renderQueue() {
     const selectedOptions = [
       job.quality !== 'auto' && job.quality,
       job.codec !== 'auto' && job.codec?.toUpperCase(),
-      ({ h264: '轉 H.264', hevc: '轉 H.265', vvc: '轉 VVC', av1: '轉 AV1', copy: '無損封裝' })[job.mode] || '原始編碼'
+      ({ h264: '轉 H.264', hevc: '轉 H.265', vvc: '轉 VVC', av1: '轉 AV1', copy: '無損封裝' })[job.mode] || ''
     ].filter(Boolean);
     const displayTitle = episodeDisplayTitle(job);
     let action = '';

@@ -920,6 +920,11 @@ export function createPlayer({
     prefetched = { vid: next.vid, key, controller: preloadController, promise };
   }
   function open(episode, autoPlay = true, keepSettings = false) {
+    // Mode activation already opens its suggested episode. A repeated click
+    // must not cancel/restart that same in-flight selection; settings changes
+    // explicitly pass keepSettings and still restart with the new rendition.
+    if (current?.vid === episode.vid && loading && controller &&
+        !controller.signal.aborted && !keepSettings) return;
     if (current?.vid !== episode.vid) {
       const quality = selection().quality;
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
