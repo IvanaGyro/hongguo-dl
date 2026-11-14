@@ -113,11 +113,18 @@ try {
   await page.screenshot({path:'test-results/design-layout/player-1000-desktop.png',fullPage:true});
   console.log('PASS 1000 episodes, 100 DOM nodes, jump 521, download selection, current fill, menu and hide CSS');
   await page.setViewportSize({width:390,height:844});
-  await page.evaluate(()=>{
+  const portraitPoster='<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">'+
+    '<rect width="720" height="1280" fill="#0c180f"/>'+
+    '<circle cx="490" cy="455" r="300" fill="#284432" opacity=".75"/>'+
+    '<circle cx="195" cy="820" r="240" fill="#9c542b" opacity=".26"/>'+
+    '<text x="360" y="580" text-anchor="middle" fill="#fff5e9" font-family="sans-serif" font-size="37">播放器介面測試</text>'+
+    '<text x="360" y="635" text-anchor="middle" fill="#a6c2a8" font-family="sans-serif" font-size="25">模擬畫面 · 非實際影片</text></svg>';
+  await page.evaluate(src=>{
     const stage=document.getElementById('player-stage');
     stage.dataset.orientation='portrait';
     stage.style.setProperty('--media-aspect','9 / 16');
-  });
+    document.getElementById('player-video').poster=src;
+  },'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(portraitPoster));
   assert((await page.evaluate(()=>document.documentElement.scrollWidth))<=391,
     '390px player preview overflows horizontally');
   await page.screenshot({path:'test-results/design-layout/player-1000-mobile.png',fullPage:true});
