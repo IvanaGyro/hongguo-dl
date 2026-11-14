@@ -63,6 +63,18 @@
               <button id="select-none" type="button" class="quiet">清空</button>
             </div>
           </div>
+          <nav id="episode-navigation" class="episode-navigation" aria-label="分集導覽" hidden>
+            <div class="episode-range-switch">
+              <button id="episode-prev-range" type="button" aria-label="上一百集">‹</button>
+              <span id="episode-range" aria-live="polite"></span>
+              <button id="episode-next-range" type="button" aria-label="下一百集">›</button>
+            </div>
+            <form id="episode-jump-form" class="episode-jump">
+              <label for="episode-jump">跳到第</label>
+              <input id="episode-jump" type="number" inputmode="numeric" min="1" step="1" required placeholder="集數" />
+              <button type="submit">前往</button>
+            </form>
+          </nav>
           <div id="episodes" class="episode-grid" aria-label="分集選擇"></div>
           <div id="download-controls">
           <h3 class="download-section-heading">下載設定</h3>
@@ -82,10 +94,11 @@
           <video-player id="videojs-player" class="videojs-player">
             <media-container id="player-stage" class="player-stage">
               <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
-              <media-gesture type="tap" action="togglePaused" region="center"></media-gesture>
+              <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"></media-gesture>
+              <media-gesture type="tap" action="toggleControls" pointer="touch"></media-gesture>
               <media-gesture type="doubletap" action="seekStep" value="-10" region="left"></media-gesture>
               <media-gesture type="doubletap" action="seekStep" value="10" region="right"></media-gesture>
-              <media-controls visibility="always" aria-label="播放器控制項">
+              <media-controls visibility="auto" aria-label="播放器控制項">
                 <media-controls-content class="player-bottom-controls">
                   <media-time-slider id="player-seek" class="player-seek" aria-label="播放進度">
                     <media-slider-track class="player-seek-track">
@@ -96,22 +109,22 @@
                   </media-time-slider>
                   <div class="player-control-bar">
                     <div class="player-control-group">
-                      <button id="player-prev" type="button" aria-label="上一集" title="上一集">⏮</button>
+                      <button id="player-prev" type="button" aria-label="上一集" title="上一集"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 5v14M19 5 9 12l10 7V5Z"/></svg></button>
                       <media-play-button id="player-play-pause" class="player-ui-button" aria-label="播放／暫停">
-                        <span class="player-play-icon">▶</span><span class="player-pause-icon">⏸</span>
+                        <svg class="player-play-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg><svg class="player-pause-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>
                       </media-play-button>
-                      <button id="player-next" type="button" aria-label="下一集" title="下一集">⏭</button>
+                      <button id="player-next" type="button" aria-label="下一集" title="下一集"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 5v14M5 5l10 7-10 7V5Z"/></svg></button>
                       <media-time-group id="player-clock" class="player-clock">
                         <media-time type="current"></media-time><media-time-separator> / </media-time-separator><media-time type="duration"></media-time>
                       </media-time-group>
                     </div>
                     <div class="player-control-group">
                       <media-mute-button id="player-mute" class="player-ui-button" aria-label="靜音切換">
-                        <span class="player-unmuted-icon">◖))</span><span class="player-muted-icon">◖×</span>
+                        <svg class="player-unmuted-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19V5ZM15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg><svg class="player-muted-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19V5ZM16 9l6 6m0-6-6 6"/></svg>
                       </media-mute-button>
-                      <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定">⚙</button>
+                      <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.9 4.9l2.2 2.2m9.8 9.8 2.2 2.2M2 12h3m14 0h3M4.9 19.1l2.2-2.2m9.8-9.8 2.2-2.2"/></svg></button>
                       <media-fullscreen-button id="player-fullscreen" class="player-ui-button" aria-label="全螢幕">
-                        <span class="player-enter-fullscreen">⛶</span><span class="player-exit-fullscreen">⛶</span>
+                        <svg class="player-enter-fullscreen player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m13-5v4a1 1 0 0 1-1 1h-4"/></svg><svg class="player-exit-fullscreen player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 8H3m5 0V3m8 5h5m-5 0V3M8 16H3m5 0v5m8-5h5m-5 0v5"/></svg>
                       </media-fullscreen-button>
                     </div>
                   </div>
@@ -124,19 +137,29 @@
               <media-hotkey keys="ArrowRight" action="seekStep" value="5"></media-hotkey>
               <media-status-announcer></media-status-announcer>
             <div id="player-settings" class="player-settings-menu" hidden>
-              <div class="player-settings-title">播放設定 <button type="button" id="player-settings-close" title="關閉">✕</button></div>
-              <label>畫質
-                <select id="player-quality"><option value="auto">自動最佳</option></select>
-              </label>
-              <label>播放速度
-                <select id="player-speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select>
-              </label>
-              <label>畫面比例
-                <select id="player-fit"><option value="contain">完整顯示</option><option value="cover">填滿裁切</option></select>
-              </label>
-              <label class="player-toggle"><input id="player-autonext" type="checkbox" checked /> 自動播放下一集</label>
-              <button id="player-pip" type="button" class="quiet" hidden>子母畫面</button>
-              <div id="player-source-info" class="player-source-info" aria-live="polite"></div>
+              <div class="player-settings-heading">
+                <button id="player-settings-back" type="button" data-settings-target="root" aria-label="返回設定" hidden>‹</button>
+                <span id="player-settings-heading">播放設定</span>
+                <button id="player-settings-close" type="button" aria-label="關閉播放設定">✕</button>
+              </div>
+              <div class="player-settings-view" data-settings-view="root">
+                <button type="button" class="player-settings-row" data-settings-target="quality">
+                  <svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg>
+                  <span>畫質</span><span id="player-quality-summary" class="player-settings-value">自動最佳</span><span aria-hidden="true" class="player-settings-chevron">›</span>
+                </button>
+                <button type="button" class="player-settings-row" data-settings-target="speed">
+                  <svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
+                  <span>播放速度</span><span id="player-speed-summary" class="player-settings-value">1×</span><span aria-hidden="true" class="player-settings-chevron">›</span>
+                </button>
+              </div>
+              <div class="player-settings-view" data-settings-view="quality" hidden>
+                <div id="player-quality-options" class="player-settings-choices" role="group" aria-label="畫質"></div>
+                <select id="player-quality" class="player-settings-native" tabindex="-1" aria-hidden="true"><option value="auto">自動最佳</option></select>
+              </div>
+              <div class="player-settings-view" data-settings-view="speed" hidden>
+                <div id="player-speed-options" class="player-settings-choices" role="group" aria-label="播放速度"></div>
+                <select id="player-speed" class="player-settings-native" tabindex="-1" aria-hidden="true"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select>
+              </div>
             </div>
             </media-container>
           </video-player>
