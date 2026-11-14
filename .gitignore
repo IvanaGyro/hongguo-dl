@@ -4,3 +4,4 @@ public/ffmpeg/
 .wrangler/
 .DS_Store
 *.log
+test-results/
