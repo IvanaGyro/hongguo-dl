@@ -36,7 +36,7 @@ function printableSource(source) {
 export function createPlayer({
   video, status, label, prevButton, nextButton, qualitySelect,
   speedSelect, settingsToggle, settingsMenu,
-  settingsClose,
+  settingsClose, sourceInfo,
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress,
   diagnostics = () => {}
 }) {
