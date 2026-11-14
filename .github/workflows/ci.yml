@@ -83,3 +83,12 @@ jobs:
             sleep 1
           done
           node tests/rendition-menu.browser.mjs
+          node tests/design-layout.browser.mjs
+
+      - name: Upload responsive design screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hongguo-design-layout
+          path: test-results/design-layout/*.png
+          if-no-files-found: ignore

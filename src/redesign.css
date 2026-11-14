@@ -372,7 +372,7 @@ body[data-mode="play"] #series > #download-controls { display: none; }
   body[data-mode="play"] #series { grid-template-columns: minmax(0, 1fr) minmax(195px, 230px); gap: 0 1rem; }
   body[data-mode="play"] #series > #episodes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 740px) {
+@media (max-width: 820px) {
   .topbar { height: 70px; padding: 0 1rem; }
   .topbar::after { left: 1rem; }
   .layout { padding: 0 1rem 3.5rem; }
@@ -407,9 +407,9 @@ body[data-mode="play"] #series > #download-controls { display: none; }
   .player-bottom-controls { padding: 1.5rem .36rem .26rem; }
   .player-control-group { gap: 0; }
   .player-control-group > :is(button, media-play-button, media-mute-button, media-fullscreen-button) {
-    min-width: 37px; height: 40px; padding: .25rem;
+    min-width: 44px; height: 44px; padding: .25rem;
   }
-  .player-control-group > media-play-button { min-width: 40px; height: 40px; }
+  .player-control-group > media-play-button { min-width: 44px; height: 44px; }
   .player-clock {
     position: absolute; bottom: 60px; left: 9px;
     padding: 0; font-size: .66rem; text-shadow: 0 1px 3px #000;
@@ -423,4 +423,10 @@ body[data-mode="play"] #series > #download-controls { display: none; }
   html { scroll-behavior: auto; }
   button, .player-seek-thumb { transition: none; }
   button:hover:not(:disabled) { transform: none; }
+}
+
+@media (max-width: 360px) {
+  .player-control-bar { flex-wrap: wrap; row-gap: 0; }
+  .player-control-group { justify-content: space-around; width: 100%; }
+  .player-clock { bottom: 105px; }
 }
