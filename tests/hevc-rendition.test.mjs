@@ -6,6 +6,16 @@ const encryptedHevc = { codec: 'hevc', quality: '1080p',
   contentKey: '00112233445566778899aabbccddeeff' };
 const main10 = 'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"';
 
+test('complete HEVC Main 8-bit declarations keep 1080p selectable when generic/Main10 probes fail', () => {
+  for (const prefix of ['hvc1', 'hev1']) {
+    const actual = 'video/mp4; codecs="' + prefix + '.1.6.L120.90, mp4a.40.2"';
+    const mseSupport = mime => mime === actual;
+    assert.equal(browserCanPlayVariant(encryptedHevc, () => '', false, mseSupport), true);
+    assert.equal(playbackRendition([encryptedHevc, { quality: '720p', codec: 'h264' }],
+      { quality: 'auto' }, () => '', 0, false, mseSupport).source, encryptedHevc);
+  }
+});
+
 test('precise HEVC Main10 MSE support can reach the encrypted rendition', () => {
   const noGenericCanPlay = () => '';
   const mseSupport = mime => mime === main10;

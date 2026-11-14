@@ -69,6 +69,8 @@ export function codecsAtQuality(variants, quality = 'auto') {
 // Preliminary probes only: the actual encrypted track's hvcC must still be
 // parsed with bounded Range requests before creating a SourceBuffer.
 const HEVC_MSE_PROBES = [
+  'video/mp4; codecs="hvc1.1.6.L120.90, mp4a.40.2"',
+  'video/mp4; codecs="hev1.1.6.L120.90, mp4a.40.2"',
   'video/mp4; codecs="hvc1.1.6.L93, mp4a.40.2"',
   'video/mp4; codecs="hev1.1.6.L93, mp4a.40.2"',
   'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"',
