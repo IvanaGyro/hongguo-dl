@@ -34,3 +34,21 @@ test('sample first restricted episode and never invent unobserved tiers', () => 
   assert.deepEqual(downloadQualityOptions(variants),['1080p','720p']);
   assert.equal(hasExactDownloadQuality(variants,'540p'),false);
 });
+
+test('page teardown aborts shared source I/O, including an unsignaled quality probe', async () => {
+  let observed;
+  const store = createEpisodeSourceStore((_sid, _vid, { signal }) => {
+    observed = signal;
+    return new Promise((_, reject) => signal.addEventListener('abort', () =>
+      reject(Object.assign(new Error('Canceled'), { code: 'CANCELED' })), { once: true }));
+  });
+  const sample = store.get('42', '101');
+  const job = store.get('42', '101', { signal: new AbortController().signal });
+  await Promise.resolve();
+  const a = assert.rejects(sample, { code: 'CANCELED' });
+  const b = assert.rejects(job, { code: 'CANCELED' });
+  store.abortAll();
+  await Promise.all([a, b]);
+  assert.equal(observed.aborted, true);
+  assert.equal(store.peek('42', '101'), null);
+});

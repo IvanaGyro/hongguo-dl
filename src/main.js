@@ -103,8 +103,8 @@ try { exportSelected = new Set(JSON.parse(localStorage.getItem(EXPORT_STORE) || 
 catch { /* browser restrictions */ }
 const mediaCache = new MediaCache();
 let downloadQualitySeriesId = null, downloadQualitySampleVid = null, sampleRequestToken = 0;
-const sourceStore = createEpisodeSourceStore((sid, vid) =>
-  resolveSourceFromNetwork(sid, vid), (sid, vid, variants) => {
+const sourceStore = createEpisodeSourceStore((sid, vid, { signal }) =>
+  resolveSourceFromNetwork(sid, vid, signal), (sid, vid, variants) => {
     if (String(series?.seriesId) === String(sid) && vid === downloadQualitySampleVid)
       renderDownloadQualityChoices(variants);
   });
@@ -342,12 +342,11 @@ function supportsIndependentSourceChannels() {
   return sourceChannelProbe;
 }
 let sourceRequestSequence = 0;
-async function resolveSourceFromNetwork(seriesId, vid) {
+async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortController().signal) {
   const requestId = ++sourceRequestSequence;
   const episode = String(series?.seriesId) === String(seriesId)
     ? Number(series.episodes?.find(item => String(item.vid) === String(vid))?.index || 0) : 0;
   const trace = (event, fields = {}) => playbackDiagnostics.log(event, { requestId, episode, ...fields });
-  const signal = new AbortController().signal;
   const started = performance.now();
   trace('source.api.request', {});
   // Expose slow Worker/API resolution while the promise is still pending.
@@ -1061,3 +1060,5 @@ if (initialIds.length) {
   $('input-url').value = initialIds.join(', ');
   void lookupIds(initialIds);
 }
+
+window.addEventListener('pagehide', () => sourceStore.abortAll());

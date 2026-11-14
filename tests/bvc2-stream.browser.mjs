@@ -33,27 +33,29 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: false });
   if (url.pathname === '/api/series') return json({ kind: 'series', seriesId: '123456789',
-    title: 'Synthetic ByteVC2 framing', total: 1, accessible: 1,
-    episodes: [{ index: 1, vid: '111111111', available: true }] });
+    title: 'Synthetic ByteVC2 framing', total: 2, accessible: 2,
+    episodes: [{ index: 1, vid: '111111111', available: true }, { index: 2, vid: '222222222', available: true }] });
   if (url.pathname === '/api/source') return json({ variants: ['denied', 'alternate'].map(host => ({
     codec: 'bytevc2', quality: '720p', source: 'app',
-    url: 'https://' + host + '.fqnovelvod.com/synthetic-bvc2.mp4', contentKey: null })) });
+    url: 'https://' + host + '.fqnovelvod.com/' +
+      (url.searchParams.get('vid') === '222222222' ? 'short.mp4' : 'play.mp4'), contentKey: null })) });
   assert.equal(url.pathname, '/api/media');
   if (new URL(url.searchParams.get('url')).hostname.startsWith('denied.')) {
     denied++; return route.fulfill({ status: 403, body: 'Synthetic CDN denial' });
   }
+  const media = new URL(url.searchParams.get('url')).pathname === '/short.mp4' ? shortInput : (whole ? shortInput : longInput);
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
   // Original, unencrypted downloads use the existing direct streaming writer.
-  if (!range) return route.fulfill({ contentType: 'video/mp4', body: input });
-  const first = Number(range[1]), last = range[2] ? Math.min(Number(range[2]), input.length - 1)
-    : Math.min(first + (whole ? input.length : 65536) - 1, input.length - 1);
-  assert(first >= 0 && last >= first && last < input.length);
+  if (!range) return route.fulfill({ contentType: 'video/mp4', body: media });
+  const first = Number(range[1]), last = range[2] ? Math.min(Number(range[2]), media.length - 1)
+    : Math.min(first + (whole ? media.length : 65536) - 1, media.length - 1);
+  assert(first >= 0 && last >= first && last < media.length);
   reads.push({ first, last });
   deliveredBytes += last - first + 1;
   if (!whole) await new Promise(resolve => setTimeout(resolve, 20));
   return route.fulfill({ status: 206, contentType: 'video/mp4',
-    headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${first}-${last}/${input.length}`,
-      'Content-Length': String(last - first + 1) }, body: input.subarray(first, last + 1) });
+    headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${first}-${last}/${media.length}`,
+      'Content-Length': String(last - first + 1) }, body: media.subarray(first, last + 1) });
 });
 await page.exposeFunction('recordBvcFirstFrame', () => { firstFrameBytes ??= deliveredBytes; });
 try {
@@ -101,11 +103,11 @@ try {
   await page.locator('#mode-download').click();
   await page.waitForFunction(() => window.__activeMse === 0);
   // Download jobs use the short fixture to keep five codec tests bounded.
-  input = shortInput;
+  await page.locator('[data-vid="111111111"]').uncheck();
   // Every requested output goes through the real download queue and worker.
   for (const [index, mode] of ['original', 'h264', 'hevc', 'vvc', 'av1'].entries()) {
     await page.locator('#output-mode').selectOption(mode);
-    await page.locator('[data-vid="111111111"]').check();
+    await page.locator('[data-vid="222222222"]').check();
     await page.locator('#add-queue').click();
     await page.waitForFunction(count => document.querySelectorAll('.job .s-completed').length === count,
       index + 1, { timeout: 120000 });
