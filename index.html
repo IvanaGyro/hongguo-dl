@@ -176,6 +176,13 @@
             <button id="clear-finished" type="button" class="quiet">清除完成項目</button>
           </div>
         </div>
+        <nav id="queue-navigation" class="episode-navigation" aria-label="下載佇列分頁" hidden>
+          <div class="episode-range-switch">
+            <button id="queue-prev-range" type="button" aria-label="上一百筆下載">‹</button>
+            <span id="queue-range" aria-live="polite"></span>
+            <button id="queue-next-range" type="button" aria-label="下一百筆下載">›</button>
+          </div>
+        </nav>
         <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">尚無下載項目</div></div>
         <div class="queue-export">
           <div><strong id="queue-selected-count">尚未選取集數</strong></div>
