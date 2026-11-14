@@ -61,7 +61,8 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
 });
 await page.exposeFunction('recordBvcFirstFrame', () => { firstFrameBytes ??= deliveredBytes; });
 try {
-  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789&bvc2_stream=${whole ? 'whole-file' : 'experimental'}`);
+  // Exercise the actual default URL; whole-file conversion is opt-in.
+  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789${whole ? '&bvc2_stream=whole-file' : ''}`);
   // The controls exist in static HTML before the application attaches handlers.
   await page.waitForFunction(() => document.querySelector('#series-title')
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
@@ -78,6 +79,8 @@ try {
   }, null, { timeout: 90000 });
   assert.equal(denied, 1, '403 must rotate to the other BVC2 CDN');
   assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
+  assert.match(await page.locator('#playback-log').inputValue(),
+    whole ? /bvc2\.prepare\.begin mode=whole-file/ : /bvc2\.prepare\.begin mode=stream/);
   if (!whole) {
   // The first real decoded browser picture must appear before the whole
   // long source is delivered, not merely before its last requested offset.

@@ -16,7 +16,7 @@ import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
-import { blockHevcFullFileFallback } from './playback-policy.js';
+import { blockHevcFullFileFallback, bvc2PlaybackMode } from './playback-policy.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
@@ -69,9 +69,7 @@ export function createPlayer({
     console.info('[Hongguo startup] E' + current.index + ' ' + stage + ': ' +
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
-  // Experimental only: actual proprietary BTY2 picture decoding remains unverified.
-  const experimentalBvc2Stream = new URLSearchParams(location.search)
-    .get('bvc2_stream') === 'experimental';
+  const bvc2Mode = bvc2PlaybackMode(location.search);
   const mimeSupport = mime => video.canPlayType(mime);
   // Source selection uses a provisional HEVC probe; openClearKeyStream later
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
@@ -402,6 +400,17 @@ export function createPlayer({
     }
     // A 1080p HEVC selection must not wait for unrelated ByteVC2 assets.
     const nativeChoice = playbackRendition(variants, { quality, codec }, mimeSupport, 0, false, mseSupport).source;
+    if (!quiet) for (const option of renditionOptions(variants)) {
+      const candidates = variants.filter(v => qualityId(v) === option.quality &&
+        (codecId(v.codec) || 'auto') === option.codec);
+      log('source.rendition', {
+        quality: option.quality, codec: option.codec, candidates: candidates.length,
+        encrypted: candidates.some(v => Boolean(v.contentKey)),
+        nativeSupported: Boolean(playbackRendition(candidates, option,
+          mimeSupport, 0, false, mseSupport).source)
+      });
+    }
+    log('source.selection.policy', { quality, codec, nativeAvailable: Boolean(nativeChoice), bvc2Mode });
     const needsBvc2 = !nativeChoice && variants.some(v => codecId(v.codec) === 'bytevc2' &&
       (quality === 'auto' || qualityId(v) === quality) &&
       (codec === 'auto' || codec === 'bytevc2'));
@@ -520,8 +529,8 @@ export function createPlayer({
       // Do not transcode a whole second episode during playback. Prefetch
       // metadata now; take over when the user actually switches episodes.
       if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants };
-      if (experimentalBvc2Stream) {
-      setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
+      if (bvc2Mode === 'stream') {
+      setStatus('正在準備 ByteVC2 → H.264 增量串流…');
       const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
       const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(), fetch, undefined, source.userAgent);
       const url = transport.mode === 'direct' ? source.url : proxyUrl;

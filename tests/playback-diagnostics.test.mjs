@@ -2,7 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDiagnosticBuffer } from '../src/playback-diagnostics.js';
-import { blockHevcFullFileFallback } from '../src/playback-policy.js';
+import { blockHevcFullFileFallback, bvc2PlaybackMode } from '../src/playback-policy.js';
+
+test('BVC2 playback streams by default and only an explicit whole-file option opts out', () => {
+  assert.equal(bvc2PlaybackMode('?id=7698294694886788121'), 'stream');
+  assert.equal(bvc2PlaybackMode('?bvc2_stream=experimental'), 'stream');
+  assert.equal(bvc2PlaybackMode('?bvc2_stream=unknown'), 'stream');
+  assert.equal(bvc2PlaybackMode('?bvc2_stream=whole-file'), 'whole-file');
+});
 
 test('diagnostics redact URLs and keys and have a bounded log', () => {
   let ms = 0;

@@ -11,6 +11,7 @@ on:
       - 'src/cenc-remux*.js'
       - 'src/cached-media-reader.js'
       - 'src/media-body.js'
+      - 'src/playback-policy.js'
       - 'tests/bvc2*'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'scripts/generate-bvc2-fixtures.mjs'
