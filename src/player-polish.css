@@ -187,7 +187,7 @@ input, select, button { font-family:inherit; }
   media-fullscreen-button,media-time-slider):focus-visible {
   outline:3px solid #9BDFC0; outline-offset:3px;
 }
-:where(button,input,select,textarea):not(:disabled) { min-height:44px; }
+:where(button,input:not([type="checkbox"]):not([type="radio"]),select,textarea):not(:disabled) { min-height:44px; }
 #main-content:focus { outline:none; }
 /* Sharp geometry is shared by typography, cards and forms. Native
    circular transport affordances (play/mute/fullscreen) stay round. */
