@@ -90,15 +90,10 @@ export function createPlayer({
     const options = renditionOptions(lastVariants || []);
     qualitySelect.value = matchingRenditionValue(options, { quality, codec }) || 'auto';
   }
-  if (preferences.quality && preferences.quality !== 'auto') {
-    const value = renditionValue(preferences.quality, 'auto');
-    qualitySelect.add(new Option(preferences.quality + '（待確認）', value));
-    qualitySelect.value = value;
-  }
+  // Playback quality is session-only; never restore it on a fresh page load.
   function persistPrefs() {
     try {
       storage.setItem(PREF_KEY, JSON.stringify({
-        quality: selection().quality, codec: 'auto',
         speed: speedSelect.value
       }));
     } catch { /* storage might be disabled */ }
@@ -1299,6 +1294,9 @@ export function createPlayer({
     stop() {
       cancelPrefetch();
       savePosition(); current = null; disposeSource(); token++;
+      // New series should never inherit a previous series's quality.
+      qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
+      lastVariants = null; lastVariantsVid = null;
       label.textContent = '尚未播放'; refreshButtons();
     },
     pause() { if (readyForHistory) savePosition(); video.pause(); },
