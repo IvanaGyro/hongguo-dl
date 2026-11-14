@@ -41,6 +41,7 @@ export function createPlayer({
   diagnostics = () => {}
 }) {
   let current = null;
+  let settingsView = 'root';
   let controller = null, token = 0, activeUrl = null;
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
@@ -105,6 +106,19 @@ export function createPlayer({
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
     qualitySelect.value = value || 'auto';
+    // Updating CDN variants must also update the custom open submenu.
+    // Preserve keyboard focus when the choice that held focus still exists.
+    if (settingsView === 'quality' && !settingsMenu.hidden &&
+        settingsMenu.querySelector?.('#player-quality-options')) {
+      const list = settingsMenu.querySelector('#player-quality-options');
+      const focused = list.contains?.(document.activeElement)
+        ? document.activeElement?.dataset?.choiceValue : null;
+      showSettingsView('quality');
+      if (focused != null) {
+        [...list.querySelectorAll('button')].find(node =>
+          node.dataset.choiceValue === focused)?.focus();
+      }
+    }
   }
   function ordered() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
@@ -1163,7 +1177,6 @@ export function createPlayer({
   const settingsViews = [...(settingsMenu.querySelectorAll?.('[data-settings-view]') || [])];
   const backButton = settingsMenu.querySelector?.('#player-settings-back');
   const settingsHeading = settingsMenu.querySelector?.('#player-settings-heading');
-  let settingsView = 'root';
   function updateSettingsSummaries() {
     if (!settingsViews.length) return; // Test stubs do not implement DOM queries.
     settingsMenu.querySelector('#player-quality-summary').textContent =
