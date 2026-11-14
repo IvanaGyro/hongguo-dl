@@ -18,7 +18,7 @@
   --surface: #241a13;
   --surface-strong: #37291e;
   --line: #fff4e621;
-  --line-strong: #fff4e65c;
+  --line-strong: #fff4e673;   /* 4.3:1 on the ground: control outlines */
   --orange-bright: #ff9050;
   --orange-shade: #5c2b12;
   --orange-fill: #c9591a;
@@ -56,7 +56,7 @@
   --surface: #f0f3e6;
   --surface-strong: #e2e8d2;
   --line: #24160e24;
-  --line-strong: #24160e59;
+  --line-strong: #24160e8c;   /* 3.9:1 on the ground */
   --orange-bright: #e85f12;
   --orange-shade: #ffe2d0;
   --orange-fill: #fd7528;
@@ -113,8 +113,8 @@ button.primary {
   background: var(--brand-orange); border-color: var(--brand-orange); color: var(--ink); font-weight: 750;
 }
 button.primary:hover:not(:disabled) { background: var(--orange-bright); border-color: var(--orange-bright); }
-button.quiet { border-color: var(--line); background: var(--surface); }
-button.quiet:hover:not(:disabled) { background: var(--surface-strong); border-color: var(--line-strong); }
+button.quiet { border-color: var(--line-strong); background: var(--surface); }
+button.quiet:hover:not(:disabled) { background: var(--surface-strong); border-color: var(--fg); }
 
 /* ---------- Header: loose pieces, no bar ---------- */
 .topbar { position: relative; z-index: 4; pointer-events: none; }
@@ -136,13 +136,13 @@ button.quiet:hover:not(:disabled) { background: var(--surface-strong); border-co
 .brand-mark svg { width: 22px; height: 22px; }
 .brand:hover .brand-mark { transform: rotate(120deg); }
 .mode-tabs { display: inline-flex; gap: 6px; }
-.mode-tabs button { min-height: 44px; padding: 0 18px; background: var(--surface); border-color: transparent; font-weight: 700; }
+.mode-tabs button { min-height: 44px; padding: 0 18px; background: var(--surface); border-color: var(--line-strong); font-weight: 700; }
 .mode-tabs button:hover:not(:disabled) { background: var(--surface-strong); }
 .mode-tabs button.selected,
-.mode-tabs button.selected:hover:not(:disabled) { background: var(--brand-mint); color: var(--ink); }
+.mode-tabs button.selected:hover:not(:disabled) { background: var(--brand-mint); border-color: var(--fg); color: var(--ink); }
 
 .mode-tabs { margin-left: auto; }
-.theme-toggle { width: 44px; min-width: 44px; padding: 0; margin-left: -6px; background: var(--surface); border-color: transparent; }
+.theme-toggle { width: 44px; min-width: 44px; padding: 0; margin-left: -6px; background: var(--surface); border-color: var(--line-strong); }
 .theme-toggle:hover:not(:disabled) { background: var(--surface-strong); }
 .theme-toggle svg { width: 20px; height: 20px; }
 :root[data-theme="light"] .icon-sun, :root:not([data-theme="light"]) .icon-moon { display: none; }
@@ -239,7 +239,7 @@ body[data-mode="download"] .episode-legend { display: none; }
 .episode {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 48px; padding: 0 10px; overflow: hidden;
-  border: 1.5px solid transparent; border-radius: var(--r-sm);
+  border: 1.5px solid var(--line-strong); border-radius: var(--r-sm);
   background: var(--surface); color: var(--fg);
   font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
   cursor: pointer;
