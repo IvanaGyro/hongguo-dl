@@ -40,7 +40,7 @@
 
 ## 介面設計
 
-- 樣式集中於 `src/styles.css`（單一檔案），字體為自架的 Chiron GoRound TC（`@fontsource-variable/chiron-goround-tc`，無第三方請求）。
+- 深色主題，樣式集中於 `src/styles.css`（單一檔案），沒有整條頂列：首頁是一塊橘色區塊加四片狀態色塊，開啟影集後搜尋欄收進標誌與模式切換之間。字體為自架的 Chiron GoRound TC（`@fontsource-variable/chiron-goround-tc`，無第三方請求）。
 - 四個品牌色即狀態語言：橘 `#FD7528`＝主要動作／正在播放，杏 `#F0B16B`＝進行中，鼠尾草綠 `#BEC891`＝已選取，薄荷 `#9BDFC0`＝已完成。
 - `index.html` 只調整排列（搜尋列在橘色區塊、模式切換在頂列、設定與診斷集中於頁尾），所有 id 與控制項不變；版面驗收見 `tests/design-layout.browser.mjs`。
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#fd7528" />
+  <meta name="theme-color" content="#17100b" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
 </head>
@@ -25,14 +25,22 @@
     <main id="main">
       <section class="hero" aria-labelledby="home-title">
         <div class="wrap hero-inner">
-          <h1 id="home-title"><span>貼上影集 ID，</span><span>整部短劇看完或帶走。</span></h1>
-          <p class="hero-lead">輸入影集 ID 或分享網址，就能播放、續看，或挑集數下載成 MP4。</p>
-          <form id="lookup-form" class="lookup">
-            <label for="input-url">影集 ID 或網址</label>
-            <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
-          </form>
-          <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
-          <div id="lookup-error" class="alert" hidden role="alert"></div>
+          <div class="hero-block">
+            <h1 id="home-title"><span>貼上影集 ID，</span><span>整部短劇看完或帶走。</span></h1>
+            <p class="hero-lead">輸入影集 ID 或分享網址，就能播放、續看，或挑集數下載成 MP4。</p>
+            <form id="lookup-form" class="lookup">
+              <label for="input-url">影集 ID 或網址</label>
+              <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
+            </form>
+            <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
+            <div id="lookup-error" class="alert" hidden role="alert"></div>
+          </div>
+          <div class="hero-tiles" aria-hidden="true">
+            <span class="hero-tile tile-watched"><b>1</b><i>已看完</i></span>
+            <span class="hero-tile tile-progress"><b>2</b><i>看到一半</i></span>
+            <span class="hero-tile tile-selected"><b>3</b><i>已選取</i></span>
+            <span class="hero-tile tile-unwatched"><b>4</b><i>未看</i></span>
+          </div>
         </div>
       </section>
       <div class="layout wrap">
