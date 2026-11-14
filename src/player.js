@@ -1168,6 +1168,7 @@ export function createPlayer({
   const settingsViews = [...(settingsMenu.querySelectorAll?.('[data-settings-view]') || [])];
   const backButton = settingsMenu.querySelector?.('#player-settings-back');
   const settingsHeading = settingsMenu.querySelector?.('#player-settings-heading');
+  let settingsView = 'root';
   function updateSettingsSummaries() {
     if (!settingsViews.length) return; // Test stubs do not implement DOM queries.
     settingsMenu.querySelector('#player-quality-summary').textContent =
@@ -1176,6 +1177,7 @@ export function createPlayer({
       speedSelect.selectedOptions[0]?.textContent || '1×';
   }
   function showSettingsView(view = 'root') {
+    settingsView = view;
     if (!settingsViews.length) return;
     for (const element of settingsViews) element.hidden = element.dataset.settingsView !== view;
     backButton.hidden = view === 'root';
@@ -1211,12 +1213,16 @@ export function createPlayer({
     settingsToggle.setAttribute('aria-expanded', String(visible));
   }
   settingsToggle.addEventListener('click', () => showSettings(settingsMenu.hidden));
-  settingsClose.addEventListener('click', () => showSettings(false));
+  settingsClose.addEventListener('click', () => { showSettings(false); settingsToggle.focus?.(); });
   settingsMenu.addEventListener('click', event => {
     const target = event.target?.closest?.('button[data-settings-target], button[data-choice-for]');
     if (!target) return;
     if (target.dataset.settingsTarget) {
-      showSettingsView(target.dataset.settingsTarget);
+      const nextView = target.dataset.settingsTarget;
+      const oldView = settingsView;
+      showSettingsView(nextView);
+      (nextView === 'root' ? settingsMenu.querySelector(`[data-settings-target="${oldView}"]`) :
+        settingsMenu.querySelector(`[data-settings-view="${nextView}"] .player-settings-choice`))?.focus?.();
       return;
     }
     const select = target.dataset.choiceFor === 'quality' ? qualitySelect : speedSelect;
@@ -1224,7 +1230,22 @@ export function createPlayer({
       select.value = target.dataset.choiceValue;
       select.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    const finishedView = settingsView;
     showSettingsView('root');
+    settingsMenu.querySelector(`[data-settings-target="${finishedView}"]`)?.focus?.();
+  });
+  settingsMenu.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (settingsView === 'root') {
+      showSettings(false);
+      settingsToggle.focus?.();
+    } else {
+      const previousView = settingsView;
+      showSettingsView('root');
+      settingsMenu.querySelector(`[data-settings-target="${previousView}"]`)?.focus?.();
+    }
   });
   document.addEventListener('pointerdown', event => {
     if (!settingsMenu.hidden && !settingsMenu.contains(event.target) &&
