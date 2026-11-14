@@ -15,6 +15,8 @@ const browser = await (browserName === 'firefox' ? firefox : chromium).launch({ 
 const context = await browser.newContext();
 const page = await context.newPage();
 const errors = [], reads = [];
+const consoleMessages = [];
+page.on('console', message => { consoleMessages.push(message.text()); if (consoleMessages.length > 30) consoleMessages.shift(); });
 let deliveredBytes = 0;
 page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => {
@@ -109,9 +111,11 @@ try {
     await page.locator('#output-mode').selectOption(mode);
     await page.locator('[data-vid="222222222"]').check();
     await page.locator('#add-queue').click();
-    await page.waitForFunction(count => document.querySelectorAll('.job .s-completed').length === count,
+    await page.waitForFunction(count => document.querySelectorAll('.job .s-completed').length === count ||
+      document.querySelectorAll('.job .s-failed').length > 0,
       index + 1, { timeout: 120000 });
-    assert.equal(await page.locator('.job .s-failed').count(), 0);
+    assert.equal(await page.locator('.job .s-failed').count(), 0, mode + ': ' + await page.locator('#queue').textContent());
+    console.log(browserName + ' ' + (whole ? 'whole-file' : 'stream') + ' download ' + mode + ' passed');
   }
   assert.deepEqual(errors, []);
   console.log(browserName + ' ' + (whole ? 'whole-file' : 'stream') + ' ' + JSON.stringify({ decodedSyntheticBvc2Frames: true, boundedRangeRequests: reads.length,
@@ -124,8 +128,11 @@ try {
     status: document.querySelector('#player-status')?.textContent,
     source: document.querySelector('#player-source-info')?.textContent,
     title: document.querySelector('#series-title')?.textContent,
-    videoError: document.querySelector('#player-video')?.error?.code || null
+    videoError: document.querySelector('#player-video')?.error?.code || null,
+    queue: document.querySelector('#queue')?.textContent,
+    jobs: JSON.parse(localStorage.getItem('hongguo-dl-queue-v1') || '[]')
   })).catch(() => ({ unavailable: true })));
   console.error('Page errors', errors);
+  console.error('Browser console', consoleMessages);
   throw error;
 } finally { await browser.close(); }
