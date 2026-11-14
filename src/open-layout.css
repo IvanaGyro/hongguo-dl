@@ -270,7 +270,7 @@ body[data-mode="download"] #download-controls { padding-top: 1.6rem; }
     margin-left: -1rem; width: calc(100% + 2rem);
   }
   body[data-mode="play"] .player-stage[data-orientation="portrait"]:not(:fullscreen) {
-    width: min(calc(100% + 2rem),400px);
+    width: min(100%,400px);
     margin-inline: auto;
   }
   .settings { grid-template-columns: 1fr; gap: .85rem; }
