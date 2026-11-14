@@ -104,7 +104,7 @@ async function zipInspect(path, count, first = '第001集.mp4', last = null) {
   assert.equal(result.status, 0, result.stderr || result.error?.message);
 }
 try {
-  await page.goto(base + '?id=42&id=60', { waitUntil: 'load' });
+  await page.goto(base + '?id=42&id=60', { waitUntil: 'domcontentloaded' });
   await page.locator('button[data-linked-id="60"]').waitFor({ state: 'visible', timeout: 30000 });
   assert.equal(await page.locator('#series-title').textContent(), '播放測試短劇');
   assert.deepEqual(await page.locator('#episodes label > span').allTextContents(), ['1', '2']);
@@ -317,7 +317,7 @@ try {
   const fullPath = await fullZip.path();
   await zipInspect(fullPath, 60, '六十集測試.E01.mp4', '六十集測試.E60.mp4');
   await page.setViewportSize({ width: 393, height: 852 });
-  await page.goto(base + '?id=99', { waitUntil: 'load' });
+  await page.goto(base + '?id=99', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === '受限測試');
   assert.match(await page.locator('#series-count').textContent(), /55 集可能受限制/);
   assert.equal(await page.locator('#episodes small').count(), 0);
@@ -346,7 +346,7 @@ try {
 
   // A prepared next episode must be handed off without another /api/source call.
   await page.evaluate(() => localStorage.removeItem('hongguo-dl-playback-history-v1'));
-  await page.goto(base + '?id=42', { waitUntil: 'load' });
+  await page.goto(base + '?id=42', { waitUntil: 'domcontentloaded' });
   await page.locator('#mode-play').click();
   await page.waitForFunction(() => document.querySelector('#player-video')?.readyState >= 1);
   const nextBefore = calls.filter(x => x.includes('vid=102')).length;
@@ -373,7 +373,7 @@ try {
 
   // The actual episode-30 source has encrypted HEVC at 1080p, and encrypted
   // ByteVC2/VVC at 720p. It must fail clearly and BEFORE fetching 720p bytes.
-  await page.goto(base + '?id=770', { waitUntil: 'load' });
+  await page.goto(base + '?id=770', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
   await page.locator('#mode-play').click();
   await page.locator('#player-settings-toggle').click();

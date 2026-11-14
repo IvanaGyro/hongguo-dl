@@ -37,6 +37,7 @@ import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 import { interruptQueueOnPageHide } from './queue-lifecycle.js';
 import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId, reconcileRendition } from './source-options.js';
+import { readMediaBody } from './media-body.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
 const $ = id => {
@@ -425,7 +426,7 @@ function renderDownloadQualityChoices(variants) {
     ...choices.map(option => new Option(option.label, option.value)));
   select.value = matchingRenditionValue(choices, previous) || 'auto';
   if (downloadQualitySeriesId === String(series?.seriesId))
-    select.title = choices.length ? '以第一個可能受限制集數取得的畫質為準；其他集數若不符合會個別報錯'
+    select.title = choices.length ? '以一集取得可用畫質；其他集數優先匹配畫質，缺少時改用自動最佳'
       : '這個集數尚未提供可辨識的畫質';
 }
 async function loadDownloadQualitySample(target) {
@@ -658,25 +659,15 @@ async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
   const res = await transport.fetch(url, { signal,
     ...(profile === 'app' && !isHlsUrl(url) ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
-  const advertised = Number(res.headers.get('content-length') || 0);
-  if (advertised > max) throw errorWith('MEMORY_LIMIT', '媒體超過下載／記憶體安全限制');
-  if (!res.body) throw errorWith('EMPTY_MEDIA', '來源未回傳資料串流');
-  const reader = res.body.getReader();
   const chunks = [];
   let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      size += value.byteLength;
-      if (size > max) throw errorWith('MEMORY_LIMIT', '單次讀取超過記憶體限制');
-      chunks.push(value);
-      onRead?.(value.byteLength, advertised);
-    }
-  } finally { reader.releaseLock(); }
+  for await (const { bytes, total } of readMediaBody(res, {
+    fetchImpl: transport.fetch, url, signal, maxBytes: max
+  })) {
+    chunks.push(bytes); size += bytes.length;
+    onRead?.(bytes.length, total);
+  }
   if (!size) throw errorWith('EMPTY_MEDIA', '媒體回傳零位元組');
-  if (advertised && size !== advertised) throw errorWith('INCOMPLETE', '已收 ' + size + '，預期 ' + advertised + ' 位元組');
   const result = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
@@ -689,29 +680,23 @@ async function streamToDestination(job, source, signal) {
     ...(source.source === 'app' ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
   if (!res.body) throw errorWith('EMPTY_MEDIA', '伺服器沒有回傳影片串流');
-  const length = Number(res.headers.get('content-length') || 0);
+  let length = 0;
   const name = outputFileName(job, source, false);
   const writer = directory ? await (await directory.getFileHandle(name, { create: true })).createWritable() : null;
   const chunks = [];
   let bytes = 0, complete = false;
   try {
-    const reader = res.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-        bytes += value.byteLength;
-        if (writer) await writer.write(value);
-        else {
-          if (bytes > MAX_BROWSER_BLOB) throw errorWith('MEMORY_LIMIT', '此瀏覽器沒有目錄串流寫入，影片超過 300 MiB');
-          chunks.push(value);
-        }
-        update(job, { bytes, totalBytes: length });
-      }
-    } finally { reader.releaseLock(); }
+    for await (const { bytes: value, total } of readMediaBody(res, {
+      fetchImpl: transport.fetch, url: source.url, signal,
+      maxBytes: writer ? Number.MAX_SAFE_INTEGER : MAX_BROWSER_BLOB,
+      onTotal: total => { length = total; }
+    })) {
+      bytes += value.length;
+      if (writer) await writer.write(value);
+      else chunks.push(value);
+      update(job, { bytes, totalBytes: total });
+    }
     if (!bytes) throw errorWith('EMPTY_MEDIA', '影片回傳零位元組');
-    if (length && length !== bytes) throw errorWith('INCOMPLETE', 'Content-Length：預期 ' + length + '，實收 ' + bytes);
     if (writer) {
       await writer.close();
       update(job, { fileName: name, stored: false, onDisk: true,
