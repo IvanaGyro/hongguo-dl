@@ -1,0 +1,54 @@
+name: ByteVC2 published-runtime playback acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/player.js'
+      - 'src/main.js'
+      - 'src/source-options.js'
+      - 'src/cenc-source-fallback.js'
+      - 'src/bvc2*.js'
+      - 'src/cenc-remux*.js'
+      - 'src/cached-media-reader.js'
+      - 'tests/bvc2*'
+      - 'tests/cenc-worker-reuse.node.mjs'
+      - 'scripts/generate-bvc2-fixtures.mjs'
+      - 'scripts/synthetic-bvc2.mjs'
+      - '.github/workflows/bvc2-browser.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bvc2-browser-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  playback:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim
+    timeout-minutes: 15
+    steps:
+      - run: apt-get update -qq && apt-get install -y ca-certificates curl unzip git nodejs ffmpeg >/dev/null
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - run: bun ci && bun add --dev playwright@1.58.0
+      - run: bunx playwright install --with-deps chromium firefox
+      - name: Verify published assets and generate version-1 bv2C regression fixtures
+        run: |
+          node scripts/bvc2-wasm-bundle.mjs verify
+          node scripts/generate-bvc2-fixtures.mjs /tmp
+          node scripts/verify-bvc2-fixture.mjs /tmp/bvc2-short.mp4
+          PROOF_BRIDGE=bvc2 PROOF_SHORT=1 node tests/cenc-worker-reuse.node.mjs /tmp/bvc2-long.mp4
+      - name: Whole-file and streaming browser decode with CDN refusal recovery
+        run: |
+          VITE_BASE_PATH=/hongguo-dl/ bun run build
+          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-bvc2.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/hongguo-dl/ >/dev/null; then break; fi
+            sleep 1
+          done
+          BVC2_BROWSER=chromium BVC2_TEST_WHOLE=1 node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
+          BVC2_BROWSER=chromium node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
+          BVC2_BROWSER=firefox BVC2_TEST_WHOLE=1 node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
+          BVC2_BROWSER=firefox node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4

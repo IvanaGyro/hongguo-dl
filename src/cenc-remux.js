@@ -149,7 +149,7 @@ export async function openCencProgressiveStream({
   let generation = 0, outputController = new AbortController(), seekPending = null;
   let streamHandle, cacheInfo = {};
   const setPrefetch = () => {
-    if (!closed && bridge === 'cenc') worker.postMessage({ type: 'prefetch',
+    if (!closed) worker.postMessage({ type: 'prefetch',
       active: policy.rawPrefetch && !video.paused });
   };
   for (const event of ['playing', 'pause', 'ended']) video.addEventListener?.(event, setPrefetch);
@@ -261,7 +261,7 @@ export async function openCencProgressiveStream({
   worker.onmessage = ({ data }) => {
     if (closed || failed || !data) return;
     if (data.type === 'stage') {
-      if (['media.cache', 'media.prefetch', 'media.prefetch.stopped', 'seek.run'].includes(data.stage)) {
+      if (['media.cache', 'media.prefetch', 'media.prefetch.stopped', 'seek.run', 'bvc2.config'].includes(data.stage)) {
         const { type, stage, ...fields } = data;
         if (stage === 'media.cache') cacheInfo = fields;
         onStage(stage, fields); return;
@@ -304,7 +304,7 @@ export async function openCencProgressiveStream({
       await waitSourceOpen(ms, internal.signal);
       if (closed || failed) return;
       if (data.type === 'init') {
-        if (buffer && bridge !== 'cenc') throw new Error('Duplicate MSE init');
+        // Each generation emits a fresh init for the same track configuration.
         if (codec === 'hevc') {
           const actualCodec = assertHevcInitCodecMatches(
             new Uint8Array(data.bytes), videoCodec);
@@ -360,7 +360,7 @@ export async function openCencProgressiveStream({
   };
   try {
     worker.postMessage({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource,
-      initialRanges, durationSeconds, cacheBudget: policy.cacheBudget });
+      initialRanges, durationSeconds, cacheBudget: policy.cacheBudget, bridge });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.
@@ -369,7 +369,7 @@ export async function openCencProgressiveStream({
   }
   const seekTo = async seconds => {
     if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
-    if (bridge === 'cenc') {
+    if (bridge === 'cenc' || bridge === 'bvc2') {
       if (seekPending) seekPending.reject(errorWith('CANCELED', '已更新跳轉位置'));
       const ready = new Promise((resolve, reject) => { seekPending = { target: seconds, resolve, reject }; });
       generation++; finished = false;
@@ -387,7 +387,7 @@ export async function openCencProgressiveStream({
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;
   };
-  streamHandle = { url: objectUrl, inPlaceSeek: bridge === 'cenc', kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
+  streamHandle = { url: objectUrl, inPlaceSeek: true, kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
     close, seekTo, get mime() { return mime; },
     durationSeconds, snapshot: () => cacheInfo, finished: () => finished };
   return streamHandle;

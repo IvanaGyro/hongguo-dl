@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { probeCencKid } from '../src/clear-key.js';
 import { execFileSync } from 'node:child_process';
 const input = new Uint8Array(await readFile(process.argv[2]));
+const bvc2 = process.env.PROOF_BRIDGE === 'bvc2';
+const shortProof = process.env.PROOF_SHORT === '1';
+const key = process.env.BVC2_CENC_KEY || (bvc2 ? '' : '00112233445566778899aabbccddeeff');
 const temporary = await mkdtemp(join(tmpdir(), 'cenc-worker-reuse-'));
 const stages = [], packets = [], requests = [];
 let seekSent = false, finishedResolve, reject;
 const finished = new Promise((res, rej) => { finishedResolve = res; reject = rej; });
-const timer = setTimeout(() => reject(new Error('Persistent worker proof timed out')), 20000);
+const timer = setTimeout(() => reject(new Error('Persistent worker proof timed out')), bvc2 ? 120000 : 20000);
 const generationCounts = new Map();
 globalThis.self = {
   location: { origin: 'https://fixture.test', href: 'https://fixture.test/worker.js' },
@@ -29,7 +33,10 @@ globalThis.self = {
           return;
         }
       }
-      queueMicrotask(() => self.onmessage({ data: { type: 'ack', id: data.id } }));
+      if (shortProof && data.type === 'media' && (generationCounts.get(data.generation) || 0) >= 3) {
+        if (data.generation === 1) self.onmessage({ data: { type: 'seek', seconds: 5, generation: 2 } });
+        if (data.generation === 2) { finishedResolve(); return; }
+      } else queueMicrotask(() => self.onmessage({ data: { type: 'ack', id: data.id } }));
     }
     if (data.type === 'done') {
       if (data.generation === 1) self.onmessage({ data: { type: 'seek', seconds: 5, generation: 2 } });
@@ -57,8 +64,17 @@ try {
     format: 'esm', platform: 'node', outfile: bundle,
     define: { 'import.meta.env.BASE_URL': JSON.stringify(pathToFileURL(resolve('public') + '/').href) } });
   await import(pathToFileURL(bundle));
+  const metadata = {};
+  if (bvc2) await probeCencKid('https://fixture.test/api/media', null,
+    async (_, options) => {
+      const [, a, b] = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);
+      const start = Number(a), end = Math.min(Number(b), input.length - 1);
+      return new Response(input.slice(start, end + 1), { status: 206, headers: {
+        'Content-Range': `bytes ${start}-${end}/${input.length}`, 'Content-Length': String(end - start + 1) } });
+    }, metadata);
   self.onmessage({ data: { type: 'start', url: 'https://fixture.test/api/media',
-    key: '00112233445566778899aabbccddeeff', fileSize: input.length, retrySameSource: true } });
+    key, fileSize: input.length, retrySameSource: true,
+    bridge: bvc2 ? 'bvc2' : 'cenc', initialRanges: metadata.initialRanges || [] } });
   await finished;
   assert.equal(stages.filter(s => s.stage === 'wasm-start').length, 1);
   assert.deepEqual(stages.filter(s => s.stage === 'seek.run').map(s => s.generation), [0, 1, 2]);
@@ -72,7 +88,7 @@ try {
     execFileSync('ffmpeg', ['-nostdin', '-hide_banner', '-loglevel', 'error', '-i', clear, '-f', 'null', '-'],
       { stdio: ['ignore', 'pipe', 'pipe'] });
   }
-  console.log('PASS production CENC worker reuses WASM and cached bytes for interrupted/EOF forward/back seeks',
+  console.log('PASS production ' + (bvc2 ? 'ByteVC2' : 'CENC') + ' worker reuses WASM and cached bytes for interrupted/EOF forward/back seeks',
     JSON.stringify({ requests, generations: [...generationCounts] }));
 } finally {
   self.onmessage?.({ data: { type: 'cancel' } });

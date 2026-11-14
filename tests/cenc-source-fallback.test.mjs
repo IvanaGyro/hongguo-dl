@@ -77,3 +77,14 @@ test('timeouts and 520 network errors rotate by actual tried URLs, ignoring API 
   }
   assert.equal(canTryNextCencSource({ ...base, code:'CENC_RATE_LIMITED' }), false);
 });
+
+test('ByteVC2 HTTP refusal rotates distinct same-quality sources without changing codec', () => {
+  const variants = [{ quality: '720p', codec: 'bytevc2', url: 'https://cdn/a' },
+    { quality: '720p', codec: 'bytevc2', url: 'https://cdn/b' },
+    { quality: '720p', codec: 'hevc', url: 'https://cdn/c', contentKey: 'key' }];
+  const args = { code: 'MEDIA_SOURCE_FORBIDDEN', variants, variantsVid: '12', episodeVid: '12',
+    tried: 1, triedUrls: new Set(['https://cdn/a']), tier: { quality: '720p', codec: 'bytevc2' },
+    quality: '720p', codec: 'bytevc2' };
+  assert.equal(canTryNextCencSource(args), true);
+  assert.equal(canTryNextCencSource({ ...args, triedUrls: new Set(['https://cdn/a','https://cdn/b']) }), false);
+});

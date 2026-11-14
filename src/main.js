@@ -36,7 +36,7 @@ import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
 import { interruptQueueOnPageHide } from './queue-lifecycle.js';
-import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId } from './source-options.js';
+import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId, reconcileRendition } from './source-options.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
 const $ = id => {
@@ -341,14 +341,19 @@ function supportsIndependentSourceChannels() {
   }
   return sourceChannelProbe;
 }
+let sourceRequestSequence = 0;
 async function resolveSourceFromNetwork(seriesId, vid) {
+  const requestId = ++sourceRequestSequence;
+  const episode = String(series?.seriesId) === String(seriesId)
+    ? Number(series.episodes?.find(item => String(item.vid) === String(vid))?.index || 0) : 0;
+  const trace = (event, fields = {}) => playbackDiagnostics.log(event, { requestId, episode, ...fields });
   const signal = new AbortController().signal;
   const started = performance.now();
-  playbackDiagnostics.log('source.api.request', {});
+  trace('source.api.request', {});
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
-    playbackDiagnostics.log('source.api.waiting', {
+    trace('source.api.waiting', {
       elapsedMs: performance.now() - started
     });
   }, 2000);
@@ -356,16 +361,16 @@ async function resolveSourceFromNetwork(seriesId, vid) {
     '&vid=' + encodeURIComponent(vid);
   const requestChannel = async channel => {
     const begin = performance.now();
-    playbackDiagnostics.log('source.channel.request', { channel });
+    trace('source.channel.request', { channel });
     try {
       const data = await apiJson(endpoint + '&channel=' + channel, signal);
-      playbackDiagnostics.log('source.channel.ready', {
+      trace('source.channel.ready', {
         channel, elapsedMs: performance.now() - begin,
         variants: data?.variants?.length || 0
       });
       return data;
     } catch (error) {
-      if (!signal?.aborted) playbackDiagnostics.log('source.channel.failed', {
+      if (!signal?.aborted) trace('source.channel.failed', {
         channel, elapsedMs: performance.now() - begin,
         code: error?.code || 'SOURCE_UNAVAILABLE'
       });
@@ -377,10 +382,10 @@ async function resolveSourceFromNetwork(seriesId, vid) {
     {
       const supported = await supportsIndependentSourceChannels();
       if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
-      playbackDiagnostics.log('source.api.independent', { supported });
+      trace('source.api.independent', { supported });
       if (!supported) {
         const data = await apiJson(endpoint, signal);
-        playbackDiagnostics.log('source.api.response', {
+        trace('source.api.response', {
           elapsedMs: performance.now() - started, channel: 'legacy',
           variants: data?.variants?.length || 0
         });
@@ -390,7 +395,7 @@ async function resolveSourceFromNetwork(seriesId, vid) {
         { route: 'web', run: () => requestChannel('web') },
         { route: 'app', run: () => requestChannel('app') }
       ]);
-      playbackDiagnostics.log('source.api.response', {
+      trace('source.api.response', {
         elapsedMs: performance.now() - started,
         channel: winner.route, variants: winner.variants.length
       });
@@ -399,7 +404,7 @@ async function resolveSourceFromNetwork(seriesId, vid) {
       return { ...winner.data, lateVariants };
     }
   } catch (error) {
-    playbackDiagnostics.log('source.api.failed', {
+    trace('source.api.failed', {
       elapsedMs: performance.now() - started, code: error?.code || 'UNKNOWN'
     });
     throw error;
@@ -415,7 +420,7 @@ async function getSource(seriesId, vid, quality = 'auto', codec = 'auto',
 }
 function renderDownloadQualityChoices(variants) {
   const select = $('quality');
-  const previous = parseRenditionValue(select.value);
+  const previous = { ...parseRenditionValue(select.value), codec: 'auto' };
   const choices = renditionOptions(variants);
   select.replaceChildren(new Option('最佳可取得', 'auto'),
     ...choices.map(option => new Option(option.label, option.value)));
@@ -651,7 +656,8 @@ function assertOk(response) {
 async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
   if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
   const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(), fetch, undefined, userAgent);
-  const res = await transport.fetch(url, { signal });
+  const res = await transport.fetch(url, { signal,
+    ...(profile === 'app' && !isHlsUrl(url) ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
   const advertised = Number(res.headers.get('content-length') || 0);
   if (advertised > max) throw errorWith('MEMORY_LIMIT', '媒體超過下載／記憶體安全限制');
@@ -680,7 +686,8 @@ async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
 async function streamToDestination(job, source, signal) {
   const transport = createMediaTransportForSource(source.url,
     source.source === 'app' ? 'app' : 'web', requireWorkerOrigin(), fetch, undefined, source.userAgent);
-  const res = await transport.fetch(source.url, { signal });
+  const res = await transport.fetch(source.url, { signal,
+    ...(source.source === 'app' ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
   if (!res.body) throw errorWith('EMPTY_MEDIA', '伺服器沒有回傳影片串流');
   const length = Number(res.headers.get('content-length') || 0);
@@ -750,11 +757,10 @@ async function runJob(job, signal) {
       : await getSource(job.seriesId, job.vid, 'auto', 'auto', signal,
         { complete: true, refresh: mediaFailed });
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-    if (!hasExactDownloadQuality(data.variants, job.quality))
-      throw errorWith('QUALITY_UNAVAILABLE', '本集沒有 ' + job.quality + ' 畫質，請改選其他畫質');
+    const effective = reconcileRendition(data.variants, { quality: job.quality, codec: job.codec });
     // Retry with another advertised URL while preserving the selected tier.
     const source = renditionForAttempt(data.variants,
-      { quality: job.quality, codec: job.codec }, job.attempts - 1);
+      effective, job.attempts - 1);
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
     update(job, { status: 'downloading', sourceCodec: source.codec || 'unknown' });
     const hls = isHlsUrl(source.url);

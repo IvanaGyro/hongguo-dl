@@ -175,3 +175,12 @@ export function matchingRenditionValue(options, selection = {}) {
   return options.find(option => option.value === exact)?.value ||
     options.find(option => option.quality === selection.quality)?.value || null;
 }
+
+// Episode changes carry a quality, not an old codec constraint. Within an
+// episode keep an explicit pair when available; absent quality means Auto.
+export function reconcileRendition(variants, { quality = 'auto', codec = 'auto' } = {}) {
+  if (quality === 'auto') return { quality: 'auto', codec: 'auto' };
+  const options = renditionOptions(variants);
+  const value = matchingRenditionValue(options, { quality, codec });
+  return value ? parseRenditionValue(value) : { quality: 'auto', codec: 'auto' };
+}

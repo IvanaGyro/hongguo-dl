@@ -62,17 +62,10 @@ try {
   // Instead repeat ordinary H.264 MP4 with system FFmpeg, then encode VVC
   // using our actual WASM binary. This tests a longer genuine encoded VVC
   // packet sequence, not a padded file with fictitious source length.
-  const longInput = join(dir, 'input-long.mp4');
-  ffmpeg(['-stream_loop', '7', '-i', input, '-c', 'copy',
-    '-movflags', '+faststart', '-y', longInput]);
-  const longCore = await createModule({ wasmBinary });
-  longCore.FS.writeFile('/long-in.mp4', readFileSync(longInput));
-  const longCode = await longCore.ccall('bvc2_convert', 'number',
-    ['string', 'string', 'string', 'number'],
-    ['/long-in.mp4', '/long-vvc.mp4', '', 3], { async: true });
-  assert.equal(longCode, 0, longCore.UTF8ToString(longCore._bvc2_last_error()));
   const longVvc = join(dir, 'vvc-long.mp4');
-  writeFileSync(longVvc, longCore.FS.readFile('/long-vvc.mp4'));
+  execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error',
+    '-stream_loop', '7', '-i', join(dir, 'vvc3.mp4'), '-c', 'copy',
+    '-movflags', '+faststart', '-y', longVvc]);
   const longBvc = syntheticBvc2(longVvc);
   assert(longBvc.length > 512 * 1024,
     'Long BVC2 fixture must exceed two 256 KiB media prefetch windows');

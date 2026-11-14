@@ -8,14 +8,14 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition } from './source-options.js';
+import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition, reconcileRendition } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
-import { canTryNextCencSource, sameTierHevcCandidates } from './cenc-source-fallback.js';
+import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 
@@ -46,7 +46,7 @@ export function createPlayer({
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
   let sourceAttempt = 0;
   let sourceRefreshCount = 0, cencRetryTier = null;
-  let cencTriedUrls = new Set();
+  let cencTriedUrls = new Set(), candidateIds = new Map();
   let streamFailure = null;
   let lastVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
   let lastVariantsPartial = false;
@@ -91,7 +91,7 @@ export function createPlayer({
     qualitySelect.value = matchingRenditionValue(options, { quality, codec }) || 'auto';
   }
   if (preferences.quality && preferences.quality !== 'auto') {
-    const value = renditionValue(preferences.quality, preferences.codec || 'auto');
+    const value = renditionValue(preferences.quality, 'auto');
     qualitySelect.add(new Option(preferences.quality + '（待確認）', value));
     qualitySelect.value = value;
   }
@@ -99,21 +99,16 @@ export function createPlayer({
   function persistPrefs() {
     try {
       storage.setItem(PREF_KEY, JSON.stringify({
-        ...selection(),
+        quality: selection().quality, codec: 'auto',
         speed: speedSelect.value, fit: fitSelect.value,
         autoNext: autoNextInput.checked
       }));
     } catch { /* storage might be disabled */ }
   }
   function setStatus(value) { status.textContent = value; }
-  function updateRenditionOptions(variants) {
-    const requested = selection();
+  function updateRenditionOptions(variants, requested = selection()) {
     const options = renditionOptions(variants);
     let value = matchingRenditionValue(options, requested);
-    if (requested.quality !== 'auto' && !value) {
-      value = renditionValue(requested.quality, requested.codec);
-      options.push({ value, label: requested.quality + '（本集未提供）' });
-    }
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
     qualitySelect.value = value || 'auto';
@@ -301,6 +296,7 @@ export function createPlayer({
       return stream;
     }
     catch (error) {
+      if (args.signal?.aborted) throw error;
       log('cenc.prepare.failed', { code: error?.code || 'UNKNOWN', elapsedMs: ageMs() });
       // This also covers the nativePending prefetch handoff, not just open().
       if (['CENC_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP'].includes(error?.code))
@@ -310,7 +306,7 @@ export function createPlayer({
   }
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
-    const quality = options.quality ?? selection().quality;
+    let quality = options.quality ?? selection().quality;
     let codec = options.codec ?? selection().codec;
     const quiet = !!options.quiet;
     const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
@@ -347,7 +343,7 @@ export function createPlayer({
     // Rotate just those candidates; refresh signed URLs once when exhausted.
     const sameEpisode = !quiet && lastVariants && lastVariantsVid === episode.vid;
     const priorCandidates = sameEpisode && cencRetryTier
-      ? sameTierHevcCandidates(lastVariants, { quality, codec }, cencRetryTier) : [];
+      ? sameTierPlaybackCandidates(lastVariants, { quality, codec }, cencRetryTier) : [];
     const withinCycle = priorCandidates.some(source => !cencTriedUrls.has(source.url));
     let refreshingCencSources = false;
     const sameList = Boolean(sameEpisode && attempt > 0 &&
@@ -397,16 +393,25 @@ export function createPlayer({
       }
     }
     log('source.list.ready', {
-      variants: variants.length, fromCache: sameList,
+      variants: variants.length, fromCache: sameList || Boolean(list.fromCache), sharedRequest: Boolean(list.shared),
       elapsedMs: ageMs()
     });
+    const reconciled = reconcileRendition(variants, { quality, codec });
+    if (reconciled.quality !== quality || reconciled.codec !== codec) {
+      log('source.selection.reconciled', { previousQuality: quality, previousCodec: codec, ...reconciled });
+      quality = reconciled.quality; codec = reconciled.codec;
+      key = episodeCacheKey(seriesId, episode.vid, quality, codec);
+    }
     // A 1080p HEVC selection must not wait for unrelated ByteVC2 assets.
-    const needsBvc2 = variants.some(v => codecId(v.codec) === 'bytevc2' &&
+    const nativeChoice = playbackRendition(variants, { quality, codec }, mimeSupport, 0, false, mseSupport).source;
+    const needsBvc2 = !nativeChoice && variants.some(v => codecId(v.codec) === 'bytevc2' &&
       (quality === 'auto' || qualityId(v) === quality) &&
       (codec === 'auto' || codec === 'bytevc2'));
     if (needsBvc2) report('正在檢查 ByteVC2 播放工具…');
     const checkStarted = performance.now();
-    canTranscodeBvc2 = needsBvc2 ? await bvc2BridgeAvailable() : false;
+    const bvc2Available = needsBvc2 ? await bvc2BridgeAvailable() : false;
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+    canTranscodeBvc2 = bvc2Available;
     log('source.bvc2.check', {
       required: needsBvc2, available: canTranscodeBvc2,
       elapsedMs: Math.round(performance.now() - checkStarted)
@@ -417,7 +422,8 @@ export function createPlayer({
       lastVariantsVid = episode.vid;
       lastVariantsAt = Date.now();
       lastVariantsPartial = sourceQuery.partial;
-      updateRenditionOptions(variants);
+      updateRenditionOptions(variants, { quality, codec });
+      persistPrefs();
       // An independently resolved web/App source may arrive after playback
       // has already started. Merge it for future quality changes and retries,
       // but never restart or replace a healthy active MediaSource.
@@ -454,7 +460,7 @@ export function createPlayer({
     // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
     // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
     const selectableVariants = !quiet && cencRetryTier
-      ? sameTierHevcCandidates(variants, { quality, codec }, cencRetryTier)
+      ? sameTierPlaybackCandidates(variants, { quality, codec }, cencRetryTier)
         .filter(source => !cencTriedUrls.has(source.url))
       : variants;
     const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
@@ -467,7 +473,9 @@ export function createPlayer({
       if (next?.source) resolved = next;
     }
     const source = resolved.source;
+    if (source?.url && !candidateIds.has(source.url)) candidateIds.set(source.url, candidateIds.size + 1);
     log('source.selected', {
+      candidate: source?.url ? candidateIds.get(source.url) : 0,
       quality: source ? qualityId(source) || 'unknown' : 'none',
       codec: source ? codecId(source.codec) || 'unknown' : 'none',
       encrypted: Boolean(source?.contentKey),
@@ -504,9 +512,9 @@ export function createPlayer({
         persistPrefs();
       }
     }
-    if (!quiet && !cencRetryTier && codecId(source.codec) === 'hevc' &&
-        Boolean(source.contentKey) && !isHlsUrl(source.url))
-      cencRetryTier = { codec: 'hevc', quality: qualityId(source) };
+    if (!quiet && !cencRetryTier && (codecId(source.codec) === 'bytevc2' ||
+        codecId(source.codec) === 'hevc' && source.contentKey) && !isHlsUrl(source.url))
+      cencRetryTier = { codec: codecId(source.codec), quality: qualityId(source) };
     const profile = source.source === 'app' ? 'app' : 'web';
     if (codecId(source.codec) === 'bytevc2') {
       if (isHlsUrl(source.url)) throw errorWith('PLAYBACK_UNSUPPORTED',
@@ -517,15 +525,17 @@ export function createPlayer({
       if (experimentalBvc2Stream) {
       setStatus('⚠ 已明確啟用實驗性 ByteVC2 增量串流（真實 BTY2 尚未驗證）…');
       const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
-      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin());
+      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(), fetch, undefined, source.userAgent);
       const url = transport.mode === 'direct' ? source.url : proxyUrl;
       const metadata = {};
-      await probeCencKid(url, signal, transport.fetch, metadata);
+      log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
+      await probeCencKid(url, signal, transport.fetch, metadata, (phase, fields) => onStage(phase, fields));
       if (!metadata.fileSize || metadata.fragmented)
         throw errorWith('BVC2_ERROR', 'ByteVC2 串流需要可讀取索引的 MP4 來源');
       const native = await openCencProgressiveStream({
         video, url: transport.mode === 'direct' ? source.url : proxyUrl,
-        proxyUrl, fileSize: metadata.fileSize, codec: 'h264', hasAac: metadata.hasAac,
+        proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
+        codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source),
         key: source.contentKey || '', signal, bridge: 'bvc2',
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
@@ -537,6 +547,7 @@ export function createPlayer({
       }
       const reportBvc2 = message => report(
         '⚠ 此 ByteVC2 模式需下載及轉碼整集，完成後才能播放 · ' + message);
+      log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2' });
       reportBvc2('讀取 ByteVC2 影片…');
       const started = performance.now();
       let received = 0;
@@ -548,8 +559,10 @@ export function createPlayer({
             Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）');
         }, source.userAgent);
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      log('bvc2.download.complete', { bytes: raw.length });
       reportBvc2('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
       const bvc2Phases = {
+        'config-normalized': '正在準備 ByteVC2 設定資料…',
         'wasm-loading': '載入 ByteVC2 WASM 解碼器…',
         'wasm-ready': 'ByteVC2 解碼器已就緒…',
         transcoding: 'ByteVC2 → H.264 正在轉碼整集；完成前無法顯示影格，請勿誤認為已起播',
@@ -559,10 +572,12 @@ export function createPlayer({
         contentKey: source.contentKey, signal, mode: 'h264',
         progress: value => { if (!signal.aborted) reportBvc2('轉碼 ' + Math.round(value * 100) + '%'); },
         onProgress: phase => {
+          if (!signal.aborted) log('bvc2.transcode.stage', { phase });
           if (!signal.aborted && bvc2Phases[phase]) reportBvc2(bvc2Phases[phase]);
         }
       });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      log('bvc2.transcode.complete', { bytes: transcoded.length });
       console.info('[Hongguo playback] E' + episode.index + ' ByteVC2 解密轉碼：' +
         Math.round(performance.now() - started) + 'ms');
       const playable = new Blob([transcoded], { type: 'video/mp4' });
@@ -825,6 +840,7 @@ export function createPlayer({
     while (!signal.aborted && currentToken === token) {
       try { await load(episode, currentToken, signal, autoPlay, handoff); return; }
       catch (error) {
+        if (signal.aborted || currentToken !== token) return;
         const parsed = classifyError(error);
         log('playback.attempt.failed', {
           code: parsed.code || 'UNKNOWN', attempt: sourceAttempt, elapsedMs: ageMs()
@@ -853,9 +869,9 @@ export function createPlayer({
           quality: selection().quality,
           codec: selection().codec
         })) {
-          retryIncrementalCenc = true; // keep the bounded MSE/Range path
+          if (cencRetryTier?.codec === 'hevc') retryIncrementalCenc = true;
           log('playback.cdn.rotate', { attempt: sourceAttempt, elapsedMs: ageMs() });
-          setStatus('目前 HEVC 媒體來源無法使用，嘗試同畫質其他候選來源…');
+          setStatus('目前媒體來源無法使用，嘗試同畫質／編碼其他候選來源…');
           continue;
         }
         errors = recordFailure(errors, parsed, 5, 20, { retryForbidden: true });
@@ -904,6 +920,12 @@ export function createPlayer({
     prefetched = { vid: next.vid, key, controller: preloadController, promise };
   }
   function open(episode, autoPlay = true, keepSettings = false) {
+    if (current?.vid !== episode.vid) {
+      const quality = selection().quality;
+      qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
+      if (quality !== 'auto') qualitySelect.add(new Option(quality + '（待確認）', renditionValue(quality, 'auto')));
+      qualitySelect.value = renditionValue(quality, 'auto');
+    }
     if (!episode) return;
     const key = episodeCacheKey(getSeries()?.seriesId, episode.vid,
       selection().quality, selection().codec);
@@ -918,7 +940,7 @@ export function createPlayer({
     sourceAttempt = 0;
     pendingSourceExpansion = null;
     triedSourceUrls = new Set();
-    cencTriedUrls = new Set();
+    cencTriedUrls = new Set(); candidateIds = new Map();
     sourceRefreshCount = 0;
     cencRetryTier = null;
     streamFailure = null;

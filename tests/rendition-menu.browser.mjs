@@ -62,11 +62,11 @@ try {
     ['自動最佳','1080p','720p（H.264）','720p（ByteVC2）']);
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-quality').selectOption('720p|h264');
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1') || '{}').codec === 'h264');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1') || '{}').codec === 'auto');
   assert.deepEqual(await page.evaluate(() => {
     const {quality,codec} = JSON.parse(localStorage.getItem('hongguo-dl-player-preferences-v1'));
     return {quality,codec};
-  }), {quality:'720p',codec:'h264'});
+  }), {quality:'720p',codec:'auto'});
   assert.equal(sourceCalls.filter(vid=>vid==='1005').length,1);
   assert.deepEqual(errors,[]);
   console.log('PASS unified menus, single-episode download sample, preference pair, CENC initialization after initial source failure');

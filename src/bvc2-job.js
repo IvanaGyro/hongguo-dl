@@ -36,7 +36,7 @@ export function runBvc2WorkerJob(bytes, { contentKey = '', mode = 'h264', progre
     worker.onmessage = ({ data }) => {
       if (done) return;
       if (data?.type === 'progress') {
-        if (['wasm-loading', 'wasm-ready', 'transcoding', 'finalizing'].includes(data.phase))
+        if (['wasm-loading', 'wasm-ready', 'config-normalized', 'transcoding', 'finalizing'].includes(data.phase))
           onProgress?.(data.phase);
         if (Number.isFinite(data.progress)) progress?.(Math.max(0, Math.min(1, data.progress)));
         return;

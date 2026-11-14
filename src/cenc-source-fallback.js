@@ -13,7 +13,7 @@ export function canTryNextCencSource({
     'CENC_RANGE_TIMEOUT'].includes(code) ||
       !Array.isArray(variants) || variantsVid !== episodeVid ||
       !Number.isSafeInteger(tried) || tried < 1) return false;
-  if (triedUrls && tier) return sameTierHevcCandidates(variants, { quality, codec }, tier)
+  if (triedUrls && tier) return sameTierPlaybackCandidates(variants, { quality, codec }, tier)
     .some(source => !triedUrls.has(source.url));
   const options = candidateRenditions(variants, { quality, codec });
   const selected = options[0];
@@ -44,5 +44,16 @@ export function sameTierHevcCandidates(variants, { quality = 'auto', codec = 'au
         seen.has(variant.url)) return false;
     seen.add(variant.url);
     return true;
+  });
+}
+
+// Candidate rotation/refresh applies equally to ByteVC2 transport failures.
+export function sameTierPlaybackCandidates(variants, preferences = {}, tier = null) {
+  if (!tier || !['hevc', 'bytevc2'].includes(tier.codec) || !tier.quality) return [];
+  const seen = new Set();
+  return candidateRenditions(variants, preferences).filter(v => {
+    if (codecId(v.codec) !== tier.codec || qualityId(v) !== tier.quality ||
+        (tier.codec === 'hevc' && !v.contentKey) || !v.url || seen.has(v.url)) return false;
+    seen.add(v.url); return true;
   });
 }

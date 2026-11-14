@@ -4,6 +4,7 @@
 // Usage: BVC2_CENC_KEY=<32-hex> node scripts/verify-bvc2-fixture.mjs INPUT.mp4
 // Leave BVC2_CENC_KEY unset for unencrypted local fixtures.
 import assert from 'node:assert/strict';
+import { normalizeBvc2Config } from '../src/bvc2-config.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +28,8 @@ assert.equal(core._bvc2_decoder_available(), 1, 'BVC2/x264 pipeline not linked')
 const dir = mkdtempSync(join(tmpdir(), 'bvc2-positive-local-'));
 try {
   const input = '/sample.mp4', output = '/output.mp4';
-  core.FS.writeFile(input, readFileSync(fixturePath));
+  const normalized = normalizeBvc2Config(new Uint8Array(readFileSync(fixturePath)));
+  core.FS.writeFile(input, normalized.bytes);
   const code = core.cwrap('bvc2_transcode', 'number',
     ['string', 'string', 'string'])(input, output, key);
   if (code !== 0) {

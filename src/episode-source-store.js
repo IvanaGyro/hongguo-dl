@@ -20,6 +20,7 @@ export function createEpisodeSourceStore(fetchSource, onUpdate = () => {}, limit
     const key = keyFor(sid, vid);
     if (refresh) entries.delete(key);
     let entry = entries.get(key);
+    const fromCache = Boolean(entry?.resolved), shared = Boolean(entry && !entry.resolved);
     if (!entry) {
       entry = { variants: [], later: Promise.resolve([]), channel: '' };
       entries.set(key, entry);
@@ -27,6 +28,7 @@ export function createEpisodeSourceStore(fetchSource, onUpdate = () => {}, limit
       const active = entry;
       entry.first = Promise.resolve().then(() => fetchSource(sid, vid))
         .then(data => {
+          active.resolved = true;
           active.channel = data.sourceChannel || '';
           active.variants = [...(data.variants || [])];
           const merge = extras => {
@@ -51,7 +53,7 @@ export function createEpisodeSourceStore(fetchSource, onUpdate = () => {}, limit
     }
     entry = await abortable(entry.first, signal);
     if (complete) await abortable(entry.later, signal);
-    return { variants: [...entry.variants], sourceChannel: entry.channel,
+    return { variants: [...entry.variants], sourceChannel: entry.channel, fromCache, shared,
       lateVariants: complete ? null : entry.later };
   };
   return { get, invalidate(sid, vid) { entries.delete(keyFor(sid, vid)); },

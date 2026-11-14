@@ -1,3 +1,4 @@
+import { normalizeBvc2Config } from './bvc2-config.js';
 // SPDX-License-Identifier: GPL-3.0-only
 // Single-job worker: canceling playback terminates the entire WASM instance.
 import { readLimitedAsset } from './cenc-bundle.js';
@@ -36,7 +37,9 @@ self.onmessage = async ({ data }) => {
       throw new Error('WASM 未包含 BVC2 解碼器與 x264 編碼器');
     self.postMessage({ type: 'progress', phase: 'wasm-ready' });
     const input = '/input.mp4', output = '/output.mp4';
-    core.FS.writeFile(input, new Uint8Array(data.bytes));
+    const normalized = normalizeBvc2Config(new Uint8Array(data.bytes), { inPlace: true });
+    if (normalized.changed) self.postMessage({ type: 'progress', phase: 'config-normalized' });
+    core.FS.writeFile(input, normalized.bytes);
     const modes = { original: 0, copy: 0, h264: 4, av1: 2, vvc: 3, hevc: 5 };
     if (!Object.hasOwn(modes, data.mode)) throw new Error('不支援的輸出編碼');
     self.postMessage({ type: 'progress', phase: 'transcoding' });

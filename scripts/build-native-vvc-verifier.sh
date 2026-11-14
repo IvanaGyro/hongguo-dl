@@ -14,7 +14,7 @@ cd "$SOURCE"
 ./configure --disable-everything --disable-autodetect --disable-doc --disable-debug \
   --disable-asm --disable-inline-asm --disable-x86asm --disable-network --enable-ffmpeg --enable-ffprobe \
   --enable-protocol=file,pipe --enable-demuxer=mov --enable-decoder=vvc,aac \
-  --enable-encoder=wrapped_avframe,pcm_s16le --enable-muxer=null,vvc \
+  --enable-encoder=wrapped_avframe,pcm_s16le --enable-muxer=null,vvc,mp4 \
   --enable-bsf=vvc_mp4toannexb --enable-filter=null,anull \
   --enable-gpl --enable-agpl --enable-version3 > "$OUTPUT/native-configure.log" 2>&1
 make -j4 ffmpeg ffprobe > "$OUTPUT/native-build.log" 2>&1

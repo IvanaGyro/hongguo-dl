@@ -8,7 +8,7 @@ const box = (type, data) => {
   const out = Buffer.alloc(8 + data.length);
   out.writeUInt32BE(out.length); out.write(type, 4, 4, 'ascii'); data.copy(out, 8); return out;
 };
-export function syntheticBvc2(vvcPath) {
+export function syntheticBvc2(vvcPath, { configurationRecord = false } = {}) {
   const raw = readFileSync(vvcPath);
   const annexb = execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error', '-i', vvcPath,
     '-map', '0:v', '-c', 'copy', '-bsf:v', 'vvc_mp4toannexb', '-f', 'vvc', '-'], { maxBuffer: 32 * 1024 * 1024 });
@@ -29,7 +29,18 @@ export function syntheticBvc2(vvcPath) {
     parameters.push(length, nal);
   }
   assert(seen.has(15) && seen.has(16), 'SPS/PPS required');
-  const config = Buffer.concat(parameters);
+  let config = Buffer.concat(parameters);
+  if (configurationRecord) {
+    const header = Buffer.alloc(19); header[0] = 1; header[1] = 7; header[18] = parameters.length / 2;
+    const arrays = [];
+    for (let i = 0; i < parameters.length; i += 2) {
+      const nal = parameters[i + 1];
+      const array = Buffer.alloc(5); array[0] = 0x80 | ((nal[1] >> 3) & 31);
+      array.writeUInt16BE(1, 1); array.writeUInt16BE(nal.length, 3);
+      arrays.push(array, nal);
+    }
+    config = Buffer.concat([header, ...arrays]);
+  }
   let converted = false;
   const rewrite = data => {
     const out = [];
