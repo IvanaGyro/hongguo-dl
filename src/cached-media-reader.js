@@ -27,7 +27,19 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
   };
   const network = createHttpStreamReader({ ...options, fileSize, externalCache: cache,
     maxPacketBytes: fileSize <= budget ? budget : Math.max(4 * 1024 * 1024, budget / 2),
-    onChunk: (offset, data) => { cache.write(offset, data); downloadedBytes += data.length; },
+    onChunk: (offset, data) => {
+      cache.write(offset, data);
+      // A persistent HTTP packet can overlap metadata already supplied by
+      // the caller (notably normalized bv2C in a moov at EOF). Keep those
+      // authoritative bytes instead of restoring the original configuration.
+      for (const range of initialRanges) {
+        const start = Math.max(offset, range.offset);
+        const end = Math.min(offset + data.length, range.offset + range.data.length);
+        if (end > start) cache.write(start,
+          range.data.subarray(start - range.offset, end - range.offset), true);
+      }
+      downloadedBytes += data.length;
+    },
     onResponse: fields => { requests = fields.requests; options.onResponse?.(fields); }
   });
   const serial = action => {

@@ -18,7 +18,9 @@ const readCurrent = () => {
     duration: Number.isFinite(video?.duration) ? Number(video.duration.toFixed(3)) : null,
     totalFrames: video?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
     mediaError: video?.error?.code ?? null, ended: Boolean(video?.ended),
-    paused: Boolean(video?.paused)
+    paused: Boolean(video?.paused),
+    failureCode: [...(document.querySelector('#playback-log')?.value || '')
+      .matchAll(/playback.attempt.failed code=([A-Z_]+)/g)].at(-1)?.[1] || null
   };
 };
 
@@ -55,14 +57,14 @@ export async function verifyRealHevcReloadAndEof(page) {
     return (active?.dataset.playVid === episode &&
       video?.readyState >= 2 && video?.currentTime >= expected - 4 &&
       video?.currentTime < expected + 25 && frames > 2) ||
-      /已停止播放|無法播放|失敗/.test(status);
+      /已停止播放|無法播放/.test(status);
   }, { expected: before.savedSeconds, episode: before.videoId },
   { timeout: 80000 }).catch(() => {});
   const after = await page.evaluate(readCurrent);
   console.log('macOS WebKit reload lifecycle after:', JSON.stringify({
     sameEpisode: after.videoId === before.videoId,
     currentTime: after.currentTime, savedSeconds: after.savedSeconds,
-    totalFrames: after.totalFrames, mediaError: after.mediaError
+    totalFrames: after.totalFrames, mediaError: after.mediaError, failureCode: after.failureCode
   }));
   assert.equal(after.videoId, before.videoId, 'Reload resumed the wrong episode');
   assert(after.currentTime >= before.savedSeconds - 4 &&

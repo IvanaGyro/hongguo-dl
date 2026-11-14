@@ -97,3 +97,19 @@ test('capped CDN responses reconnect at exact gaps without consuming retry budge
     assert.deepEqual(starts, [0, 65536, 131072]);
   } finally { reader.close(); }
 });
+
+test('background HTTP packets preserve normalized metadata overlays at EOF', async () => {
+  const offset = data.length - 600;
+  const normalized = new Uint8Array(400).fill(253);
+  const { reader, starts } = fixture({ initialRanges: [{ offset, data: normalized }] });
+  try {
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && !reader.snapshot().complete; i++) await tick();
+    assert(reader.snapshot().complete);
+    assert.deepEqual(await reader.read(offset, normalized.length), normalized,
+      'Downloading original moov bytes must not undo codec normalization');
+    assert.deepEqual(await reader.read(offset - 100, 100), data.slice(offset - 100, offset));
+    assert.deepEqual(await reader.read(offset + 400, 100), data.slice(offset + 400, offset + 500));
+    assert.equal(starts.length, 1, 'A single overlapping HTTP response is sufficient');
+  } finally { reader.close(); }
+});
