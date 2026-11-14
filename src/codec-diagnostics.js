@@ -6,6 +6,8 @@ const FORMATS = [
   { codec: 'HEVC + AAC', videoCodec: 'hvc1' }, // Compare with the old incomplete probe.
   { codec: 'HEVC Main + AAC', videoCodec: 'hvc1.1.6.L120.90' },
   { codec: 'HEVC Main (hev1) + AAC', videoCodec: 'hev1.1.6.L120.90' },
+  { codec: 'HEVC Main L6.2 + AAC', videoCodec: 'hvc1.1.6.L186' },
+  { codec: 'HEVC Main L6.2 (hev1) + AAC', videoCodec: 'hev1.1.6.L186' },
   { codec: 'HEVC Main10 + AAC', videoCodec: 'hvc1.2.4.L120.90' },
   { codec: 'HEVC Main10 (hev1) + AAC', videoCodec: 'hev1.2.4.L120.90' },
   { codec: 'HEVC Main10 L5.1 + AAC', videoCodec: 'hvc1.2.4.L153.90' },

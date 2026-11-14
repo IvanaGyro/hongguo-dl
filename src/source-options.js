@@ -71,6 +71,9 @@ export function codecsAtQuality(variants, quality = 'auto') {
 const HEVC_MSE_PROBES = [
   'video/mp4; codecs="hvc1.1.6.L120.90, mp4a.40.2"',
   'video/mp4; codecs="hev1.1.6.L120.90, mp4a.40.2"',
+  // Observed in a real 1080p Main 8-bit hvcC; level is not the resolution.
+  'video/mp4; codecs="hvc1.1.6.L186, mp4a.40.2"',
+  'video/mp4; codecs="hev1.1.6.L186, mp4a.40.2"',
   'video/mp4; codecs="hvc1.1.6.L93, mp4a.40.2"',
   'video/mp4; codecs="hev1.1.6.L93, mp4a.40.2"',
   'video/mp4; codecs="hvc1.2.4.L120.90, mp4a.40.2"',

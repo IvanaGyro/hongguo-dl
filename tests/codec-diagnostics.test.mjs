@@ -15,6 +15,7 @@ test('capability report distinguishes MSE, canPlayType and MediaCapabilities', a
   assert.equal(data.schema, 2);
   assert.equal(data.hasMediaSource, true);
   assert(data.formats.some(row => row.videoOnly.mime.includes('hvc1.1.6.L120.90')));
+  assert(data.formats.some(row => row.videoOnly.mime.includes('hvc1.1.6.L186')));
   assert(data.formats.some(row => row.videoOnly.mime.includes('hev1.2.4.L120.90')));
   assert.equal(data.formats[0].codec, 'H.264 + AAC');
   assert.equal(data.formats[1].codec, 'HEVC + AAC');
