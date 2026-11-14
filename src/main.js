@@ -18,6 +18,7 @@ import '@videojs/html/ui/gesture';
 import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
 import './styles.css';
+import './redesign.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
@@ -305,6 +306,7 @@ function showSeries(result, fromHistory = false) {
 }
 function setMode(mode) {
   currentMode = mode === 'play' ? 'play' : 'download';
+  document.body.dataset.mode = currentMode;
   $('mode-download').classList.toggle('selected', currentMode === 'download');
   $('mode-play').classList.toggle('selected', currentMode === 'play');
   $('mode-download').setAttribute('aria-pressed', String(currentMode === 'download'));

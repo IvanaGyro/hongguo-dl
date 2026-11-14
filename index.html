@@ -3,17 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#101727" />
+  <meta name="theme-color" content="#10120f" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
 </head>
 <body>
   <div id="app">
-    <header class="topbar"><span class="brand"><span class="brand-mark">▶</span> Hongguo DL</span></header>
+    <header class="topbar">
+      <a class="brand" href="#app" aria-label="Hongguo DL 回到頁面頂端">
+        <span class="brand-mark" aria-hidden="true">▶</span>
+        <span class="brand-name">Hongguo <strong>DL</strong></span>
+      </a>
+      <span class="topbar-note">短劇播放 <span aria-hidden="true">/</span> 下載管理</span>
+    </header>
     <main class="layout">
-      <section class="hero">
-        <h1>接著看，或下載短劇。</h1>
-        <p>輸入影集 ID 或分享網址，即可開始。</p>
+      <section class="hero" aria-labelledby="home-title">
+        <span class="hero-kicker"><span class="kicker-dot" aria-hidden="true"></span> YOUR SHORT DRAMA LIBRARY</span>
+        <h1 id="home-title">好劇不間斷<span class="hero-accent">，</span><br />隨時接著看<span class="hero-accent">。</span></h1>
+        <p>貼上影集 ID 或分享網址，繼續播放、挑選集數，或一次整理下載。</p>
       </section>
       <nav class="mode-tabs" aria-label="操作模式">
         <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
@@ -69,7 +76,10 @@
           </div>
         </div>
         <section id="player-panel" hidden aria-label="影集播放器">
-          <div class="player-header"><h2 id="player-episode">尚未播放</h2><span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span></div>
+          <div class="player-header">
+            <div class="player-heading"><span class="section-eyebrow">NOW PLAYING</span><h2 id="player-episode">尚未播放</h2></div>
+            <span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span>
+          </div>
           <video-player id="videojs-player" class="videojs-player">
             <media-container id="player-stage" class="player-stage">
               <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
@@ -153,7 +163,7 @@
           <div id="bulk-status" class="export-status" role="status" aria-live="polite"></div>
         </div>
       </section>
-      <details id="playback-diagnostics" class="panel playback-diagnostics" open>
+      <details id="playback-diagnostics" class="panel playback-diagnostics">
         <summary>播放診斷 Log（暫時功能，可複製）</summary>
         <p class="help">記錄來源解析、CENC／MSE 與緩衝狀態；不記錄簽章網址、影片金鑰或 Cookie。重現問題後請複製內容。</p>
         <div class="actions">
