@@ -59,7 +59,7 @@ try {
   assert(mediaCalls > 0, 'Retry must actually enter CENC bounded metadata probe');
   assert.equal(await page.locator('#player-codec').count(),0);
   assert.deepEqual(await page.locator('#player-quality option').allTextContents(),
-    ['自動最佳','1080p','720p（H.264）','720p（ByteVC2）']);
+    ['自動最佳','1080p','720p']);
   await page.locator('#player-settings-toggle').click();
   assert.equal(await page.locator('#player-settings [data-settings-view="root"] .player-settings-row').count(), 2);
   await page.locator('#player-settings [data-settings-target="quality"]').click();
