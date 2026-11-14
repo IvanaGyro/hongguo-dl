@@ -26,6 +26,9 @@ page.on('console', message => {
 page.on('pageerror', error => pageErrors.push(error.message));
 const serveApi = async route => {
   const url = new URL(route.request().url());
+  if (url.pathname === '/api/health') return route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true })
+  });
   if (url.pathname === '/api/series') return route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ kind: 'series', seriesId: '123456789',

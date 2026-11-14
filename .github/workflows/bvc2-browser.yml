@@ -10,6 +10,7 @@ on:
       - 'src/bvc2*.js'
       - 'src/cenc-remux*.js'
       - 'src/cached-media-reader.js'
+      - 'src/media-body.js'
       - 'tests/bvc2*'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'scripts/generate-bvc2-fixtures.mjs'
@@ -34,6 +35,8 @@ jobs:
           bun-version: '1.3.3'
       - run: bun ci && bun add --dev playwright@1.58.0
       - run: bunx playwright install --with-deps chromium firefox
+      # GitHub mounts this directory as uid 1001; Firefox rejects it when run as root.
+      - run: chown "$(id -u):$(id -g)" "$HOME"
       - name: Verify published assets and generate version-1 bv2C regression fixtures
         run: |
           node scripts/bvc2-wasm-bundle.mjs verify
