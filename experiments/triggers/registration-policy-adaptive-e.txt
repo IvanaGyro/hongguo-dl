@@ -1,1 +1,1 @@
-2026-11-14 controlled run: exactly 3 rounds A silent 90s, B probe 30s then 90s, C probe 60s then 90s. No cross-round cooldown bounds and no precision early stop. Record first-zero server time and successes.
+2026-11-14 rerun controlled A/B/C experiment after removing stale upper/lower/candidate references in redacted persist; full 3 rounds, 600s gaps.
