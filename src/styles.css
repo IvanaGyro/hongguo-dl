@@ -21,6 +21,9 @@
   --line-strong: #fff4e65c;
   --orange-bright: #ff9050;
   --orange-shade: #5c2b12;
+  --orange-fill: #c9591a;
+  --menu: #37291e;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff4e6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
   --apricot-shade: #7d5a37;
   --sage-shade: #2b3619;
   --danger: #ffb4a5;
@@ -43,6 +46,25 @@
   color: var(--fg);
   background: var(--ground);
   -webkit-text-size-adjust: 100%;
+}
+/* Light theme: same roles, the brand fills unchanged. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --fg: #24160e;
+  --fg-soft: #5f5148;
+  --ground: #fbfcf7;
+  --surface: #f0f3e6;
+  --surface-strong: #e2e8d2;
+  --line: #24160e24;
+  --line-strong: #24160e59;
+  --orange-bright: #e85f12;
+  --orange-shade: #ffe2d0;
+  --orange-fill: #fd7528;
+  --apricot-shade: #f0b16b;
+  --sage-shade: #e9f5cb;
+  --danger: #a6241b;
+  --danger-tint: #fde4de;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2324160e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
 }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -119,13 +141,19 @@ button.quiet:hover:not(:disabled) { background: var(--surface-strong); border-co
 .mode-tabs button.selected,
 .mode-tabs button.selected:hover:not(:disabled) { background: var(--brand-mint); color: var(--ink); }
 
+.mode-tabs { margin-left: auto; }
+.theme-toggle { width: 44px; min-width: 44px; padding: 0; margin-left: -6px; background: var(--surface); border-color: transparent; }
+.theme-toggle:hover:not(:disabled) { background: var(--surface-strong); }
+.theme-toggle svg { width: 20px; height: 20px; }
+:root[data-theme="light"] .icon-sun, :root:not([data-theme="light"]) .icon-moon { display: none; }
+
 /* ---------- Home: one orange block and four tiles broken off it ---------- */
 .hero-inner {
   display: grid; grid-template-columns: minmax(0, 1fr) clamp(250px, 27vw, 380px);
   gap: 12px; align-items: stretch; padding-block: 12px 0;
 }
+body:not([data-has-series="true"]) .hero-block { --danger: #8f1d15; --danger-tint: #ffe3dc; }
 .hero-block {
-  --danger: #8f1d15; --danger-tint: #ffe3dc;
   display: flex; flex-direction: column; justify-content: flex-end;
   min-height: min(64vh, 540px); padding: clamp(24px, 4vw, 56px);
   border-radius: var(--r-lg); background: var(--brand-orange); color: var(--ink);
@@ -217,7 +245,6 @@ body[data-has-series="true"] .hero-lead,
 body[data-has-series="true"] .lookup label { display: none; }
 body[data-has-series="true"] .hero-inner { display: block; padding-block: 0 8px; }
 body[data-has-series="true"] .hero-block {
-  --danger: #ffb4a5; --danger-tint: #4f1d16;
   display: block; min-height: 0; padding: 0; background: none; color: var(--fg);
 }
 body[data-has-series="true"] .hero h1 {
@@ -242,9 +269,9 @@ body[data-has-series="true"] .hero-block button.series-chip { background: transp
 body[data-has-series="true"] .hero-block button.series-chip:hover:not(:disabled) { background: var(--surface); }
 @media (min-width: 900px) {
   body[data-has-series="true"] .hero { margin-top: -62px; }
-  body[data-has-series="true"] .lookup { margin-inline: 200px 250px; }
+  body[data-has-series="true"] .lookup { margin-inline: 200px 304px; }
   body[data-has-series="true"] .linked-series:not([hidden]),
-  body[data-has-series="true"] .alert { margin-inline: 200px 250px; }
+  body[data-has-series="true"] .alert { margin-inline: 200px 304px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -339,7 +366,7 @@ body[data-mode="download"] .episode-legend { display: none; }
 .episode.play-episode:hover:not(:disabled) { transform: translateY(-2px); }
 .episode.play-episode.watched { --tile-progress: var(--brand-mint); --tile-background: var(--brand-mint); color: var(--ink); }
 .episode.play-episode.current {
-  --tile-background: var(--orange-shade); --tile-progress: #c9591a;
+  --tile-background: var(--orange-shade); --tile-progress: var(--orange-fill);
   border-color: var(--brand-orange); box-shadow: inset 0 0 0 1px var(--brand-orange);
 }
 .episode.play-episode.current.watched { --tile-background: var(--brand-orange); --tile-progress: var(--brand-orange); color: var(--ink); }
@@ -377,7 +404,7 @@ body[data-mode="download"] #episode-navigation { justify-content: flex-start; ga
 .settings select {
   width: 100%; min-width: 0; min-height: 48px; padding: 0 40px 0 14px;
   border: 1.5px solid var(--line-strong); border-radius: var(--r-sm);
-  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff4e6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E") right 14px center / 16px no-repeat;
+  background: var(--surface) var(--chevron) right 14px center / 16px no-repeat;
   appearance: none; -webkit-appearance: none;
   font-weight: 500; text-overflow: ellipsis; cursor: pointer;
 }
@@ -507,7 +534,7 @@ media-fullscreen-button[data-fullscreen] .player-enter-fullscreen { display: non
   position: absolute; z-index: 15; right: 12px; bottom: 80px;
   width: min(340px, calc(100% - 24px)); max-height: min(66vh, 430px); overflow: auto;
   display: flex; flex-direction: column; padding: 8px;
-  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-strong); color: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--menu); color: var(--paper);
   box-shadow: 0 16px 40px #000000a6;
 }
 .player-settings-heading {
@@ -732,7 +759,8 @@ media-status-announcer {
 }
 @media (max-width: 420px) {
   .brand-name { display: none; }
-  .mode-tabs button { padding: 0 14px; }
+  .mode-tabs button { padding: 0 12px; }
+  .topbar-inner { gap: 12px; }
   .hero-tile i { font-size: .75rem; }
 }
 @media (max-width: 360px) {
@@ -741,6 +769,7 @@ media-status-announcer {
   .player-control-bar { flex-wrap: wrap; row-gap: 0; }
   .player-control-group { justify-content: space-around; width: 100%; }
   .player-clock { bottom: 108px; }
+  .mode-tabs button { padding: 0 8px; font-size: .875rem; }
   .toolbar #choose-folder { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {

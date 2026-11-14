@@ -6,6 +6,16 @@
   <meta name="theme-color" content="#17100b" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
+  <script>
+    // Set the theme before first paint: the saved choice, else the system setting.
+    (function () {
+      var theme = null;
+      try { theme = localStorage.getItem('hongguo-dl-theme-v1'); } catch (e) {}
+      if (theme !== 'light' && theme !== 'dark')
+        theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
 </head>
 <body>
   <div id="app">
@@ -20,6 +30,10 @@
           <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
           <button id="mode-play" type="button" aria-pressed="false">播放模式</button>
         </nav>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="切換主題">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.2 8.2 0 1 0 10.2 10.2Z"/></svg>
+        </button>
       </div>
     </header>
     <main id="main">
@@ -223,6 +237,7 @@
       </div>
     </main>
   </div>
+  <script type="module" src="/src/theme.js"></script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
