@@ -43,7 +43,7 @@ async function persist(){
     rows,events
   },null,2),{mode:0o600});
   await writeFile(OUT+'/redacted-records.json',JSON.stringify({
-    rows:rows.map(publicRow),events,upper,lower,candidate
+    rows:rows.map(publicRow),events
   },null,2),{mode:0o600});
 }
 async function send(round,phase,ordinal){
