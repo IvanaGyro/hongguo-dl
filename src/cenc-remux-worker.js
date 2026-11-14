@@ -14,6 +14,9 @@ let started = false, controller = null, pendingAck = null, seq = 0;
 let lastRangeError = null, activeRun = null, requestedSeek = null, wake = null;
 let stream = null, generation = 0, bridgeFailure = 'CENC_REMUX_FAILED';
 let processingAllowed = false, processingWake = null;
+// Engine state outlives the episode; callbacks always target the active job.
+let runtimeCore = null, runtimeBridge = null, runtimeIO = null;
+let completed = false, releasing = false;
 const canceled = () => Object.assign(new Error('Canceled'), { code: 'CANCELED' });
 
 const sendUnit = (type, data) => new Promise((resolve, reject) => {
@@ -27,6 +30,9 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
 async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
+  completed = false; releasing = false; generation = 0;
+  processingAllowed = false; requestedSeek = null; activeRun = null;
+  if (runtimeBridge && runtimeBridge !== bridge) throw new Error('Worker engine mismatch');
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
     throw new Error('Invalid source byte count');
   if (!['cenc', 'bvc2'].includes(bridge)) throw new Error('Invalid bridge');
@@ -97,46 +103,57 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
     self.postMessage({ type: 'stage', stage: 'processing.started' });
   }
   let assembler;
-  const runtime = bridge === 'bvc2' ? 'bvc2' : 'cenc';
-  const base = new URL(import.meta.env.BASE_URL + runtime + '/', self.location.href);
-  const moduleUrl = new URL(runtime + '-core.mjs', base);
-  const wasmUrl = new URL(runtime + '-core.wasm', base);
-  const manifestUrl = new URL('manifest.json', base);
-  self.postMessage({ type: 'stage', stage: 'wasm-download' });
-  const manifestResponse = await fetch(manifestUrl, {
-    signal: controller.signal, cache: 'no-store'
-  });
-  if (!manifestResponse.ok) throw new Error('CENC release manifest unavailable');
-  const manifestBytes = await readLimitedAsset(manifestResponse, 4096);
-  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-  if (manifest?.schema !== 1 ||
-      !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.mjs']) ||
-      !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.wasm']))
-    throw new Error('Invalid CENC release manifest');
-  // Content-address URLs prevent old HTTP cache entries from being reused
-  // across Pages deployments. Verify downloaded bytes before running code.
-  moduleUrl.searchParams.set('v', manifest.files[runtime + '-core.mjs']);
-  wasmUrl.searchParams.set('v', manifest.files[runtime + '-core.wasm']);
-  const [moduleResponse, wasmResponse] = await Promise.all([
-    fetch(moduleUrl, { signal: controller.signal, cache: 'force-cache' }),
-    fetch(wasmUrl, { signal: controller.signal, cache: 'force-cache' })
-  ]);
-  const [moduleBytes, wasmBytes] = await Promise.all([
-    readLimitedAsset(moduleResponse, 1024 * 1024),
-    readLimitedAsset(wasmResponse, (bridge === 'bvc2' ? 32 : 24) * 1024 * 1024)
-  ]);
-  self.postMessage({ type: 'stage', stage: 'wasm-verify' });
-  await (bridge === 'bvc2' ? verifyBvc2RuntimeBundle : verifyCencRuntimeBundle)(manifest, moduleBytes, wasmBytes);
-  if (controller.signal.aborted) throw new Error('Canceled');
-  const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
-  self.postMessage({ type: 'stage', stage: 'wasm-start' });
-  const core = await createModule({
-    wasmBinary: wasmBytes, readRange, writeChunk: data => {
+  runtimeIO = {
+    readRange,
+    writeChunk: data => {
       if (activeRun?.signal.aborted) throw canceled();
       return assembler.push(data);
     },
     printErr: message => { if (!activeRun?.signal.aborted) console.error(message); }
-  });
+  };
+  if (!runtimeCore) {
+    const runtime = bridge === 'bvc2' ? 'bvc2' : 'cenc';
+    const base = new URL(import.meta.env.BASE_URL + runtime + '/', self.location.href);
+    const moduleUrl = new URL(runtime + '-core.mjs', base);
+    const wasmUrl = new URL(runtime + '-core.wasm', base);
+    const manifestUrl = new URL('manifest.json', base);
+    self.postMessage({ type: 'stage', stage: 'wasm-download' });
+    const manifestResponse = await fetch(manifestUrl, {
+      signal: controller.signal, cache: 'no-store'
+    });
+    if (!manifestResponse.ok) throw new Error('CENC release manifest unavailable');
+    const manifestBytes = await readLimitedAsset(manifestResponse, 4096);
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+    if (manifest?.schema !== 1 ||
+        !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.mjs']) ||
+        !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.wasm']))
+      throw new Error('Invalid CENC release manifest');
+    // Content-address URLs prevent old HTTP cache entries from being reused
+    // across Pages deployments. Verify downloaded bytes before running code.
+    moduleUrl.searchParams.set('v', manifest.files[runtime + '-core.mjs']);
+    wasmUrl.searchParams.set('v', manifest.files[runtime + '-core.wasm']);
+    const [moduleResponse, wasmResponse] = await Promise.all([
+      fetch(moduleUrl, { signal: controller.signal, cache: 'force-cache' }),
+      fetch(wasmUrl, { signal: controller.signal, cache: 'force-cache' })
+    ]);
+    const [moduleBytes, wasmBytes] = await Promise.all([
+      readLimitedAsset(moduleResponse, 1024 * 1024),
+      readLimitedAsset(wasmResponse, (bridge === 'bvc2' ? 32 : 24) * 1024 * 1024)
+    ]);
+    self.postMessage({ type: 'stage', stage: 'wasm-verify' });
+    await (bridge === 'bvc2' ? verifyBvc2RuntimeBundle : verifyCencRuntimeBundle)(manifest, moduleBytes, wasmBytes);
+    if (controller.signal.aborted) throw new Error('Canceled');
+    const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
+    self.postMessage({ type: 'stage', stage: 'wasm-start' });
+    runtimeCore = await createModule({
+      wasmBinary: wasmBytes,
+      readRange: (...args) => runtimeIO.readRange(...args),
+      writeChunk: data => runtimeIO.writeChunk(data),
+      printErr: message => runtimeIO?.printErr(message)
+    });
+    runtimeBridge = bridge;
+  }
+  const core = runtimeCore;
   if (bridge === 'bvc2' && (core._bvc2_decoder_available?.() !== 1 || typeof core._bvc2_stream !== 'function'))
     throw new Error('BVC2 streaming API unavailable');
   if (bridge === 'cenc' && core._cenc_remux_available() !== 1)
@@ -170,6 +187,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
     if (ret !== 0) throw new Error('Remux failed');
     assembler.finish();
     stream.snapshot(true);
+    completed = true;
     self.postMessage({ type: 'done', generation });
   }
 
@@ -194,6 +212,7 @@ self.onmessage = ({ data }) => {
   if (data?.type === 'seek') {
     if (!Number.isFinite(data.seconds) || data.seconds < 0 || data.seconds > 86400 ||
         !Number.isSafeInteger(data.generation) || data.generation <= generation) return;
+    completed = false;
     stream?.snapshot(true);
     requestedSeek = { seconds: data.seconds, generation: data.generation };
     activeRun?.abort();
@@ -201,7 +220,8 @@ self.onmessage = ({ data }) => {
     wake?.(); wake = null;
     return;
   }
-  if (data?.type === 'cancel') {
+  if (data?.type === 'release' || data?.type === 'cancel') {
+    releasing = data.type === 'release';
     controller?.abort(); activeRun?.abort(); stream?.close(); wake?.(); processingWake?.();
     pendingAck?.reject(new Error('Canceled'));
     pendingAck = null;
@@ -213,8 +233,14 @@ self.onmessage = ({ data }) => {
     // The Worker receives a proxied, signed URL and a CENC key. A native
     // fetch/decoder error can include either; never relay arbitrary messages.
     // The main thread handles all failures through the same resource cleanup.
+    runtimeCore = null; runtimeBridge = null;
     self.postMessage({ type: 'error',
       code: lastRangeError?.code || bridgeFailure,
       status: lastRangeError?.status || 0 });
+  }).finally(() => {
+    stream?.close(); stream = null; runtimeIO = null;
+    started = false; pendingAck = null; requestedSeek = null;
+    activeRun = null; wake = null; processingWake = null;
+    if (releasing) self.postMessage({ type: 'idle', reusable: Boolean(runtimeCore && completed) });
   });
 };

@@ -1,23 +1,17 @@
 // Video.js 10 controls with a native <video> media element.
-// Source resolution, encryption, resume and episode navigation stay app-owned.
+// Layer 3: media presentation, controls, resume and episode navigation.
+// Playable-media preparation and lookahead belong to media-session.js.
 // Only the current episode is active.
 // Both progress recording and restoration are guarded against the common
 // reload race: a 0-second metadata load must never erase a saved position.
-import { errorWith, classifyError, isHlsUrl, mediaProxyUrl } from './logic.js';
+import { errorWith, classifyError } from './logic.js';
 import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
-import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
-import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition, reconcileRendition, playableVariants } from './source-options.js';
-import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
-import { probeCencKid, openClearKeyStream } from './clear-key.js';
-import { openCencProgressiveStream } from './cenc-remux.js';
-import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
+import { renditionOptions, parseRenditionValue, matchingRenditionValue, codecId, playableVariants } from './source-options.js';
+import { createMediaSession } from './media-session.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
-import { canTryNextCencSource, sameTierPlaybackCandidates } from './cenc-source-fallback.js';
-import { blockHevcFullFileFallback, bvc2PlaybackMode } from './playback-policy.js';
-import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
+import { bvc2PlaybackMode } from './playback-policy.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -44,19 +38,11 @@ export function createPlayer({
   let controller = null, token = 0, activeUrl = null;
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
-  let sourceAttempt = 0;
-  let sourceRefreshCount = 0, cencRetryTier = null;
-  let cencTriedUrls = new Set(), candidateIds = new Map();
-  let streamFailure = null;
-  let lastVariants = null, lastWinnerVariants = null, lastVariantsVid = null, lastVariantsAt = 0;
-  let lastVariantsPartial = false;
-  let pendingSourceExpansion = null, triedSourceUrls = new Set();
-  let prefetched = null, lastStartupSeconds = 0, loadStartedAt = 0;
+  let lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
   let directNativeProxyFallback = null;
-  let retryIncrementalCenc = false, retryError = null;
+  let retryError = null;
   let restartingRemoteSeek = false;
-  let canTranscodeBvc2 = false;
   // All measurements refer to the same selected-episode click, not the start
   // of an individual fetch or decoder stage. Never log signed URLs or keys.
   let startupStages = new Set();
@@ -75,7 +61,21 @@ export function createPlayer({
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
   const mseSupport = mime => typeof MediaSource !== 'undefined' &&
     Boolean(MediaSource.isTypeSupported?.(mime));
-  const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
+  const media = createMediaSession({
+    video, getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache,
+    selection: () => selection(),
+    context: () => ({ episode: current, ready: readyForHistory, stream: nativeStream,
+      startupSeconds: lastStartupSeconds, duration: video.duration,
+      position: video.currentTime, paused: video.paused, seeking: video.seeking || restartingRemoteSeek }),
+    savedResumeSeconds, waitForOutputCleanup: () => keyCleanup,
+    mimeSupport, mseSupport, bvc2Mode, log, ageMs, markStartupStage,
+    reportStartup,
+    reportStage: (stage, signal, attempt) => {
+      if (streamStages[stage]) reportStartup(streamStages[stage], signal, attempt);
+    },
+    onVariants: (variants, requested) => { updateRenditionOptions(variants, requested); persistPrefs(); },
+    onSelection: selectRendition
+  });
   video.controls = false;
   const preferences = loadPrefs(storage);
   for (const [select, value] of [
@@ -87,7 +87,7 @@ export function createPlayer({
   const selection = () => pendingQuality !== null
     ? { quality: pendingQuality, codec: 'auto' } : parseRenditionValue(qualitySelect.value);
   function selectRendition(quality, codec = 'auto') {
-    const options = renditionOptions(lastVariants || []);
+    const options = renditionOptions(media.variants || []);
     qualitySelect.value = matchingRenditionValue(options, { quality, codec }) || 'auto';
   }
   qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
@@ -102,7 +102,7 @@ export function createPlayer({
   function setStatus(value) { status.textContent = value; }
   function updateRenditionOptions(variants, requested = selection()) {
     pendingQuality = null;
-    const options = renditionOptions(playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport));
+    const options = renditionOptions(playableVariants(variants, mimeSupport, media.bvc2Available, mseSupport));
     let value = matchingRenditionValue(options, requested);
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
@@ -110,15 +110,6 @@ export function createPlayer({
     updateSettingsSummaries();
     if (!settingsMenu.hidden && settingsViews.some(view =>
       view.dataset.settingsView === 'quality' && !view.hidden)) showSettingsView('quality');
-  }
-  function refreshBvc2Choices(variants, signal) {
-    if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
-    void bvc2BridgeAvailable().then(available => {
-      if (signal.aborted || lastVariants !== variants || available === canTranscodeBvc2) return;
-      canTranscodeBvc2 = available;
-      updateRenditionOptions(variants);
-      log('source.menu.updated', { bvc2Available: available });
-    }).catch(() => {});
   }
   function ordered() {
     return [...(getSeries()?.episodes || [])].sort((a, b) => Number(a.index) - Number(b.index));
@@ -166,8 +157,8 @@ export function createPlayer({
     if (activeUrl) { URL.revokeObjectURL(activeUrl); activeUrl = null; }
   }
   function streamPlaybackError(message) {
-    return streamFailure?.code?.startsWith('CENC_')
-      ? errorWith(streamFailure.code, playbackErrorSummary(streamFailure))
+    return media.failure?.code?.startsWith('CENC_')
+      ? errorWith(media.failure.code, playbackErrorSummary(media.failure))
       : errorWith('PLAYBACK_ERROR', message);
   }
   async function waitMetadata(signal) {
@@ -289,509 +280,9 @@ export function createPlayer({
   function reportStartup(message, signal, attempt = 0) {
     if (!signal.aborted) setStatus(playbackAttemptMessage(message, attempt, retryError));
   }
-  function retryCurrentSource(variants, source) {
-    return !(variants || []).some(other => other.url && other.url !== source.url &&
-      other.contentKey && !cencTriedUrls.has(other.url) &&
-      codecId(other.codec) === codecId(source.codec) && qualityId(other) === qualityId(source));
-  }
-  async function prepareNativeStream(args) {
-    try {
-      log('cenc.prepare.begin', { codec: args.codec, elapsedMs: ageMs() });
-      const stream = await openClearKeyStream(args);
-      log('cenc.route', { kind: stream?.kind || 'unavailable', elapsedMs: ageMs() });
-      if (stream?.kind === 'cenc-remux') retryIncrementalCenc = true;
-      return stream;
-    }
-    catch (error) {
-      if (args.signal?.aborted) throw error;
-      log('cenc.prepare.failed', { code: error?.code || 'UNKNOWN', elapsedMs: ageMs() });
-      // This also covers the nativePending prefetch handoff, not just open().
-      if (['CENC_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP'].includes(error?.code))
-        retryIncrementalCenc = true;
-      throw error;
-    }
-  }
-  function maybeStartPrefetchedProcessing() {
-    if (!nativeStream || nativeStream.finished?.()) prefetched?.prepared?.native?.startProcessing?.();
-  }
-  function streamStageReporter(signal, attempt, quiet = false, episode = current) {
-    return (stage, fields = {}) => {
-      if (signal.aborted) return;
-      if (quiet && current?.vid !== episode?.vid) {
-        log('prefetch.stage', { episode: Number(episode?.index) || 0, phase: stage, ...fields });
-      } else {
-        log('cenc.stage', { phase: stage, elapsedMs: ageMs(), ...fields });
-        if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
-          streamFailure = { code: fields.code, status: fields.status || 0 };
-        if (stage === 'seek.request') prefetched?.prepared?.native?.pauseProcessing?.();
-        if (stage === 'mse.done') maybeStartPrefetchedProcessing();
-        if (streamStages[stage] && (stage !== 'media-range-retry' || !readyForHistory))
-          reportStartup(streamStages[stage], signal, attempt);
-      }
-    };
-  }
-  async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
-    const series = getSeries();
-    let quality = options.quality ?? selection().quality;
-    let codec = options.codec ?? selection().codec;
-    const quiet = !!options.quiet;
-    const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
-    const onStage = streamStageReporter(signal, attempt, quiet, episode);
-    log('source.resolve.begin', {
-      attempt: attempt + 1, quality, codec, prefetch: quiet, elapsedMs: ageMs()
-    });
-    const fallbackStatus = message => report(
-      '⚠ 串流未就緒，改為整集下載備援；下載並處理完成後才能播放 · ' + message);
-    const seriesId = options.seriesId ?? series?.seriesId;
-    let key = episodeCacheKey(seriesId, episode.vid, quality, codec);
-    const entry = attempt === 0 ? cache.getEntry(key) : null;
-    if (entry?.blob) {
-      log('source.cache.hit', { attempt: attempt + 1 });
-      report('正在讀取已快取的影片…');
-      return { blob: entry.blob, source: entry.source || { codec, quality, source: 'cache' } };
-    }
-    report(attempt ? '正在選取其他 CDN／更新影片來源…' : '正在取得影片來源…');
-    if (!quiet && attempt > 0 && !cencRetryTier &&
-        pendingSourceExpansion?.vid === episode.vid) {
-      report('正在等待另一種來源查詢結果…');
-      await pendingSourceExpansion.promise;
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-    }
-    // This API may return 10 variants but only two HEVC URLs at 1080p.
-    // Rotate just those candidates; refresh signed URLs once when exhausted.
-    const sameEpisode = !quiet && lastVariants && lastVariantsVid === episode.vid;
-    const priorCandidates = sameEpisode && cencRetryTier
-      ? sameTierPlaybackCandidates(lastVariants, { quality, codec }, cencRetryTier) : [];
-    const withinCycle = priorCandidates.some(source => !cencTriedUrls.has(source.url));
-    let refreshingCencSources = false;
-    const sameList = Boolean(sameEpisode && attempt > 0 &&
-      (cencRetryTier ? withinCycle : attempt < lastVariants.length));
-    if (!quiet && cencRetryTier && sameEpisode && attempt > 0 && !sameList) {
-      if (sourceRefreshCount >= 1) {
-        log('source.list.exhausted', {
-          attempts: attempt, tier: cencRetryTier.quality, refreshed: sourceRefreshCount
-        });
-        throw errorWith('CENC_SOURCE_EXHAUSTED',
-          '同畫質候選來源均已嘗試且刷新一次後仍不可用；請稍後再試。');
-      }
-      refreshingCencSources = true;
-      log('source.list.refresh', {
-        attempt: attempt + 1, tier: cencRetryTier.quality, refreshed: sourceRefreshCount
-      });
-      report('正在重新取得同畫質影片來源…');
-    }
-    const sourceQuery = sourceQueryForPlayback(quality);
-    const list = options.variants?.length ? { variants: options.variants, winnerVariants: options.winnerVariants }
-      : episode.vid === 'direct'
-      ? { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] }
-      : sameList ? { variants: lastVariants, winnerVariants: lastWinnerVariants }
-        : await sourceFor(seriesId, episode.vid, sourceQuery.quality, sourceQuery.codec, signal,
-          { refresh: !quiet && attempt > 0 && !sameList });
-    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-    const variants = list.variants || [];
-    if (refreshingCencSources) {
-      if (!variants.length) throw errorWith('SOURCE_UNAVAILABLE', '刷新未取得可用片源');
-      // An API failure does not start a new cycle. Keep all failed URLs marked
-      // until a refresh actually succeeds, so retry cannot revive the old list.
-      sourceRefreshCount++;
-      cencTriedUrls.clear();
-      log('source.list.refreshed', { variants: variants.length, refreshed: sourceRefreshCount });
-    }
-
-    // A public unknown-quality URL cannot satisfy an explicit rendition
-    // request. Await the other query only when the initial source lacks it.
-    if (list.lateVariants && (quality !== 'auto' || codec !== 'auto') &&
-        !variants.some(v => (quality === 'auto' || qualityId(v) === quality) &&
-          (codec === 'auto' || codecId(v.codec) === codec))) {
-      const extra = await list.lateVariants;
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      const seen = new Set(variants.map(v => v.url));
-      for (const v of extra || []) if (v?.url && !seen.has(v.url)) {
-        variants.push(v); seen.add(v.url);
-      }
-    }
-    log('source.list.ready', {
-      variants: variants.length, fromCache: sameList || Boolean(list.fromCache), sharedRequest: Boolean(list.shared),
-      elapsedMs: ageMs()
-    });
-    const reconciled = reconcileRendition(variants, { quality, codec });
-    if (reconciled.quality !== quality || reconciled.codec !== codec) {
-      log('source.selection.reconciled', { previousQuality: quality, previousCodec: codec, ...reconciled });
-      quality = reconciled.quality; codec = reconciled.codec;
-      key = episodeCacheKey(seriesId, episode.vid, quality, codec);
-    }
-    // A 1080p HEVC selection must not wait for unrelated ByteVC2 assets.
-    let policyVariants = quality === 'auto'
-      ? list.winnerVariants || variants : variants;
-    const nativeChoice = playbackRendition(policyVariants, { quality, codec: 'auto' }, mimeSupport, 0, false, mseSupport).source;
-    if (!quiet) for (const option of renditionOptions(variants)) {
-      const candidates = variants.filter(v => qualityId(v) === option.quality &&
-        (codecId(v.codec) || 'auto') === option.codec);
-      log('source.rendition', {
-        quality: option.quality, codec: option.codec, candidates: candidates.length,
-        encrypted: candidates.some(v => Boolean(v.contentKey)),
-        nativeSupported: Boolean(playbackRendition(candidates, option,
-          mimeSupport, 0, false, mseSupport).source)
-      });
-    }
-    log('source.selection.policy', { quality, codec, nativeAvailable: Boolean(nativeChoice), bvc2Mode });
-    const needsBvc2 = policyVariants.some(v => codecId(v.codec) === 'bytevc2' &&
-      (quality === 'auto' || qualityId(v) === quality) &&
-      (!nativeChoice || parseInt(qualityId(v), 10) > parseInt(qualityId(nativeChoice), 10)));
-    if (needsBvc2) report('正在檢查 ByteVC2 播放工具…');
-    const checkStarted = performance.now();
-    const bvc2Available = needsBvc2 ? await bvc2BridgeAvailable() : canTranscodeBvc2;
-    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-    canTranscodeBvc2 = bvc2Available;
-    log('source.bvc2.check', {
-      required: needsBvc2, available: canTranscodeBvc2,
-      elapsedMs: Math.round(performance.now() - checkStarted)
-    });
-    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport);
-    const supportedSelection = reconcileRendition(supported, { quality, codec });
-    if (quality !== supportedSelection.quality || codec !== supportedSelection.codec) {
-      quality = supportedSelection.quality; codec = supportedSelection.codec;
-      key = episodeCacheKey(seriesId, episode.vid, quality, codec);
-      log('source.selection.reconciled', { quality, codec, reason: 'supported-codecs' });
-    }
-    policyVariants = quality === 'auto' ? list.winnerVariants || variants : variants;
-    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-    if (!quiet) {
-      lastVariants = variants;
-      lastWinnerVariants = list.winnerVariants || variants.slice();
-      lastVariantsVid = episode.vid;
-      lastVariantsAt = Date.now();
-      lastVariantsPartial = sourceQuery.partial;
-      updateRenditionOptions(variants, { quality, codec });
-      refreshBvc2Choices(variants, signal);
-      persistPrefs();
-      // An independently resolved web/App source may arrive after playback
-      // has already started. Merge it for future quality changes and retries,
-      // but never restart or replace a healthy active MediaSource.
-      if (list.lateVariants) {
-        const expansion = list.lateVariants.then(extras => {
-          if (signal.aborted || lastVariants !== variants ||
-              lastVariantsVid !== episode.vid || !extras?.length) return;
-          const seen = new Set(variants.map(item => item.url));
-          let added = 0;
-          for (const variant of extras) {
-            if (!variant?.url || seen.has(variant.url)) continue;
-            seen.add(variant.url);
-            variants.push(variant);
-            added++;
-          }
-          if (added) {
-            lastVariantsAt = Date.now();
-            log('source.list.extended', { added, variants: variants.length });
-            updateRenditionOptions(variants);
-            refreshBvc2Choices(variants, signal);
-          }
-        }).catch(() => {});
-        pendingSourceExpansion = { vid: episode.vid, promise: expansion };
-      } else {
-        pendingSourceExpansion = null;
-      }
-      // Persisted codec preferences can belong to another episode's tier.
-      // Use the now-enabled selection, rather than rejecting a stale codec.
-      if (codec !== selection().codec) {
-        codec = selection().codec;
-        key = episodeCacheKey(seriesId, episode.vid, quality, codec);
-        persistPrefs();
-      }
-    }
-    // A fixed tier is not a fixed codec: Nova's 720p is encrypted VVC, not
-    // HEVC. Reject it before spending bandwidth and CPU on doomed FFmpeg work.
-    const selectableVariants = !quiet && cencRetryTier
-      ? sameTierPlaybackCandidates(variants, { quality, codec }, cencRetryTier)
-        .filter(source => !cencTriedUrls.has(source.url))
-      : policyVariants;
-    const candidateIndex = !quiet && (cencRetryTier || !triedSourceUrls.size)
-      ? 0 : attempt;
-    let resolved = playbackRendition(selectableVariants,
-      { quality, codec }, mimeSupport, candidateIndex, canTranscodeBvc2, mseSupport);
-    if (!quiet && !cencRetryTier && triedSourceUrls.size) {
-      const next = untriedPlaybackRendition(selectableVariants,
-        { quality, codec }, mimeSupport, triedSourceUrls, canTranscodeBvc2, mseSupport);
-      if (next?.source) resolved = next;
-    }
-    const source = resolved.source;
-    if (source?.url && !candidateIds.has(source.url)) candidateIds.set(source.url, candidateIds.size + 1);
-    log('source.selected', {
-      candidate: source?.url ? candidateIds.get(source.url) : 0,
-      quality: source ? qualityId(source) || 'unknown' : 'none',
-      codec: source ? codecId(source.codec) || 'unknown' : 'none',
-      encrypted: Boolean(source?.contentKey),
-      hls: Boolean(source && isHlsUrl(source.url)),
-      fallback: resolved.fallback, attempt: attempt + 1, elapsedMs: ageMs()
-    });
-    if (!source?.url) {
-      if (cencRetryTier && !quiet)
-        throw errorWith('CENC_SOURCE_EXHAUSTED',
-          '已無與原本畫質／編碼相同的可用官方影片來源。');
-      const tiers = availableRenditions(variants);
-      const offered = tiers.qualities.map(q =>
-        q + '：' + codecsAtQuality(variants, q).map(c => CODEC_NAMES[c] || c).join('/')).join('、');
-      throw errorWith('PLAYBACK_UNSUPPORTED',
-        '所選 ' + (quality === 'auto' ? '自動畫質' : quality) +
-        ' 沒有可播放的編碼；可用來源：' + (offered || '未知') +
-        '。ByteVC2 須部署 Librempeg WASM 轉碼器；HEVC 需瀏覽器支援。');
-    }
-    if (!quiet) {
-      triedSourceUrls.add(source.url);
-      cencTriedUrls.add(source.url);
-    }
-    let fallbackNotice = '';
-    if (resolved.fallback) {
-      const original = quality;
-      const actual = qualityId(source);
-      const originalCodecs = codecsAtQuality(variants, original)
-        .map(id => CODEC_NAMES[id] || id).join('/');
-      fallbackNotice = original + ' 只有 ' + originalCodecs +
-        '，已改用 ' + actual + ' ' + (CODEC_NAMES[codecId(source.codec)] || source.codec);
-      if (!quiet && actual && renditionOptions(variants).some(o => o.quality === actual)) {
-        selectRendition(actual);
-        updateRenditionOptions(variants);
-        persistPrefs();
-      }
-    }
-    if (!quiet && !cencRetryTier && (codecId(source.codec) === 'bytevc2' ||
-        codecId(source.codec) === 'hevc' && source.contentKey) && !isHlsUrl(source.url))
-      cencRetryTier = { codec: codecId(source.codec), quality: qualityId(source) };
-    const profile = source.source === 'app' ? 'app' : 'web';
-    if (codecId(source.codec) === 'bytevc2') {
-      if (isHlsUrl(source.url)) throw errorWith('PLAYBACK_UNSUPPORTED',
-        'ByteVC2 HLS 尚未支援；目前的 WASM 路徑只接受 MP4');
-      // Streaming preload downloads independently and waits for the current
-      // processor before producing a bounded clear prefix. Whole-file mode
-      // keeps metadata-only lookahead to avoid a second full transcode.
-      if (quiet && (bvc2Mode !== 'stream' || !options.nativePrefetch)) return { bvc2Pending: true, source, fallbackNotice, variants,
-        winnerVariants: list.winnerVariants || variants.slice() };
-      if (bvc2Mode === 'stream') {
-      if (!quiet) setStatus('正在準備 ByteVC2 → H.264 增量串流…');
-      const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
-      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(), fetch, undefined, source.userAgent);
-      const url = transport.mode === 'direct' ? source.url : proxyUrl;
-      const metadata = {};
-      log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
-      await probeCencKid(url, signal, transport.fetch, metadata, (phase, fields) => onStage(phase, fields));
-      if (!metadata.fileSize || metadata.fragmented)
-        throw errorWith('BVC2_ERROR', 'ByteVC2 串流需要可讀取索引的 MP4 來源');
-      const native = await openCencProgressiveStream({
-        video, url: transport.mode === 'direct' ? source.url : proxyUrl,
-        proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
-        codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source),
-        key: source.contentKey || '', signal, bridge: 'bvc2', preload: quiet && options.nativePrefetch,
-        durationSeconds: metadata.movieDurationSeconds || source.duration || null,
-        startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
-          metadata.movieDurationSeconds || source.duration || null) || 0
-      });
-      if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
-      return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
-        fallbackNotice, variants: quiet ? variants : null };
-      }
-      const reportBvc2 = message => report(
-        '⚠ 此 ByteVC2 模式需下載及轉碼整集，完成後才能播放 · ' + message);
-      log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2' });
-      reportBvc2('讀取 ByteVC2 影片…');
-      const started = performance.now();
-      let received = 0;
-      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
-        (length, total) => {
-          received += length;
-          if (length > 0) markStartupStage('first-media-byte');
-          if (total > 0) reportBvc2('讀取 ByteVC2 影片 ' +
-            Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）');
-        }, source.userAgent);
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      log('bvc2.download.complete', { bytes: raw.length });
-      reportBvc2('ByteVC2 整集已下載；準備 WASM 轉碼（此模式尚不能串流起播）');
-      const bvc2Phases = {
-        'config-normalized': '正在準備 ByteVC2 設定資料…',
-        'wasm-loading': '載入 ByteVC2 WASM 解碼器…',
-        'wasm-ready': 'ByteVC2 解碼器已就緒…',
-        transcoding: 'ByteVC2 → H.264 正在轉碼整集；完成前無法顯示影格，請勿誤認為已起播',
-        finalizing: 'ByteVC2 轉碼完成，正在輸出 MP4…'
-      };
-      const transcoded = await transcodeBvc2(raw, {
-        contentKey: source.contentKey, signal, mode: 'h264',
-        progress: value => { if (!signal.aborted) reportBvc2('轉碼 ' + Math.round(value * 100) + '%'); },
-        onProgress: phase => {
-          if (!signal.aborted) log('bvc2.transcode.stage', { phase });
-          if (!signal.aborted && bvc2Phases[phase]) reportBvc2(bvc2Phases[phase]);
-        }
-      });
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      log('bvc2.transcode.complete', { bytes: transcoded.length });
-      console.info('[Hongguo playback] E' + episode.index + ' ByteVC2 解密轉碼：' +
-        Math.round(performance.now() - started) + 'ms');
-      const playable = new Blob([transcoded], { type: 'video/mp4' });
-      const outputSource = { ...source, outputCodec: 'h264' };
-      cache.put(key, playable, outputSource);
-      return { blob: playable, source: outputSource, fallbackNotice, variants: null };
-    }
-    if (!isHlsUrl(source.url) && !source.contentKey) {
-      log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
-      const fallbackProxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
-      if (!isApprovedDirectMediaUrl(source.url))
-        return { url: fallbackProxyUrl, source, fallbackNotice, variants: quiet ? variants : null };
-      const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(),
-        fetch, reason => log('media.transport.fallback', { reason }));
-      // Test a bounded CORS-readable range, avoiding a complete download
-      // just to decide whether native <video> may use this CDN directly.
-      const probe = await transport.fetch(source.url, {
-        headers: { Range: 'bytes=0-15' }, signal, cache: 'no-store'
-      });
-      await probe.body?.cancel().catch(() => {});
-      if (probe.status === 429)
-        throw errorWith('MEDIA_RATE_LIMITED', '來源回傳 HTTP 429，暫停重試');
-      // The proxy may legally return 200/full-body to native <video>.
-      // A 206 requirement applies to JS byte-range demux, not the HTML
-      // media element, which handles complete MP4 responses natively.
-      if (probe.status !== 206 && probe.status !== 200)
-        throw errorWith(probe.status === 403 ? 'MEDIA_SOURCE_FORBIDDEN' : 'MEDIA_HTTP',
-          '媒體來源 HTTP ' + probe.status);
-      const directUrl = probe.status === 206 && transport.mode === 'direct'
-        ? source.url : null;
-      return { url: directUrl || fallbackProxyUrl,
-        directProxyFallback: directUrl ? fallbackProxyUrl : null,
-        source, fallbackNotice, variants: quiet ? variants : null };
-    }
-    // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
-    // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
-    // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
-    // A source/API failure may consume attempt zero before any CENC setup.
-    // Every newly selected encrypted source must still try incremental playback.
-    if ((!quiet || options.nativePrefetch) && source.contentKey && !isHlsUrl(source.url)) {
-      await keyCleanup;
-      const native = await (quiet ? openClearKeyStream : prepareNativeStream)({
-        preload: quiet && options.nativePrefetch, video, source, codec: codecId(source.codec),
-        workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode, seriesId), onStage,
-        retrySameSource: retryCurrentSource(variants, source)
-      });
-      if (native) {
-        if (!quiet && native.kind === 'cenc-remux') retryIncrementalCenc = true;
-        log('playback.route', { kind: native.kind, elapsedMs: ageMs() });
-        return { url: native.url, native, source, fallbackNotice, variants: quiet ? variants : null };
-      }
-      if (quiet) return { nativePending: true, source, fallbackNotice, variants };
-      if (retryIncrementalCenc)
-        throw errorWith('CENC_UNAVAILABLE', '增量串流重試失敗，已禁止整檔備援下載');
-    }
-    // Whole-file FFmpeg is not a valid fallback for encrypted HEVC MP4.
-    if (blockHevcFullFileFallback(source)) {
-      log('playback.fallback.blocked', { codec: 'hevc', reason: 'cenc-unavailable' });
-      throw errorWith('CENC_UNAVAILABLE',
-        'HEVC 增量串流無法使用；已禁止改為整集下載。請複製頁面底部播放診斷 Log。');
-    }
-    log('playback.fallback.whole-file', {
-      codec: codecId(source.codec) || 'unknown',
-      reason: isHlsUrl(source.url) ? 'hls' : 'cenc-unavailable',
-      elapsedMs: ageMs()
-    });
-    let bytes;
-    if (isHlsUrl(source.url)) {
-      if (!quiet) report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 正在讀取分片清單…');
-      bytes = await convertHls(source.url, {
-        mode: 'copy', contentKey: source.contentKey, signal,
-        fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, max, undefined, source.userAgent),
-        segmentProgress: x => report('⚠ 此影片需先下載並封裝整集，完成後才能播放 · 分片 ' + x.current + '/' + x.total)
-      });
-    } else {
-      // Encrypted MP4s still require the complete source before decryption.
-      // Initialize FFmpeg after the first media chunk, in parallel with the
-      // remaining download, so the initial startup stages do not run serially.
-      let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
-      let received = 0, lastUpdate = 0;
-      const downloadStarted = performance.now();
-      fallbackStatus('正在下載整集影片…');
-      const raw = await fetchBytes(source.url, profile, signal,
-        quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
-        (length, total) => {
-          if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
-          received += length;
-          if (length > 0) markStartupStage('first-media-byte');
-          const now = Date.now();
-          if (!quiet && now - lastUpdate > 250) {
-            lastUpdate = now;
-            fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
-              : '正在下載整集影片…');
-          }
-        }, source.userAgent);
-      fallbackStatus('整集已下載，正在準備影片處理工具…');
-      const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
-      if (warmupError) throw warmupError;
-      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      if (!quiet) {
-        console.info('[Hongguo playback] E' + episode.index +
-          ' 片源下載：' + Math.round(performance.now() - downloadStarted) +
-          'ms，' + raw.byteLength + ' bytes');
-        fallbackStatus('正在解密並重新封裝整集影片…');
-      }
-      const remuxStarted = performance.now();
-      bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
-      if (!quiet) console.info('[Hongguo playback] E' + episode.index +
-        ' 解密封裝：' + Math.round(performance.now() - remuxStarted) + 'ms');
-    }
-    if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');
-    const result = new Blob([bytes], { type: 'video/mp4' });
-    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-    cache.put(key, result, source);
-    return { blob: result, source, fallbackNotice, fullFileFallback: true,
-      variants: quiet ? variants : null };
-  }
   async function load(episode, currentToken, signal, autoPlay, handoff = null) {
-    streamFailure = null;
-    const attempt = sourceAttempt++;
-    log('playback.attempt', { attempt: attempt + 1, elapsedMs: ageMs() });
-    // If the incoming episode is already being downloaded/decrypted, consume
-    // that one promise rather than issuing a second expensive media request.
-    if (handoff && attempt === 0)
-      reportStartup('正在接續預取的影片來源…', signal, attempt);
-    const prepared = handoff && attempt === 0 ? await handoff.promise : null;
-    let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
-    if (prepared?.native?.activate) {
-      prepared.native.activate();
-      if (prepared.source?.url) {
-        triedSourceUrls.add(prepared.source.url); cencTriedUrls.add(prepared.source.url);
-        cencRetryTier = { codec: codecId(prepared.source.codec), quality: qualityId(prepared.source) };
-      }
-      if (prepared.native.kind === 'cenc-remux') retryIncrementalCenc = true;
-      log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true });
-    }
-    if (resolved?.bvc2Pending) {
-      resolved = await sourceForEpisode(episode, signal, attempt,
-        { variants: resolved.variants, winnerVariants: resolved.winnerVariants });
-    }
-    if (resolved?.nativePending) {
-      await keyCleanup;
-      const native = await prepareNativeStream({
-        video, source: resolved.source, codec: codecId(resolved.source.codec),
-        workerOrigin: getWorkerOrigin(), signal,
-        startSeconds: savedResumeSeconds(episode),
-        retrySameSource: retryCurrentSource(prepared.variants, resolved.source),
-        onStage: streamStageReporter(signal, attempt, false, episode)
-      });
-      resolved = native ? { ...resolved, native, url: native.url, nativePending: false }
-        : await sourceForEpisode(episode, signal, attempt,
-          { variants: prepared.variants });
-    }
+    const { resolved, prepared, attempt } = await media.request(episode, signal, handoff);
     if (signal.aborted || currentToken !== token) return;
-    if (prepared?.variants?.length) {
-      lastVariants = prepared.variants;
-      lastVariantsVid = episode.vid;
-      lastVariantsAt = Date.now();
-      lastVariantsPartial = sourceQueryForPlayback(selection().quality).partial;
-      updateRenditionOptions(prepared.variants);
-      if (prepared.fallbackNotice) {
-        const actual = qualityId(prepared.source);
-        if (actual && renditionOptions(prepared.variants).some(o => o.quality === actual)) {
-          selectRendition(actual);
-          updateRenditionOptions(prepared.variants);
-          persistPrefs();
-        }
-      }
-    }
     sourceInfo.textContent = printableSource(resolved.source) || '來源資訊不完整';
     if (resolved.fallbackNotice) sourceInfo.textContent += ' · ' + resolved.fallbackNotice;
     log('playback.media.selected', {
@@ -889,7 +380,7 @@ export function createPlayer({
         if (signal.aborted || currentToken !== token) return;
         const parsed = classifyError(error);
         log('playback.attempt.failed', {
-          code: parsed.code || 'UNKNOWN', attempt: sourceAttempt, elapsedMs: ageMs()
+          code: parsed.code || 'UNKNOWN', attempt: media.attempt, elapsedMs: ageMs()
         });
         handoff = null;
         if (nativeStream) {
@@ -908,15 +399,8 @@ export function createPlayer({
         // source at the same resolution still returns usable media.
         // Limit retries to distinct candidates at the SAME quality and codec;
         // never broaden to ByteVC2, lower quality, or unlimited 403 retries.
-        if (canTryNextCencSource({
-          code: parsed.code, variants: lastVariants,
-          variantsVid: lastVariantsVid, episodeVid: episode.vid,
-          tried: cencTriedUrls.size, triedUrls: cencTriedUrls, tier: cencRetryTier,
-          quality: selection().quality,
-          codec: selection().codec
-        })) {
-          if (cencRetryTier?.codec === 'hevc') retryIncrementalCenc = true;
-          log('playback.cdn.rotate', { attempt: sourceAttempt, elapsedMs: ageMs() });
+        if (media.canRetrySource(parsed.code, episode)) {
+          log('playback.cdn.rotate', { attempt: media.attempt, elapsedMs: ageMs() });
           setStatus('目前媒體來源無法使用，嘗試同畫質／編碼其他候選來源…');
           continue;
         }
@@ -930,59 +414,18 @@ export function createPlayer({
           return;
         }
         log('playback.retry.scheduled', {
-          attempt: sourceAttempt, delayMs: errors.delay, code: parsed.code || 'UNKNOWN'
+          attempt: media.attempt, delayMs: errors.delay, code: parsed.code || 'UNKNOWN'
         });
         await new Promise(resolve => setTimeout(resolve, errors.delay));
       }
     }
-  }
-  function cancelPrefetch(exceptVid = null) {
-    if (prefetched && prefetched.vid !== exceptVid) {
-      prefetched.controller.abort();
-      prefetched = null;
-    }
-  }
-  function maybePrefetchNext() {
-    if (!current || !readyForHistory || !getSeries() || !video.duration) return;
-    const next = nextEpisode(ordered(), current.vid);
-    if (!shouldPrefetchNext({
-      duration: video.duration, position: video.currentTime,
-      startupSeconds: lastStartupSeconds, paused: video.paused,
-      autoNext: true, saveData: !!navigator.connection?.saveData,
-      hasNext: !!next, processingFinished: Boolean(nativeStream?.finished?.())
-    })) return;
-    const seriesId = getSeries().seriesId, quality = selection().quality;
-    const codec = 'auto'; // The next episode inherits a quality, never this episode's codec.
-    const key = episodeCacheKey(seriesId, next.vid, quality, codec);
-    if (prefetched?.key === key) { maybeStartPrefetchedProcessing(); return; }
-    if (cache.getEntry(key)) return;
-    cancelPrefetch();
-    const preloadController = new AbortController();
-    const entry = { vid: next.vid, key, controller: preloadController, prepared: null };
-    log('prefetch.begin', { episode: Number(next.index) || 0,
-      processingFinished: Boolean(nativeStream?.finished?.()) });
-    const promise = sourceForEpisode(next, preloadController.signal, 0, {
-      quiet: true, quality, codec, seriesId, nativePrefetch: true
-    }).then(prepared => {
-      if (preloadController.signal.aborted) { void prepared?.native?.close(); return null; }
-      entry.prepared = prepared;
-      if (prefetched === entry) maybeStartPrefetchedProcessing();
-      log('prefetch.prepared', { episode: Number(next.index) || 0, media: Boolean(prepared?.native) });
-      return prepared;
-    }).catch(error => {
-      if (!preloadController.signal.aborted)
-        log('prefetch.failed', { episode: Number(next.index) || 0, code: error?.code || 'UNKNOWN' });
-      return null;
-    });
-    entry.promise = promise;
-    prefetched = entry;
   }
   function open(episode, autoPlay = true, keepSettings = false) {
     // Mode activation already opens its suggested episode. A repeated click
     // must not cancel/restart that selection, even if it became ready while
     // the pointer action was settling. Settings changes explicitly restart.
     if (current?.vid === episode.vid && controller && !controller.signal.aborted && !keepSettings &&
-        (loading || readyForHistory && !failure && !streamFailure && !video.error &&
+        (loading || readyForHistory && !failure && !media.failure && !video.error &&
           !video.ended && video.getAttribute('src'))) {
       if (!loading && autoPlay && video.paused) {
         try { void Promise.resolve(video.play()).catch(() => {}); } catch { /* controls can resume */ }
@@ -995,35 +438,17 @@ export function createPlayer({
       pendingQuality = quality;
     }
     if (!episode) return;
-    const key = episodeCacheKey(getSeries()?.seriesId, episode.vid,
-      selection().quality, selection().codec);
-    const handoff = prefetched?.vid === episode.vid && prefetched.key === key
-      ? prefetched : null;
-    if (handoff) prefetched = null;
-    else cancelPrefetch();
+    const handoff = media.takePrefetch(episode);
     savePosition();
     disposeSource();
     current = episode;
     failure = null;
-    sourceAttempt = 0;
-    pendingSourceExpansion = null;
-    triedSourceUrls = new Set();
-    cencTriedUrls = new Set(); candidateIds = new Map();
-    sourceRefreshCount = 0;
-    cencRetryTier = null;
-    streamFailure = null;
+    media.begin(episode);
     log('playback.open', {
       episode: Number(episode.index) || 0, quality: selection().quality,
       codec: selection().codec, resumeSeconds: savedResumeSeconds(episode)
     });
-    retryIncrementalCenc = false;
     retryError = null;
-    if (lastVariantsVid !== episode.vid) {
-      lastVariants = null;
-      lastWinnerVariants = null;
-      lastVariantsVid = null;
-      lastVariantsPartial = false;
-    }
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';
@@ -1087,7 +512,7 @@ export function createPlayer({
   });
   video.addEventListener('timeupdate', () => {
     if (!current || !readyForHistory || !Number.isFinite(video.currentTime)) return;
-    maybePrefetchNext();
+    media.updateContext();
     const now = Date.now();
     if (failure && video.currentTime - recoveryStart > 5) failure = null;
     if (now - lastUiPaint > 950) { lastUiPaint = now; onProgress?.(); }
@@ -1169,7 +594,7 @@ export function createPlayer({
   });
   video.addEventListener('seeked', () => {
     if (readyForHistory) savePosition();
-    maybePrefetchNext();
+    media.updateContext();
   });
   video.addEventListener('ended', () => {
     if (!current || !readyForHistory) return;
@@ -1205,8 +630,7 @@ export function createPlayer({
     }
     // endOfStream('decode') maps even an upstream 403/429 to MediaError 3.
     // Use the sanitized Worker classification for correct retry policy.
-    const transport = streamFailure;
-    streamFailure = null;
+    const transport = media.takeFailure();
     const knownCodes = [
       'CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'CENC_RANGE_INVALID',
       'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_REMUX_FAILED'
@@ -1301,7 +725,7 @@ export function createPlayer({
   nextButton.addEventListener('click', () => step(1));
   qualitySelect.addEventListener('change', () => {
     pendingQuality = null;
-    if (lastVariants) updateRenditionOptions(lastVariants);
+    if (media.variants) updateRenditionOptions(media.variants);
     persistPrefs();
     updateSettingsSummaries();
     if (current) open(current, true, true);
@@ -1321,12 +745,13 @@ export function createPlayer({
   let resumeAfterPageShow = false;
   window.addEventListener('pagehide', () => {
     savePosition();
-    cancelPrefetch();
+    media.cancelPrefetch();
     resumeAfterPageShow = Boolean(current && controller && !controller.signal.aborted);
     if (resumeAfterPageShow) {
       disposeSource();
       token++; // invalidate late callbacks from the removed media source
     }
+    media.releaseEngines();
   });
   window.addEventListener('pageshow', event => {
     if (!event.persisted || !resumeAfterPageShow || !current) return;
@@ -1344,9 +769,10 @@ export function createPlayer({
       if (series) open(suggestedEpisode(series, watchRecords(storage)));
     },
     stop() {
-      cancelPrefetch();
+      media.cancelPrefetch();
       savePosition(); current = null; disposeSource(); token++;
-      lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
+      media.releaseEngines();
+      media.clear();
       pendingQuality = null;
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
       updateSettingsSummaries(); showSettings(false);
@@ -1357,9 +783,10 @@ export function createPlayer({
       // Leaving the playback mode is not an ordinary pause: relinquish all
       // Range fetches, remux workers, MSE buffers and pending prefetch.
       // Keep current episode + history so returning to playback can resume.
-      cancelPrefetch();
+      media.cancelPrefetch();
       savePosition();
       if (current) { disposeSource(); token++; }
+      media.releaseEngines();
     },
     activate() {
       // Reopen a previously selected episode without autoplay after the

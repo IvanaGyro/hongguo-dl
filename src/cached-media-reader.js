@@ -11,8 +11,12 @@ export function abortable(task, signal) {
   });
   return Promise.race([task, interrupted]).finally(() => signal?.removeEventListener('abort', onAbort));
 }
-export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
+export function createCachedMediaReader({ fileSize, budget,
   initialRanges = [], durationSeconds = 0, onStage = () => {}, ...options }) {
+  const environment = typeof navigator === 'undefined' ? {} : navigator;
+  const saveData = Boolean(environment.connection?.saveData);
+  const lowMemory = environment.deviceMemory > 0 && environment.deviceMemory <= 2;
+  budget ??= (saveData || lowMemory ? 16 : 32) * 1024 * 1024;
   const cache = createMediaByteCache({ fileSize, budget });
   for (const { offset, data } of initialRanges) cache.write(offset, data, true);
   let closed = false, enabled = false, focus = 0, pumping = false, demand = 0;
@@ -98,7 +102,7 @@ export function createCachedMediaReader({ fileSize, budget = 32 * 1024 * 1024,
       finally { demand--; if (enabled) void pump(); }
     },
     prefetch(active) {
-      const next = active && !closed;
+      const next = active && !closed && !saveData;
       if (enabled !== next) onStage('media.prefetch', { active: next });
       enabled = next; if (enabled) void pump();
     },
