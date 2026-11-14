@@ -202,6 +202,13 @@ span.series-chip.error {
 }
 .tile-progress b, .tile-progress i { color: var(--ink); }
 .tile-selected { grid-column: 2; grid-row: 2 / 4; background: var(--brand-sage); margin-left: -36px; box-shadow: 0 0 0 8px var(--ground); z-index: 1; }
+/* The key follows the mode: download states in download mode, watch states in watch mode. */
+body[data-mode="play"] .hero-tile .for-download,
+body:not([data-mode="play"]) .hero-tile .for-play { display: none; }
+body[data-mode="play"] .tile-selected {
+  background: var(--orange-shade); color: var(--fg);
+  box-shadow: inset 0 0 0 3px var(--brand-orange), 0 0 0 8px var(--ground);
+}
 .tile-unwatched { grid-column: 1; grid-row: 3; background: var(--surface-strong); color: var(--fg); margin-right: 36px; }
 
 /* Once a series is open the hero folds down to a search field between the logo and the mode switch. */
@@ -651,6 +658,7 @@ media-status-announcer {
   .tile-watched { margin-top: -28px; box-shadow: 0 0 0 6px var(--ground); z-index: 1; }
   .tile-watched::after { top: 12px; right: 10px; width: 16px; height: 9px; border-width: 4px; }
   .tile-selected { margin-top: 14px; margin-bottom: -14px; }
+  body[data-mode="play"] .tile-selected { box-shadow: inset 0 0 0 3px var(--brand-orange); }
   .tile-progress { background: linear-gradient(to right, var(--brand-apricot) 0 84%, var(--surface-strong) 84% 100%); }
   .hero { padding-bottom: 14px; }
 }
