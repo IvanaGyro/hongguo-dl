@@ -136,8 +136,10 @@ try {
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 1 集'));
   await page.locator('#player-settings-toggle').click();
   await page.locator('#player-settings').waitFor({ state: 'visible' });
-  await page.locator('#player-quality').selectOption('720p|h264');
-  await page.locator('#player-speed').selectOption('1.25');
+  await page.locator('#player-settings [data-settings-target="quality"]').click();
+  await page.locator('#player-quality-options [data-choice-value="720p|h264"]').click();
+  await page.locator('#player-settings [data-settings-target="speed"]').click();
+  await page.locator('#player-speed-options [data-choice-value="1.25"]').click();
   await page.waitForFunction(() => document.querySelector('#player-video')?.playbackRate === 1.25);
   await page.waitForFunction(() =>
     document.querySelector('#player-source-info')?.textContent?.includes('1280×720'));
@@ -377,7 +379,8 @@ try {
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent === 'VVC 編碼測試');
   await page.locator('#mode-play').click();
   await page.locator('#player-settings-toggle').click();
-  await page.locator('#player-quality').selectOption('720p|bytevc2');
+  await page.locator('#player-settings [data-settings-target="quality"]').click();
+  await page.locator('#player-quality-options [data-choice-value="720p|bytevc2"]').click();
   assert.equal(await page.locator('#player-codec').count(), 0);
   assert.equal(await page.locator('#player-quality').inputValue(), '720p|bytevc2',
     'Unsupported known tier must remain selected, not silently become 1080p');
