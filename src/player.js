@@ -8,7 +8,7 @@ import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from '.
 import { episodeCacheKey } from './media-cache.js';
 import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
-import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition, reconcileRendition } from './source-options.js';
+import { renditionOptions, renditionValue, parseRenditionValue, matchingRenditionValue, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, sourceQueryForPlayback, untriedPlaybackRendition, reconcileRendition, playableVariants } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { probeCencKid, openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
@@ -101,7 +101,11 @@ export function createPlayer({
   }
   function setStatus(value) { status.textContent = value; }
   function updateRenditionOptions(variants, requested = selection()) {
-    const options = renditionOptions(variants);
+    // Download UI sees every output codec, but the *playback* menu only offers
+    // codecs this browser can decode/transcode. This also applies to late
+    // Web/App CDN list updates while the settings submenu is already open.
+    const supported = playableVariants(variants, mimeSupport, canTranscodeBvc2, mseSupport);
+    const options = renditionOptions(supported);
     let value = matchingRenditionValue(options, requested);
     qualitySelect.replaceChildren(new Option('自動最佳', 'auto'),
       ...options.map(option => new Option(option.label, option.value)));
