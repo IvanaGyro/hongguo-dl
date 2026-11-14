@@ -43,7 +43,7 @@ jobs:
       - name: Whole-file and streaming browser decode with CDN refusal recovery
         run: |
           VITE_BASE_PATH=/hongguo-dl/ bun run build
-          bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-bvc2.log 2>&1 &
+          VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-bvc2.log 2>&1 &
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4173/hongguo-dl/ >/dev/null; then break; fi
             sleep 1

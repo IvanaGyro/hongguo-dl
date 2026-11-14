@@ -762,7 +762,7 @@ async function runJob(job, signal) {
     const source = renditionForAttempt(data.variants,
       effective, job.attempts - 1);
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
-    update(job, { status: 'downloading', sourceCodec: source.codec || 'unknown' });
+    update(job, { status: 'downloading', quality: effective.quality, codec: effective.codec, sourceCodec: source.codec || 'unknown' });
     const hls = isHlsUrl(source.url);
     const profile = source.source === 'app' ? 'app' : 'web';
     const requiresFfmpeg = hls || !!source.contentKey || job.mode !== 'original';
