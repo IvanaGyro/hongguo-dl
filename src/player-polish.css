@@ -51,7 +51,7 @@ media-controls-content.player-bottom-controls:not([data-visible]):not(:has(:focu
   opacity:1; visibility:visible; pointer-events:auto;
 }
 .player-icon {
-  display:block; width:21px; height:21px; flex:none;
+  width:21px; height:21px; flex:none;
   fill:none; stroke:currentColor; stroke-width:1.9;
 }
 .player-control-group > :is(button,media-play-button,media-mute-button,media-fullscreen-button) {
@@ -141,13 +141,20 @@ media-controls-content.player-bottom-controls:not([data-visible]):not(:has(:focu
   body[data-mode="play"] #series > #episode-navigation { margin-top:1.1rem; }
 }
 @media (max-width:590px) {
-  .episode-range-switch { flex:1; }
-  .episode-range-switch span { font-size:.77rem; }
-  .episode-navigation { gap:.65rem; }
-  .episode-jump { margin-left:auto; }
+  .episode-navigation { flex-direction:column; align-items:stretch; gap:.65rem; }
+  .episode-range-switch { flex:none; width:100%; justify-content:space-between; }
+  .episode-range-switch span { font-size:.81rem; }
+  .episode-jump { margin:0; width:100%; justify-content:flex-end; }
   .player-settings-menu { bottom:4rem; right:.35rem; width:min(325px,calc(100% - .7rem)); }
   .player-bottom-controls { padding-inline:.36rem; }
 }
 @media (prefers-reduced-motion:reduce) {
   media-controls-content.player-bottom-controls { transition:none; }
+}
+/* Keep Video.js status announcements accessible without visual overlays.
+   SVG visibility remains controlled by the component's data-muted/paused state. */
+media-status-announcer {
+  position:absolute!important; width:1px!important; height:1px!important;
+  overflow:hidden!important; clip-path:inset(50%)!important;
+  white-space:nowrap!important; pointer-events:none!important;
 }
