@@ -11,6 +11,14 @@ const page = await browser.newPage({viewport:{width:1440,height:900},reducedMoti
 const errors=[];
 page.on('pageerror',err=>errors.push(err.message));
 await page.addInitScript(seriesId => {
+  localStorage.setItem('hongguo-dl-queue-v1',JSON.stringify(
+    Array.from({length:1000},(_,i)=>({
+      id:'test-job-'+i,seriesId,seriesTotal:1000,seriesTitle:'千集測試',
+      vid:String(i+1000),index:i+1,title:'第 '+(i+1)+' 集',
+      status:'failed',codec:'auto',quality:'auto',mode:'original',
+      bytes:0,totalBytes:0,error:'測試資料',errorCode:'FIXTURE',
+      stored:false,onDisk:false
+    }))));
   localStorage.setItem('hongguo-dl-playback-history-v1',JSON.stringify({
     [seriesId+':1514']:{seconds:35,duration:100,completed:false,viewedAt:100},
     [seriesId+':1519']:{seconds:100,duration:100,completed:true,viewedAt:200},
@@ -42,6 +50,15 @@ const poster='<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" 
 try {
   await page.goto((process.env.TEST_BASE_URL||'http://127.0.0.1:4173/')+'?id='+ID);
   await page.locator('#series:not([hidden])').waitFor();
+  assert.equal(await page.locator('#queue .job').count(),100,
+    'Download queue should render only 100 of 1000 persisted jobs');
+  assert.match(await page.locator('#queue-range').textContent(),/1–100 \/ 1000/);
+  await page.locator('#queue-next-range').click();
+  assert.match(await page.locator('#queue-range').textContent(),/101–200 \/ 1000/);
+  await page.locator('#queue-prev-range').click();
+  assert.match(await page.locator('#queue-range').textContent(),/1–100 \/ 1000/);
+  assert.equal(await page.locator('#queue .job').count(),100);
+  assert.equal(await page.locator('#queue-summary').textContent().then(x=>x.includes('1000 集')),true);
   assert.equal(await page.locator('#episodes .episode').count(),100,
     'Only 100 episodes rendered despite 1000 total');
   assert.match(await page.locator('#episode-range').textContent(),/1–100 \/ 1000/);
@@ -111,7 +128,7 @@ try {
   assert.deepEqual(controls,{hidden:'hidden',locked:'visible'});
 
   await page.screenshot({path:'test-results/design-layout/player-1000-desktop.png',fullPage:true});
-  console.log('PASS 1000 episodes, 100 DOM nodes, jump 521, download selection, current fill, menu and hide CSS');
+  console.log('PASS 1000 episodes, 100 DOM nodes, 100 of 1000 queue rows, jump 521, selection, current fill, menu and hide CSS');
   await page.setViewportSize({width:390,height:844});
   const portraitPoster='<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">'+
     '<rect width="720" height="1280" fill="#0c180f"/>'+
