@@ -3,17 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#101727" />
+  <meta name="theme-color" content="#10120f" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
 </head>
 <body>
   <div id="app">
-    <header class="topbar"><span class="brand"><span class="brand-mark">▶</span> Hongguo DL</span></header>
+    <header class="topbar">
+      <a class="brand" href="#app" aria-label="Hongguo DL 回到頁面頂端">
+        <span class="brand-mark" aria-hidden="true">▶</span>
+        <span class="brand-name">Hongguo <strong>DL</strong></span>
+      </a>
+      <span class="topbar-note">短劇播放 <span aria-hidden="true">/</span> 下載管理</span>
+    </header>
     <main class="layout">
-      <section class="hero">
-        <h1>接著看，或下載短劇。</h1>
-        <p>輸入影集 ID 或分享網址，即可開始。</p>
+      <section class="hero" aria-labelledby="home-title">
+        <h1 id="home-title">短劇，從這裡接著看<span class="hero-accent">。</span></h1>
+        <p>輸入影集 ID 或分享網址，播放、續看，或選擇集數下載。</p>
       </section>
       <nav class="mode-tabs" aria-label="操作模式">
         <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
@@ -57,8 +63,21 @@
               <button id="select-none" type="button" class="quiet">清空</button>
             </div>
           </div>
+          <nav id="episode-navigation" class="episode-navigation" aria-label="分集導覽" hidden>
+            <div class="episode-range-switch">
+              <button id="episode-prev-range" type="button" aria-label="上一百集">‹</button>
+              <span id="episode-range" aria-live="polite"></span>
+              <button id="episode-next-range" type="button" aria-label="下一百集">›</button>
+            </div>
+            <form id="episode-jump-form" class="episode-jump">
+              <label for="episode-jump">跳到第</label>
+              <input id="episode-jump" type="number" inputmode="numeric" min="1" step="1" required placeholder="集數" />
+              <button type="submit">前往</button>
+            </form>
+          </nav>
           <div id="episodes" class="episode-grid" aria-label="分集選擇"></div>
           <div id="download-controls">
+          <h3 class="download-section-heading">下載設定</h3>
           <div class="settings">
             <label>畫質 <select id="quality"><option value="auto">最佳可取得</option></select></label>
             <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
@@ -67,16 +86,19 @@
           <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
           <div id="browser-note" class="browser-note" role="status" hidden></div>
           </div>
-        </div>
         <section id="player-panel" hidden aria-label="影集播放器">
-          <div class="player-header"><h2 id="player-episode">尚未播放</h2><span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span></div>
+          <div class="player-header">
+            <div class="player-heading"><span class="section-eyebrow">正在播放</span><h2 id="player-episode">尚未播放</h2></div>
+            <span id="player-status" role="status" aria-live="polite">選擇分集即可播放</span>
+          </div>
           <video-player id="videojs-player" class="videojs-player">
             <media-container id="player-stage" class="player-stage">
               <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
-              <media-gesture type="tap" action="togglePaused" region="center"></media-gesture>
+              <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"></media-gesture>
+              <media-gesture type="tap" action="toggleControls" pointer="touch"></media-gesture>
               <media-gesture type="doubletap" action="seekStep" value="-10" region="left"></media-gesture>
               <media-gesture type="doubletap" action="seekStep" value="10" region="right"></media-gesture>
-              <media-controls visibility="always" aria-label="播放器控制項">
+              <media-controls visibility="auto" aria-label="播放器控制項">
                 <media-controls-content class="player-bottom-controls">
                   <media-time-slider id="player-seek" class="player-seek" aria-label="播放進度">
                     <media-slider-track class="player-seek-track">
@@ -87,22 +109,22 @@
                   </media-time-slider>
                   <div class="player-control-bar">
                     <div class="player-control-group">
-                      <button id="player-prev" type="button" aria-label="上一集" title="上一集">⏮</button>
+                      <button id="player-prev" type="button" aria-label="上一集" title="上一集"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 5v14M19 5 9 12l10 7V5Z"/></svg></button>
                       <media-play-button id="player-play-pause" class="player-ui-button" aria-label="播放／暫停">
-                        <span class="player-play-icon">▶</span><span class="player-pause-icon">⏸</span>
+                        <svg class="player-play-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg><svg class="player-pause-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>
                       </media-play-button>
-                      <button id="player-next" type="button" aria-label="下一集" title="下一集">⏭</button>
+                      <button id="player-next" type="button" aria-label="下一集" title="下一集"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 5v14M5 5l10 7-10 7V5Z"/></svg></button>
                       <media-time-group id="player-clock" class="player-clock">
                         <media-time type="current"></media-time><media-time-separator> / </media-time-separator><media-time type="duration"></media-time>
                       </media-time-group>
                     </div>
                     <div class="player-control-group">
                       <media-mute-button id="player-mute" class="player-ui-button" aria-label="靜音切換">
-                        <span class="player-unmuted-icon">◖))</span><span class="player-muted-icon">◖×</span>
+                        <svg class="player-unmuted-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19V5ZM15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg><svg class="player-muted-icon player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19V5ZM16 9l6 6m0-6-6 6"/></svg>
                       </media-mute-button>
-                      <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定">⚙</button>
+                      <button id="player-settings-toggle" class="player-settings-button" type="button" aria-expanded="false" aria-controls="player-settings" aria-label="播放設定" title="播放設定"><svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M10 2.2h4l.5 2.2c.7.2 1.3.5 1.9.8l2-.9 2.3 2.3-.9 2c.3.6.6 1.2.8 1.9l2.2.5v4l-2.2.5c-.2.7-.5 1.3-.8 1.9l.9 2-2.3 2.3-2-.9c-.6.3-1.2.6-1.9.8L14 22.8h-4l-.5-2.2c-.7-.2-1.3-.5-1.9-.8l-2 .9-2.3-2.3.9-2c-.3-.6-.6-1.2-.8-1.9l-2.2-.5v-4l2.2-.5c.2-.7.5-1.3.8-1.9l-.9-2 2.3-2.3 2 .9c.6-.3 1.2-.6 1.9-.8Z"/></svg></button>
                       <media-fullscreen-button id="player-fullscreen" class="player-ui-button" aria-label="全螢幕">
-                        <span class="player-enter-fullscreen">⛶</span><span class="player-exit-fullscreen">⛶</span>
+                        <svg class="player-enter-fullscreen player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m13-5v4a1 1 0 0 1-1 1h-4"/></svg><svg class="player-exit-fullscreen player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 8H3m5 0V3m8 5h5m-5 0V3M8 16H3m5 0v5m8-5h5m-5 0v5"/></svg>
                       </media-fullscreen-button>
                     </div>
                   </div>
@@ -115,23 +137,35 @@
               <media-hotkey keys="ArrowRight" action="seekStep" value="5"></media-hotkey>
               <media-status-announcer></media-status-announcer>
             <div id="player-settings" class="player-settings-menu" hidden>
-              <div class="player-settings-title">播放設定 <button type="button" id="player-settings-close" title="關閉">✕</button></div>
-              <label>畫質
-                <select id="player-quality"><option value="auto">自動最佳</option></select>
-              </label>
-              <label>播放速度
-                <select id="player-speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select>
-              </label>
-              <label>畫面比例
-                <select id="player-fit"><option value="contain">完整顯示</option><option value="cover">填滿裁切</option></select>
-              </label>
-              <label class="player-toggle"><input id="player-autonext" type="checkbox" checked /> 自動播放下一集</label>
-              <button id="player-pip" type="button" class="quiet" hidden>子母畫面</button>
-              <div id="player-source-info" class="player-source-info" aria-live="polite"></div>
+              <div class="player-settings-heading">
+                <button id="player-settings-back" type="button" data-settings-target="root" aria-label="返回設定" hidden>‹</button>
+                <span id="player-settings-heading">播放設定</span>
+                <button id="player-settings-close" type="button" aria-label="關閉播放設定">✕</button>
+              </div>
+              <div class="player-settings-view" data-settings-view="root">
+                <button type="button" class="player-settings-row" data-settings-target="quality">
+                  <svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg>
+                  <span>畫質</span><span id="player-quality-summary" class="player-settings-value">自動最佳</span><span aria-hidden="true" class="player-settings-chevron">›</span>
+                </button>
+                <button type="button" class="player-settings-row" data-settings-target="speed">
+                  <svg class="player-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
+                  <span>播放速度</span><span id="player-speed-summary" class="player-settings-value">1×</span><span aria-hidden="true" class="player-settings-chevron">›</span>
+                </button>
+              </div>
+              <div class="player-settings-view" data-settings-view="quality" hidden>
+                <div id="player-quality-options" class="player-settings-choices" role="group" aria-label="畫質"></div>
+                <select id="player-quality" class="player-settings-native" tabindex="-1" aria-hidden="true"><option value="auto">自動最佳</option></select>
+              </div>
+              <div class="player-settings-view" data-settings-view="speed" hidden>
+                <div id="player-speed-options" class="player-settings-choices" role="group" aria-label="播放速度"></div>
+                <select id="player-speed" class="player-settings-native" tabindex="-1" aria-hidden="true"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select>
+              </div>
             </div>
+            <div id="player-source-info" hidden aria-hidden="true"></div>
             </media-container>
           </video-player>
         </section>
+        </div>
       </section>
       <section id="queue-panel" class="panel">
         <div class="section-title"><div><h2>下載佇列</h2><p id="queue-summary" class="subtle">尚未加入任何下載</p></div>
@@ -142,6 +176,13 @@
             <button id="clear-finished" type="button" class="quiet">清除完成項目</button>
           </div>
         </div>
+        <nav id="queue-navigation" class="episode-navigation" aria-label="下載佇列分頁" hidden>
+          <div class="episode-range-switch">
+            <button id="queue-prev-range" type="button" aria-label="上一百筆下載">‹</button>
+            <span id="queue-range" aria-live="polite"></span>
+            <button id="queue-next-range" type="button" aria-label="下一百筆下載">›</button>
+          </div>
+        </nav>
         <div id="queue" class="queue" role="list" aria-live="polite"><div class="empty">尚無下載項目</div></div>
         <div class="queue-export">
           <div><strong id="queue-selected-count">尚未選取集數</strong></div>
@@ -153,7 +194,7 @@
           <div id="bulk-status" class="export-status" role="status" aria-live="polite"></div>
         </div>
       </section>
-      <details id="playback-diagnostics" class="panel playback-diagnostics" open>
+      <details id="playback-diagnostics" class="panel playback-diagnostics">
         <summary>播放診斷 Log（暫時功能，可複製）</summary>
         <p class="help">記錄來源解析、CENC／MSE 與緩衝狀態；不記錄簽章網址、影片金鑰或 Cookie。重現問題後請複製內容。</p>
         <div class="actions">

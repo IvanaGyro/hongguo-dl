@@ -18,6 +18,9 @@ import '@videojs/html/ui/gesture';
 import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
 import './styles.css';
+import './redesign.css';
+import './open-layout.css';
+import './player-polish.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
 import { convertBytes, convertHls } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
@@ -88,8 +91,13 @@ function resetApiSettings() {
 const MAX_BROWSER_BLOB = 300 * 1024 * 1024;
 let series = null;
 let selected = new Set();
+const EPISODES_PER_PAGE = 100;
+let episodePage = 0;
+let lastFollowedEpisode = null;
 let directory = null;
 let jobs = restoreJobs();
+const JOBS_PER_PAGE = 100;
+let queuePage = 0;
 const active = new Map();
 let paintScheduled = false;
 let lastPersisted = 0;
@@ -119,7 +127,7 @@ function restoreJobs() {
   try {
     // Recover the series length for queue entries created before this field existed.
     const totals = new Map(recentSeries(localStorage).map(item => [String(item.seriesId), item.total]));
-    return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 300).map(item => ({
+    return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 2000).map(item => ({
       ...item, seriesTotal: item.seriesTotal ?? totals.get(String(item.seriesId)) ?? null,
       directUrl: null, progress: null, segment: null, controller: null,
       status: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'failed' : item.status,
@@ -180,11 +188,20 @@ function renderQueue() {
     !jobs.some(job => ['completed', 'canceled'].includes(job.status));
   $('queue-select-all').disabled = !jobs.length;
   $('queue-select-none').disabled = !selectedJobs.length;
+  const pages = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
+  queuePage = Math.max(0, Math.min(queuePage, pages - 1));
+  const pageStart = queuePage * JOBS_PER_PAGE;
+  $('queue-navigation').hidden = pages <= 1;
+  $('queue-range').textContent = (pageStart + 1) + '–' +
+    Math.min(pageStart + JOBS_PER_PAGE, jobs.length) +
+    ' / ' + jobs.length + ' 筆';
+  $('queue-prev-range').disabled = queuePage === 0;
+  $('queue-next-range').disabled = queuePage === pages - 1;
   if (!jobs.length) {
     $('queue').innerHTML = '<div class="empty">尚無下載項目</div>';
     return;
   }
-  $('queue').innerHTML = orderQueueSelection(jobs).map(job => {
+  $('queue').innerHTML = orderQueueSelection(jobs).slice(pageStart, pageStart + JOBS_PER_PAGE).map(job => {
     const busy = ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(job.status);
     const chosen = exportSelected.has(job.id);
     const progress = job.status === 'completed' ? 100 :
@@ -241,7 +258,23 @@ function renderEpisodes() {
   if (!series) return;
   const watch = watchRecords(localStorage);
   const current = player?.current()?.vid;
-  $('episodes').innerHTML = series.episodes.map(ep => {
+  if (currentMode === 'play' && current !== lastFollowedEpisode) {
+    lastFollowedEpisode = current;
+    const index = series.episodes.findIndex(ep => ep.vid === current);
+    if (index >= 0) episodePage = Math.floor(index / EPISODES_PER_PAGE);
+  }
+  const pages = Math.max(1, Math.ceil(series.episodes.length / EPISODES_PER_PAGE));
+  episodePage = Math.max(0, Math.min(episodePage, pages - 1));
+  const start = episodePage * EPISODES_PER_PAGE;
+  const visibleEpisodes = series.episodes.slice(start, start + EPISODES_PER_PAGE);
+  $('episode-navigation').hidden = pages <= 1;
+  $('episode-range').textContent = (start + 1) + '–' +
+    Math.min(start + EPISODES_PER_PAGE, series.episodes.length) +
+    ' / ' + series.episodes.length + ' 集';
+  $('episode-prev-range').disabled = episodePage === 0;
+  $('episode-next-range').disabled = episodePage === pages - 1;
+  $('episode-jump').max = String(Math.max(...series.episodes.map(ep => Number(ep.index) || 0), 1));
+  $('episodes').innerHTML = visibleEpisodes.map(ep => {
     const record = watch[playbackKey(series.seriesId, ep.vid)];
     const watched = !!record?.completed;
     const seconds = Number(record?.seconds) || 0;
@@ -256,7 +289,9 @@ function renderEpisodes() {
         (watched ? 'watched ' : seconds > 0.5 ? 'in-progress ' : '') +
         (ep.vid === current ? 'current' : '') +
         '" data-play-vid="' + escapeHtml(ep.vid) + '" aria-label="' +
-        escapeHtml(label) + '" style="--watch-progress:' + percent + '%"><span>' +
+        escapeHtml(label) + '" data-watch-percent="' + percent +
+        '"' + (ep.vid === current ? ' aria-current="true"' : '') +
+        ' style="--watch-progress:' + percent + '%"><span>' +
         (series.kind === 'direct' ? '媒體直連' : ep.index) +
         '</span>' +
         (watched ? '<span class="watched-check" aria-hidden="true">✓</span>' : '') +
@@ -294,10 +329,13 @@ function showSeries(result, fromHistory = false) {
   player?.stop();
   series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
   selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
+  episodePage = 0;
+  lastFollowedEpisode = null;
   void loadDownloadQualitySample(series);
   $('series-title').textContent = series.title || '未命名短劇';
   document.title = (series.title || '短劇') + ' · Hongguo DL';
   $('series').hidden = false;
+  document.body.dataset.hasSeries = 'true';
   if (series.kind === 'series') rememberSeries(localStorage, series);
   renderRecentSeries();
   renderEpisodes();
@@ -305,6 +343,7 @@ function showSeries(result, fromHistory = false) {
 }
 function setMode(mode) {
   currentMode = mode === 'play' ? 'play' : 'download';
+  document.body.dataset.mode = currentMode;
   $('mode-download').classList.toggle('selected', currentMode === 'download');
   $('mode-play').classList.toggle('selected', currentMode === 'play');
   $('mode-download').setAttribute('aria-pressed', String(currentMode === 'download'));
@@ -900,14 +939,28 @@ $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
 void supportsIndependentSourceChannels().catch(() => {});
+// The player follows the source aspect ratio rather than forcing portrait dramas into 16:9.
+const playbackVideo = $('player-video');
+const playbackStage = $('player-stage');
+function syncPlaybackAspectRatio() {
+  const width = playbackVideo.videoWidth;
+  const height = playbackVideo.videoHeight;
+  const isPortrait = width > 0 && height > width;
+  playbackStage.dataset.orientation = isPortrait ? 'portrait' : 'landscape';
+  if (width > 0 && height > 0)
+    playbackStage.style.setProperty('--media-aspect', width + ' / ' + height);
+  else playbackStage.style.removeProperty('--media-aspect');
+}
+for (const event of ['loadedmetadata', 'resize', 'emptied'])
+  playbackVideo.addEventListener(event, syncPlaybackAspectRatio);
+syncPlaybackAspectRatio();
 player = createPlayer({
   video: $('player-video'), status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
   qualitySelect: $('player-quality'),
-  speedSelect: $('player-speed'), fitSelect: $('player-fit'), autoNextInput: $('player-autonext'),
+  speedSelect: $('player-speed'),
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
-  settingsClose: $('player-settings-close'), pipButton: $('player-pip'),
-  sourceInfo: $('player-source-info'),
+  settingsClose: $('player-settings-close'), sourceInfo: $('player-source-info'),
   getSeries: () => series, sourceFor: getSource,
   fetchBytes, getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
@@ -955,6 +1008,33 @@ $('select-all').addEventListener('click', () => {
   selected = new Set(series.episodes.map(e => e.vid)); renderEpisodes();
 });
 $('select-none').addEventListener('click', () => { selected.clear(); if (series) renderEpisodes(); });
+$('episode-prev-range').addEventListener('click', () => {
+  if (!series || episodePage === 0) return;
+  episodePage--; renderEpisodes();
+});
+$('episode-next-range').addEventListener('click', () => {
+  if (!series || (episodePage + 1) * EPISODES_PER_PAGE >= series.episodes.length) return;
+  episodePage++; renderEpisodes();
+});
+$('episode-jump').addEventListener('input', () => $('episode-jump').setCustomValidity(''));
+$('episode-jump-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!series) return;
+  const index = Number($('episode-jump').value);
+  const found = Number.isInteger(index) ?
+    series.episodes.findIndex(ep => Number(ep.index) === index) : -1;
+  if (found < 0) {
+    $('episode-jump').setCustomValidity('這部影集沒有這個集數');
+    $('episode-jump').reportValidity();
+    return;
+  }
+  episodePage = Math.floor(found / EPISODES_PER_PAGE);
+  renderEpisodes();
+  const target = $('episodes').querySelectorAll('.episode')[found % EPISODES_PER_PAGE];
+  target?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  if (target?.matches('button')) target.focus({ preventScroll: true });
+  $('episode-jump').value = '';
+});
 $('episodes').addEventListener('click', e => {
   if (currentMode !== 'play' || !series) return;
   const control = e.target.closest('button[data-play-vid]');
@@ -969,6 +1049,14 @@ $('episodes').addEventListener('change', e => {
   if (checkbox.checked) selected.add(checkbox.dataset.vid);
   else selected.delete(checkbox.dataset.vid);
   renderEpisodes();
+});
+$('queue-prev-range').addEventListener('click', () => {
+  if (queuePage > 0) { queuePage--; renderQueue(); }
+});
+$('queue-next-range').addEventListener('click', () => {
+  if ((queuePage + 1) * JOBS_PER_PAGE < jobs.length) {
+    queuePage++; renderQueue();
+  }
 });
 $('queue').addEventListener('change', event => {
   const box = event.target.closest('input[data-export-id]');
