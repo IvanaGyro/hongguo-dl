@@ -13,6 +13,7 @@ const MAX_FILE = 260 * 1024 * 1024;
 let started = false, controller = null, pendingAck = null, seq = 0;
 let lastRangeError = null, activeRun = null, requestedSeek = null, wake = null;
 let stream = null, generation = 0, bridgeFailure = 'CENC_REMUX_FAILED';
+let processingAllowed = false, processingWake = null;
 const canceled = () => Object.assign(new Error('Canceled'), { code: 'CANCELED' });
 
 const sendUnit = (type, data) => new Promise((resolve, reject) => {
@@ -23,7 +24,7 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, generation, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc' }) {
+async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
   if (!Number.isSafeInteger(fileSize) || fileSize < 8 || fileSize > MAX_FILE)
@@ -87,6 +88,14 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       throw error;
     }
   };
+  if (deferProcessing) {
+    // HTTP/cache work is independent of WASM and can overlap the prior episode.
+    stream.prefetch(true);
+    self.postMessage({ type: 'stage', stage: 'processing.waiting' });
+    if (!processingAllowed) await new Promise(resolve => { processingWake = resolve; });
+    if (controller.signal.aborted) return;
+    self.postMessage({ type: 'stage', stage: 'processing.started' });
+  }
   let assembler;
   const runtime = bridge === 'bvc2' ? 'bvc2' : 'cenc';
   const base = new URL(import.meta.env.BASE_URL + runtime + '/', self.location.href);
@@ -167,6 +176,11 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
 }
 
 self.onmessage = ({ data }) => {
+  if (data?.type === 'process') {
+    processingAllowed = true;
+    processingWake?.(); processingWake = null;
+    return;
+  }
   if (data?.type === 'ack' && pendingAck?.id === data.id) {
     const pending = pendingAck;
     pendingAck = null;
@@ -188,7 +202,7 @@ self.onmessage = ({ data }) => {
     return;
   }
   if (data?.type === 'cancel') {
-    controller?.abort(); activeRun?.abort(); stream?.close(); wake?.();
+    controller?.abort(); activeRun?.abort(); stream?.close(); wake?.(); processingWake?.();
     pendingAck?.reject(new Error('Canceled'));
     pendingAck = null;
     return;

@@ -9,6 +9,8 @@ on:
       - 'tests/webkit-media-audio-control.mjs'
       - '.github/workflows/live-hevc-webkit.yml'
       - 'src/cenc-remux.js'
+      - 'src/stream-preload.js'
+      - 'src/player-prefetch.js'
       - 'src/player.js'
       - 'src/source-options.js'
       - 'src/cenc-source-fallback.js'

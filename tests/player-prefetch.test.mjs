@@ -30,3 +30,12 @@ test('paused, last-episode, auto-next off or data-saver blocks prefetch', () => 
   assert.equal(shouldPrefetchNext({ ...arg, position: 150 }), false);
   assert.equal(shouldPrefetchNext({ ...arg, duration: Infinity }), false);
 });
+
+test('completed current processing starts lookahead even before the near-end window', () => {
+  const state = { duration: 300, position: 20 };
+  assert.equal(shouldPrefetchNext(state), false);
+  assert.equal(shouldPrefetchNext({ ...state, processingFinished: true }), true);
+  for (const extra of [{ paused: true }, { saveData: true }, { hasNext: false },
+    { autoNext: false }, { position: 300 }])
+    assert.equal(shouldPrefetchNext({ ...state, processingFinished: true, ...extra }), false);
+});

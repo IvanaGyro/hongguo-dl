@@ -14,9 +14,11 @@ export function prefetchLeadSeconds(durationSeconds, startupSeconds = 0) {
 }
 export function shouldPrefetchNext({
   duration, position, startupSeconds = 0, paused = false, autoNext = true,
-  saveData = false, hasNext = true
+  saveData = false, hasNext = true, processingFinished = false
 }) {
   if (!autoNext || paused || saveData || !hasNext || !Number.isFinite(position)) return false;
+  if (processingFinished && Number.isFinite(duration) && duration > 0 &&
+      position > 0 && position < duration) return true;
   const lead = prefetchLeadSeconds(duration, startupSeconds);
   return lead > 0 && position > 0 && position >= duration - lead && position < duration;
 }

@@ -311,21 +311,32 @@ export function createPlayer({
       throw error;
     }
   }
+  function maybeStartPrefetchedProcessing() {
+    if (!nativeStream || nativeStream.finished?.()) prefetched?.prepared?.native?.startProcessing?.();
+  }
+  function streamStageReporter(signal, attempt, quiet = false, episode = current) {
+    return (stage, fields = {}) => {
+      if (signal.aborted) return;
+      if (quiet && current?.vid !== episode?.vid) {
+        log('prefetch.stage', { episode: Number(episode?.index) || 0, phase: stage, ...fields });
+      } else {
+        log('cenc.stage', { phase: stage, elapsedMs: ageMs(), ...fields });
+        if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
+          streamFailure = { code: fields.code, status: fields.status || 0 };
+        if (stage === 'seek.request') prefetched?.prepared?.native?.pauseProcessing?.();
+        if (stage === 'mse.done') maybeStartPrefetchedProcessing();
+        if (streamStages[stage] && (stage !== 'media-range-retry' || !readyForHistory))
+          reportStartup(streamStages[stage], signal, attempt);
+      }
+    };
+  }
   async function sourceForEpisode(episode, signal, attempt = 0, options = {}) {
     const series = getSeries();
     let quality = options.quality ?? selection().quality;
     let codec = options.codec ?? selection().codec;
     const quiet = !!options.quiet;
     const report = message => { if (!quiet) reportStartup(message, signal, attempt); };
-    const onStage = (stage, fields = {}) => {
-      if (!quiet && !signal.aborted) {
-        log('cenc.stage', { phase: stage, elapsedMs: ageMs(), ...fields });
-        if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
-          streamFailure = { code: fields.code, status: fields.status || 0 };
-      }
-      if (streamStages[stage] && (stage !== 'media-range-retry' || !readyForHistory))
-        report(streamStages[stage]);
-    };
+    const onStage = streamStageReporter(signal, attempt, quiet, episode);
     log('source.resolve.begin', {
       attempt: attempt + 1, quality, codec, prefetch: quiet, elapsedMs: ageMs()
     });
@@ -550,12 +561,13 @@ export function createPlayer({
     if (codecId(source.codec) === 'bytevc2') {
       if (isHlsUrl(source.url)) throw errorWith('PLAYBACK_UNSUPPORTED',
         'ByteVC2 HLS 尚未支援；目前的 WASM 路徑只接受 MP4');
-      // Do not transcode a whole second episode during playback. Prefetch
-      // metadata now; take over when the user actually switches episodes.
-      if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants,
+      // Streaming preload downloads independently and waits for the current
+      // processor before producing a bounded clear prefix. Whole-file mode
+      // keeps metadata-only lookahead to avoid a second full transcode.
+      if (quiet && (bvc2Mode !== 'stream' || !options.nativePrefetch)) return { bvc2Pending: true, source, fallbackNotice, variants,
         winnerVariants: list.winnerVariants || variants.slice() };
       if (bvc2Mode === 'stream') {
-      setStatus('正在準備 ByteVC2 → H.264 增量串流…');
+      if (!quiet) setStatus('正在準備 ByteVC2 → H.264 增量串流…');
       const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
       const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(), fetch, undefined, source.userAgent);
       const url = transport.mode === 'direct' ? source.url : proxyUrl;
@@ -568,14 +580,14 @@ export function createPlayer({
         video, url: transport.mode === 'direct' ? source.url : proxyUrl,
         proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
         codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source),
-        key: source.contentKey || '', signal, bridge: 'bvc2',
+        key: source.contentKey || '', signal, bridge: 'bvc2', preload: quiet && options.nativePrefetch,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
           metadata.movieDurationSeconds || source.duration || null) || 0
       });
       if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
       return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
-        fallbackNotice, variants: null };
+        fallbackNotice, variants: quiet ? variants : null };
       }
       const reportBvc2 = message => report(
         '⚠ 此 ByteVC2 模式需下載及轉碼整集，完成後才能播放 · ' + message);
@@ -644,30 +656,25 @@ export function createPlayer({
         directProxyFallback: directUrl ? fallbackProxyUrl : null,
         source, fallbackNotice, variants: quiet ? variants : null };
     }
-    // If the current episode already uses native EME, prepare only the next
-    // episode's source metadata. Avoid downloading+remuxing the whole upcoming
-    // episode with FFmpeg while the current one already streams natively.
-    if (quiet && options.nativePrefetch && source.contentKey && !isHlsUrl(source.url)) {
-      return { nativePending: true, source, fallbackNotice, variants };
-    }
     // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
     // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
     // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
     // A source/API failure may consume attempt zero before any CENC setup.
     // Every newly selected encrypted source must still try incremental playback.
-    if (!quiet && source.contentKey && !isHlsUrl(source.url)) {
+    if ((!quiet || options.nativePrefetch) && source.contentKey && !isHlsUrl(source.url)) {
       await keyCleanup;
-      const native = await prepareNativeStream({
-        video, source, codec: codecId(source.codec),
+      const native = await (quiet ? openClearKeyStream : prepareNativeStream)({
+        preload: quiet && options.nativePrefetch, video, source, codec: codecId(source.codec),
         workerOrigin: getWorkerOrigin(), signal,
         startSeconds: savedResumeSeconds(episode, seriesId), onStage,
         retrySameSource: retryCurrentSource(variants, source)
       });
       if (native) {
-        if (native.kind === 'cenc-remux') retryIncrementalCenc = true;
+        if (!quiet && native.kind === 'cenc-remux') retryIncrementalCenc = true;
         log('playback.route', { kind: native.kind, elapsedMs: ageMs() });
-        return { url: native.url, native, source, fallbackNotice, variants: null };
+        return { url: native.url, native, source, fallbackNotice, variants: quiet ? variants : null };
       }
+      if (quiet) return { nativePending: true, source, fallbackNotice, variants };
       if (retryIncrementalCenc)
         throw errorWith('CENC_UNAVAILABLE', '增量串流重試失敗，已禁止整檔備援下載');
     }
@@ -743,6 +750,15 @@ export function createPlayer({
       reportStartup('正在接續預取的影片來源…', signal, attempt);
     const prepared = handoff && attempt === 0 ? await handoff.promise : null;
     let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
+    if (prepared?.native?.activate) {
+      prepared.native.activate();
+      if (prepared.source?.url) {
+        triedSourceUrls.add(prepared.source.url); cencTriedUrls.add(prepared.source.url);
+        cencRetryTier = { codec: codecId(prepared.source.codec), quality: qualityId(prepared.source) };
+      }
+      if (prepared.native.kind === 'cenc-remux') retryIncrementalCenc = true;
+      log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true });
+    }
     if (resolved?.bvc2Pending) {
       resolved = await sourceForEpisode(episode, signal, attempt,
         { variants: resolved.variants, winnerVariants: resolved.winnerVariants });
@@ -754,9 +770,7 @@ export function createPlayer({
         workerOrigin: getWorkerOrigin(), signal,
         startSeconds: savedResumeSeconds(episode),
         retrySameSource: retryCurrentSource(prepared.variants, resolved.source),
-        onStage: stage => {
-          if (streamStages[stage]) reportStartup(streamStages[stage], signal, attempt);
-        }
+        onStage: streamStageReporter(signal, attempt, false, episode)
       });
       resolved = native ? { ...resolved, native, url: native.url, nativePending: false }
         : await sourceForEpisode(episode, signal, attempt,
@@ -935,21 +949,33 @@ export function createPlayer({
       duration: video.duration, position: video.currentTime,
       startupSeconds: lastStartupSeconds, paused: video.paused,
       autoNext: true, saveData: !!navigator.connection?.saveData,
-      hasNext: !!next
+      hasNext: !!next, processingFinished: Boolean(nativeStream?.finished?.())
     })) return;
     const seriesId = getSeries().seriesId, quality = selection().quality;
     const codec = 'auto'; // The next episode inherits a quality, never this episode's codec.
     const key = episodeCacheKey(seriesId, next.vid, quality, codec);
-    if (prefetched?.key === key || cache.getEntry(key)) return;
+    if (prefetched?.key === key) { maybeStartPrefetchedProcessing(); return; }
+    if (cache.getEntry(key)) return;
     cancelPrefetch();
     const preloadController = new AbortController();
-    // A prefetch is intentionally bounded to one episode and <=32 MiB of
-    // incoming encrypted media. Failures remain silent until actually played.
+    const entry = { vid: next.vid, key, controller: preloadController, prepared: null };
+    log('prefetch.begin', { episode: Number(next.index) || 0,
+      processingFinished: Boolean(nativeStream?.finished?.()) });
     const promise = sourceForEpisode(next, preloadController.signal, 0, {
-      quiet: true, quality, codec, seriesId,
-      nativePrefetch: Boolean(nativeStream)
-    }).catch(() => null);
-    prefetched = { vid: next.vid, key, controller: preloadController, promise };
+      quiet: true, quality, codec, seriesId, nativePrefetch: true
+    }).then(prepared => {
+      if (preloadController.signal.aborted) { void prepared?.native?.close(); return null; }
+      entry.prepared = prepared;
+      if (prefetched === entry) maybeStartPrefetchedProcessing();
+      log('prefetch.prepared', { episode: Number(next.index) || 0, media: Boolean(prepared?.native) });
+      return prepared;
+    }).catch(error => {
+      if (!preloadController.signal.aborted)
+        log('prefetch.failed', { episode: Number(next.index) || 0, code: error?.code || 'UNKNOWN' });
+      return null;
+    });
+    entry.promise = promise;
+    prefetched = entry;
   }
   function open(episode, autoPlay = true, keepSettings = false) {
     // Mode activation already opens its suggested episode. A repeated click

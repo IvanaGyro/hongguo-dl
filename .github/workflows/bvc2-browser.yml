@@ -9,6 +9,9 @@ on:
       - 'src/cenc-source-fallback.js'
       - 'src/bvc2*.js'
       - 'src/cenc-remux*.js'
+      - 'src/stream-preload.js'
+      - 'src/player-prefetch.js'
+      - 'tests/cenc-preload.browser.mjs'
       - 'src/cached-media-reader.js'
       - 'src/media-body.js'
       - 'src/playback-policy.js'
@@ -56,3 +59,5 @@ jobs:
           BVC2_BROWSER=chromium node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
           BVC2_BROWSER=firefox BVC2_TEST_WHOLE=1 node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
           BVC2_BROWSER=firefox node tests/bvc2-stream.browser.mjs /tmp/bvc2-short.mp4 /tmp/bvc2-long.mp4
+          PRELOAD_BRIDGE=bvc2 CENC_BROWSER=chromium node tests/cenc-preload.browser.mjs /tmp/bvc2-short.mp4
+          PRELOAD_BRIDGE=bvc2 CENC_BROWSER=firefox node tests/cenc-preload.browser.mjs /tmp/bvc2-short.mp4

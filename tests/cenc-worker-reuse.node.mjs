@@ -13,6 +13,8 @@ const shortProof = process.env.PROOF_SHORT === '1';
 const key = process.env.BVC2_CENC_KEY || (bvc2 ? '' : '00112233445566778899aabbccddeeff');
 const temporary = await mkdtemp(join(tmpdir(), 'cenc-worker-reuse-'));
 const stages = [], packets = [], requests = [];
+let downloadedResolve;
+const downloaded = new Promise(resolve => { downloadedResolve = resolve; });
 let seekSent = false, finishedResolve, reject;
 const finished = new Promise((res, rej) => { finishedResolve = res; reject = rej; });
 const timer = setTimeout(() => reject(new Error('Persistent worker proof timed out')), bvc2 ? 120000 : 20000);
@@ -20,7 +22,10 @@ const generationCounts = new Map();
 globalThis.self = {
   location: { origin: 'https://fixture.test', href: 'https://fixture.test/worker.js' },
   postMessage(data) {
-    if (data.type === 'stage') stages.push(data);
+    if (data.type === 'stage') {
+      stages.push(data);
+      if (data.stage === 'media.cache' && data.complete) downloadedResolve();
+    }
     if (data.type === 'error') return reject(new Error(JSON.stringify(data)));
     if (data.type === 'init' || data.type === 'media') {
       packets.push(data);
@@ -74,7 +79,12 @@ try {
     }, metadata);
   self.onmessage({ data: { type: 'start', url: 'https://fixture.test/api/media',
     key, fileSize: input.length, retrySameSource: true,
-    bridge: bvc2 ? 'bvc2' : 'cenc', initialRanges: metadata.initialRanges || [] } });
+    bridge: bvc2 ? 'bvc2' : 'cenc', deferProcessing: true, initialRanges: metadata.initialRanges || [] } });
+  await Promise.race([downloaded, finished]);
+  assert(stages.some(s => s.stage === 'media.cache' && s.complete), 'Raw download must finish while processing is deferred');
+  assert(!stages.some(s => s.stage === 'wasm-start'), 'Next episode must not run WASM before CPU handoff');
+  assert.equal(packets.length, 0);
+  self.onmessage({ data: { type: 'process' } });
   await finished;
   assert.equal(stages.filter(s => s.stage === 'wasm-start').length, 1);
   assert.deepEqual(stages.filter(s => s.stage === 'seek.run').map(s => s.generation), [0, 1, 2]);

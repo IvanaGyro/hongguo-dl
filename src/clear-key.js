@@ -373,7 +373,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
-  fetchImpl = fetch, onStage = () => {}, retrySameSource = false,
+  fetchImpl = fetch, onStage = () => {}, retrySameSource = false, preload = false,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -439,7 +439,7 @@ export async function openClearKeyStream({
         proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
-        key: source.contentKey, signal, retrySameSource,
+        key: source.contentKey, signal, retrySameSource, preload,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(startSeconds,
           metadata.movieDurationSeconds || source.duration || null) ?? 0
@@ -456,6 +456,8 @@ export async function openClearKeyStream({
     }
     onStage('cenc.remux-unavailable', { codec });
   }
+  // Never attach a speculative EME session to the currently playing video.
+  if (preload) return declined('preload-remux-unavailable');
   // Already-fragmented CENC remains encrypted and is delivered through EME.
   // When the local remux binary is not deployed, retain the existing fallback.
   if (typeof requestAccess !== 'function' || typeof video.setMediaKeys !== 'function')

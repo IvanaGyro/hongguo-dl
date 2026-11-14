@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Encrypted progressive MP4 -> clear fMP4 over MSE.
 // Uses pinned Librempeg WASM with bounded raw-byte and MSE caches.
+import { createStreamPreload } from './stream-preload.js';
 import { bvc2BridgeAvailable } from './bvc2.js';
 import { errorWith } from './logic.js';
 import { evictionEnd } from './mse-eviction.js';
@@ -98,7 +99,7 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
  */
 export async function openCencProgressiveStream({
   video, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', retrySameSource = false
+  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', retrySameSource = false, preload = false
 }) {
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
@@ -148,6 +149,8 @@ export async function openCencProgressiveStream({
     revokeObjectUrl();
     throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
   }
+  const staging = createStreamPreload({ enabled: preload,
+    post: message => worker.postMessage(message), onStage });
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
   let finished = false, initialStartChecked = false;
@@ -155,7 +158,7 @@ export async function openCencProgressiveStream({
   let streamHandle, cacheInfo = {};
   const setPrefetch = () => {
     if (!closed) worker.postMessage({ type: 'prefetch',
-      active: policy.rawPrefetch && !video.paused });
+      active: policy.rawPrefetch && (staging.active || !video.paused) });
   };
   for (const event of ['playing', 'pause', 'ended']) video.addEventListener?.(event, setPrefetch);
   let mediaFragments = 0, mediaBytes = 0;
@@ -166,7 +169,7 @@ export async function openCencProgressiveStream({
   // Only adjust a fresh zero-start HEVC stream, never indexed seeks or user
   // resume positions. Defer until metadata and media ranges are available.
   const alignFirstBuffer = () => {
-    if (closed || failed || initialStartChecked || codec !== 'hevc' ||
+    if (staging.active || closed || failed || initialStartChecked || codec !== 'hevc' ||
         startSeconds > 0.01 || video.readyState < 1 ||
         !video.buffered?.length) return;
     try {
@@ -189,6 +192,7 @@ export async function openCencProgressiveStream({
   const fail = (cause, streamError = null) => {
     if (closed || failed) return;
     failed = true;
+    staging.close();
     seekPending?.reject(errorWith(streamError?.code || 'CENC_REMUX_FAILED', '串流跳轉失敗')); seekPending = null;
     outputController.abort();
     for (const event of ['playing', 'pause', 'ended']) video.removeEventListener?.(event, setPrefetch);
@@ -220,7 +224,7 @@ export async function openCencProgressiveStream({
   };
   const close = async () => {
     if (closed) return;
-    closed = true;
+    closed = true; staging.close();
     internal.abort(); outputController.abort();
     seekPending?.reject(errorWith('CANCELED', '已切換影片')); seekPending = null;
     for (const event of ['playing', 'pause', 'ended']) video.removeEventListener?.(event, setPrefetch);
@@ -266,7 +270,7 @@ export async function openCencProgressiveStream({
   worker.onmessage = ({ data }) => {
     if (closed || failed || !data) return;
     if (data.type === 'stage') {
-      if (['media.cache', 'media.prefetch', 'media.prefetch.stopped', 'seek.run', 'bvc2.config'].includes(data.stage)) {
+      if (['media.cache', 'media.prefetch', 'media.prefetch.stopped', 'seek.run', 'bvc2.config', 'processing.waiting', 'processing.started'].includes(data.stage)) {
         const { type, stage, ...fields } = data;
         if (stage === 'media.cache') cacheInfo = fields;
         onStage(stage, fields); return;
@@ -292,6 +296,10 @@ export async function openCencProgressiveStream({
     if (data.type === 'error') return fail('wasm-remux', {
       code: data.code, status: data.status
     });
+    if (staging.capture(data)) {
+      if (data.type === 'done') finished = true;
+      return;
+    }
     if (data.type === 'done') {
       finished = true;
       onStage('mse.done', { fragments: mediaFragments, bytes: mediaBytes });
@@ -367,7 +375,7 @@ export async function openCencProgressiveStream({
   };
   try {
     worker.postMessage({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource,
-      initialRanges, durationSeconds, cacheBudget: policy.cacheBudget, bridge });
+      initialRanges, durationSeconds, cacheBudget: policy.cacheBudget, bridge, deferProcessing: preload });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.
@@ -395,7 +403,15 @@ export async function openCencProgressiveStream({
     return replacement;
   };
   streamHandle = { url: objectUrl, inPlaceSeek: true, kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
-    close, seekTo, get mime() { return mime; },
+    close, seekTo, startProcessing: () => staging.startProcessing(),
+    pauseProcessing: () => staging.pauseProcessing(),
+    activate: () => {
+      if (failed || closed) throw errorWith('CENC_REMUX_FAILED', '預載串流已失效');
+      const pending = staging.activate();
+      onStage('preload.handoff', { units: pending.length });
+      for (const data of pending) worker.onmessage({ data });
+      setPrefetch();
+    }, get mime() { return mime; },
     durationSeconds, snapshot: () => cacheInfo, finished: () => finished };
   return streamHandle;
 }
