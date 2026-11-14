@@ -330,10 +330,14 @@ try {
   await page.locator('#player-panel').waitFor({ state: 'visible' });
   const mobile = await page.evaluate(() => {
     const stage = document.querySelector('#player-stage').getBoundingClientRect();
-    const controls = document.querySelector('.player-bottom-controls').getBoundingClientRect();
+    // Measure the interactive seek/bar content, not its transparent gradient
+    // padding, which the redesigned player extends above the controls.
+    const seek = document.querySelector('#player-seek').getBoundingClientRect();
+    const bar = document.querySelector('.player-control-bar').getBoundingClientRect();
     return {
       horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
-      stageHeight: stage.height, controlsHeight: controls.height,
+      stageHeight: stage.height,
+      controlsHeight: Math.max(seek.bottom, bar.bottom) - Math.min(seek.top, bar.top),
       buttonsInside: ['player-prev', 'player-play-pause', 'player-next',
         'player-settings-toggle', 'player-fullscreen'].every(id => {
         const rect = document.getElementById(id).getBoundingClientRect();
@@ -344,7 +348,7 @@ try {
   assert.equal(mobile.horizontalOverflow, false, 'Mobile layout must not scroll sideways');
   assert.equal(mobile.buttonsInside, true, 'All mobile controls should fit in the player');
   assert(mobile.controlsHeight < mobile.stageHeight * 0.5,
-    'Controls should not obscure most of the video on mobile');
+    'Controls should not obscure most of the video on mobile: ' + JSON.stringify(mobile));
 
   // A prepared next episode must be handed off without another /api/source call.
   await page.evaluate(() => localStorage.removeItem('hongguo-dl-playback-history-v1'));
