@@ -953,10 +953,16 @@ export function createPlayer({
   }
   function open(episode, autoPlay = true, keepSettings = false) {
     // Mode activation already opens its suggested episode. A repeated click
-    // must not cancel/restart that same in-flight selection; settings changes
-    // explicitly pass keepSettings and still restart with the new rendition.
-    if (current?.vid === episode.vid && loading && controller &&
-        !controller.signal.aborted && !keepSettings) return;
+    // must not cancel/restart that selection, even if it became ready while
+    // the pointer action was settling. Settings changes explicitly restart.
+    if (current?.vid === episode.vid && controller && !controller.signal.aborted && !keepSettings &&
+        (loading || readyForHistory && !failure && !streamFailure && !video.error &&
+          !video.ended && video.getAttribute('src'))) {
+      if (!loading && autoPlay && video.paused) {
+        try { void Promise.resolve(video.play()).catch(() => {}); } catch { /* controls can resume */ }
+      }
+      return;
+    }
     if (current?.vid !== episode.vid) {
       const quality = selection().quality;
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));

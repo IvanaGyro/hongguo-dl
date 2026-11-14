@@ -133,6 +133,7 @@ try {
     status: document.querySelector('#player-status')?.textContent,
     source: document.querySelector('#player-source-info')?.textContent,
     title: document.querySelector('#series-title')?.textContent,
+    playback: document.querySelector('#playback-log')?.value,
     videoError: document.querySelector('#player-video')?.error?.code || null,
     queue: document.querySelector('#queue')?.textContent,
     jobs: JSON.parse(localStorage.getItem('hongguo-dl-queue-v1') || '[]')
