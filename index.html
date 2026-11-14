@@ -3,60 +3,44 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#10120f" />
+  <meta name="theme-color" content="#fd7528" />
   <meta name="description" content="紅果短劇瀏覽器播放與下載管理器，支援續播、整劇 ZIP 和佇列無損合併。" />
   <title>Hongguo DL · 短劇播放與下載</title>
 </head>
 <body>
   <div id="app">
+    <a class="skip-link" href="#main">跳到主要內容</a>
     <header class="topbar">
-      <a class="brand" href="#app" aria-label="Hongguo DL 回到頁面頂端">
-        <span class="brand-mark" aria-hidden="true">▶</span>
-        <span class="brand-name">Hongguo <strong>DL</strong></span>
-      </a>
-      <span class="topbar-note">短劇播放 <span aria-hidden="true">/</span> 下載管理</span>
+      <div class="wrap topbar-inner">
+        <a class="brand" href="#app" aria-label="Hongguo DL 回到頁面頂端">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.6v10.8a1 1 0 0 0 1.5.86l9.2-5.4a1 1 0 0 0 0-1.72l-9.2-5.4A1 1 0 0 0 9 6.6Z" fill="currentColor"/></svg></span>
+          <span class="brand-name">Hongguo DL</span>
+        </a>
+        <nav class="mode-tabs" aria-label="操作模式">
+          <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
+          <button id="mode-play" type="button" aria-pressed="false">播放模式</button>
+        </nav>
+      </div>
     </header>
-    <main class="layout">
+    <main id="main">
       <section class="hero" aria-labelledby="home-title">
-        <h1 id="home-title">短劇，從這裡接著看<span class="hero-accent">。</span></h1>
-        <p>輸入影集 ID 或分享網址，播放、續看，或選擇集數下載。</p>
+        <div class="wrap hero-inner">
+          <h1 id="home-title"><span>貼上影集 ID，</span><span>整部短劇看完或帶走。</span></h1>
+          <p class="hero-lead">輸入影集 ID 或分享網址，就能播放、續看，或挑集數下載成 MP4。</p>
+          <form id="lookup-form" class="lookup">
+            <label for="input-url">影集 ID 或網址</label>
+            <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
+          </form>
+          <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
+          <div id="lookup-error" class="alert" hidden role="alert"></div>
+        </div>
       </section>
-      <nav class="mode-tabs" aria-label="操作模式">
-        <button id="mode-download" type="button" class="selected" aria-pressed="true">下載模式</button>
-        <button id="mode-play" type="button" aria-pressed="false">播放模式</button>
-      </nav>
+      <div class="layout wrap">
       <section class="panel">
         <div id="recent-series" class="recent-library" aria-label="最近看過的影集"></div>
-        <form id="lookup-form" class="lookup">
-          <label for="input-url">影集 ID 或網址</label>
-          <div class="input-row"><input id="input-url" type="text" required autocomplete="off" spellcheck="false" placeholder="影集 ID／網址；多筆 ID 可用逗號分隔" /><button type="submit" id="lookup-button" class="primary">尋找影集</button></div>
-        </form>
-        <div id="linked-series" class="linked-series" hidden aria-live="polite"></div>
-        <div id="lookup-error" class="alert" hidden role="alert"></div>
-        <details class="api-settings" id="worker-settings">
-          <summary>Cloudflare Worker API 設定</summary>
-          <form id="api-settings-form">
-            <label for="worker-origin">Worker 網址（可覆寫網站預設值）</label>
-            <div class="input-row">
-              <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
-              <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
-            </div>
-            <p id="worker-status" class="help"></p>
-            <p class="help">查詢和下載會透過此 Worker；只有自訂網址會保存在目前裝置。</p>
-            <div id="api-settings-error" class="alert" role="alert" hidden></div>
-          </form>
-        </details>
-        <details class="api-settings" id="codec-diagnostics">
-          <summary>此裝置影片編碼支援檢測</summary>
-          <p class="help">分開檢查視訊、AAC、合併串流與檔案播放，結果附瀏覽器版本，不會傳送影片或金鑰。能力宣告仍須實際影格測試才能確認。</p>
-          <div class="actions">
-            <button id="codec-diag-run" type="button" class="quiet">檢查此裝置</button>
-            <button id="codec-diag-copy" type="button" class="quiet" hidden>複製診斷結果</button>
-          </div>
-          <pre id="codec-diag-results" class="codec-diag-results" aria-live="polite"></pre>
-        </details>
         <div id="series" hidden>
-          <div class="section-title"><div><h2 id="series-title">劇集</h2><p id="series-count" class="subtle"></p></div>
+          <div class="section-title"><div><h2 id="series-title">劇集</h2><p id="series-count" class="subtle"></p>
+            <ul class="episode-legend" aria-label="分集顏色說明"><li class="legend-unwatched">未看</li><li class="legend-progress">看到一半</li><li class="legend-watched">已看完</li><li class="legend-current">正在播放</li></ul></div>
             <div class="actions">
               <button id="share-series" type="button" class="quiet" title="複製此影集連結" aria-label="複製影集連結">分享連結</button>
               <button id="select-all" type="button" class="quiet">全選</button>
@@ -194,15 +178,41 @@
           <div id="bulk-status" class="export-status" role="status" aria-live="polite"></div>
         </div>
       </section>
-      <details id="playback-diagnostics" class="panel playback-diagnostics">
-        <summary>播放診斷 Log（暫時功能，可複製）</summary>
-        <p class="help">記錄來源解析、CENC／MSE 與緩衝狀態；不記錄簽章網址、影片金鑰或 Cookie。重現問題後請複製內容。</p>
-        <div class="actions">
-          <button id="playback-log-copy" type="button" class="quiet">複製 Log</button>
-          <button id="playback-log-clear" type="button" class="quiet">清除 Log</button>
-        </div>
-        <textarea id="playback-log" readonly spellcheck="false" aria-label="播放診斷紀錄"></textarea>
-      </details>
+      <section class="tools" aria-labelledby="tools-title">
+        <h2 id="tools-title">設定與診斷</h2>
+        <details class="api-settings" id="worker-settings">
+          <summary>Cloudflare Worker API 設定</summary>
+          <form id="api-settings-form">
+            <label for="worker-origin">Worker 網址（可覆寫網站預設值）</label>
+            <div class="input-row">
+              <input id="worker-origin" type="url" placeholder="https://hongguo-dl.<subdomain>.workers.dev" autocomplete="url" spellcheck="false" />
+              <button type="submit">儲存 API 網址</button><button type="button" id="reset-worker-origin" class="quiet" hidden>恢復網站預設</button>
+            </div>
+            <p id="worker-status" class="help"></p>
+            <p class="help">查詢和下載會透過此 Worker；只有自訂網址會保存在目前裝置。</p>
+            <div id="api-settings-error" class="alert" role="alert" hidden></div>
+          </form>
+        </details>
+        <details class="api-settings" id="codec-diagnostics">
+          <summary>此裝置影片編碼支援檢測</summary>
+          <p class="help">分開檢查視訊、AAC、合併串流與檔案播放，結果附瀏覽器版本，不會傳送影片或金鑰。能力宣告仍須實際影格測試才能確認。</p>
+          <div class="actions">
+            <button id="codec-diag-run" type="button" class="quiet">檢查此裝置</button>
+            <button id="codec-diag-copy" type="button" class="quiet" hidden>複製診斷結果</button>
+          </div>
+          <pre id="codec-diag-results" class="codec-diag-results" aria-live="polite"></pre>
+        </details>
+        <details id="playback-diagnostics" class="playback-diagnostics">
+          <summary>播放診斷 Log（暫時功能，可複製）</summary>
+          <p class="help">記錄來源解析、CENC／MSE 與緩衝狀態；不記錄簽章網址、影片金鑰或 Cookie。重現問題後請複製內容。</p>
+          <div class="actions">
+            <button id="playback-log-copy" type="button" class="quiet">複製 Log</button>
+            <button id="playback-log-clear" type="button" class="quiet">清除 Log</button>
+          </div>
+          <textarea id="playback-log" readonly spellcheck="false" aria-label="播放診斷紀錄"></textarea>
+        </details>
+      </section>
+      </div>
     </main>
   </div>
   <script type="module" src="/src/main.js"></script>

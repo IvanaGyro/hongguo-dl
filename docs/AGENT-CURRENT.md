@@ -38,6 +38,12 @@
 - **App 空回應重試（2026-11-13）**：`/api/source` 僅接受 `sid`／`vid`／`channel`（舊的多餘 `quality`／`codec` 忽略以相容舊客戶端）；App HTTP 200 空回應改為同一簽署端點最多再試一次、最後再試 legacy，合計最多 3 次、固定短延遲、共享 12 秒 request deadline。僅 `EMPTY_RESPONSE` 重試，403／429／業務拒絕一律不重試。正式 Worker 需另行部署；新增定向測試。
 - **「可能受限制」標籤不是播放驗證**：`worker/worker.js` 取官方 `seriesDetail.accessible_episode_cnt`，僅把超出前 N 集的分集標 `available=false`；欄位缺失即未知。下載模式預設不勾選，但仍允許選取／播放，不可直接視為 DRM 或付款證據。網頁片源的 `protectedPlayback`、`publicVideoSeo.available` 僅影響是否接受公開 SEO URL。
 
+## 介面設計
+
+- 樣式集中於 `src/styles.css`（單一檔案），字體為自架的 Chiron GoRound TC（`@fontsource-variable/chiron-goround-tc`，無第三方請求）。
+- 四個品牌色即狀態語言：橘 `#FD7528`＝主要動作／正在播放，杏 `#F0B16B`＝進行中，鼠尾草綠 `#BEC891`＝已選取，薄荷 `#9BDFC0`＝已完成。
+- `index.html` 只調整排列（搜尋列在橘色區塊、模式切換在頂列、設定與診斷集中於頁尾），所有 id 與控制項不變；版面驗收見 `tests/design-layout.browser.mjs`。
+
 ## 工作原則與驗收入口
 
 - 一般改動直接提交 `main`（若使用者特別指定 PR，依當次要求）；變動先跑對應單元、建置與 GitHub Actions，再更新**本文件**。避免同時編輯 ByteVC2 agent 負責的程式。
