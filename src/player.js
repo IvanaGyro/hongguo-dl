@@ -1164,17 +1164,19 @@ export function createPlayer({
   });
   // Two-level Video.js settings, only video quality and playback rate.
   // The native selects remain the single source of truth for stored preferences.
-  const settingsStage = video.closest('media-container');
-  const settingsViews = [...settingsMenu.querySelectorAll('[data-settings-view]')];
-  const backButton = settingsMenu.querySelector('#player-settings-back');
-  const settingsHeading = settingsMenu.querySelector('#player-settings-heading');
+  const settingsStage = video.closest?.('media-container');
+  const settingsViews = [...(settingsMenu.querySelectorAll?.('[data-settings-view]') || [])];
+  const backButton = settingsMenu.querySelector?.('#player-settings-back');
+  const settingsHeading = settingsMenu.querySelector?.('#player-settings-heading');
   function updateSettingsSummaries() {
+    if (!settingsViews.length) return; // Test stubs do not implement DOM queries.
     settingsMenu.querySelector('#player-quality-summary').textContent =
       qualitySelect.selectedOptions[0]?.textContent || '自動最佳';
     settingsMenu.querySelector('#player-speed-summary').textContent =
       speedSelect.selectedOptions[0]?.textContent || '1×';
   }
   function showSettingsView(view = 'root') {
+    if (!settingsViews.length) return;
     for (const element of settingsViews) element.hidden = element.dataset.settingsView !== view;
     backButton.hidden = view === 'root';
     settingsHeading.textContent = view === 'quality' ? '畫質' :
@@ -1205,13 +1207,13 @@ export function createPlayer({
   function showSettings(visible) {
     if (visible) showSettingsView('root');
     settingsMenu.hidden = !visible;
-    settingsStage.dataset.settingsOpen = String(visible);
+    if (settingsStage?.dataset) settingsStage.dataset.settingsOpen = String(visible);
     settingsToggle.setAttribute('aria-expanded', String(visible));
   }
   settingsToggle.addEventListener('click', () => showSettings(settingsMenu.hidden));
   settingsClose.addEventListener('click', () => showSettings(false));
   settingsMenu.addEventListener('click', event => {
-    const target = event.target.closest('button[data-settings-target], button[data-choice-for]');
+    const target = event.target?.closest?.('button[data-settings-target], button[data-choice-for]');
     if (!target) return;
     if (target.dataset.settingsTarget) {
       showSettingsView(target.dataset.settingsTarget);
