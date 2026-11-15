@@ -7,7 +7,7 @@ import { candidateRenditions, codecId, qualityId } from './source-options.js';
 
 export function isRecoverableMediaSourceError(code) {
   return ['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP',
-    'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW'].includes(code);
+    'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'MEDIA_HTTP'].includes(code);
 }
 
 export function canTryNextCencSource({
@@ -57,7 +57,7 @@ export function sameTierPlaybackCandidates(variants, preferences = {}, tier = nu
   const seen = new Set();
   return candidateRenditions(variants, preferences).filter(v => {
     if (codecId(v.codec) !== tier.codec || qualityId(v) !== tier.quality ||
-        (tier.codec !== 'bytevc2' && !v.contentKey) || !v.url || seen.has(v.url)) return false;
+        !v.url || seen.has(v.url)) return false;
     seen.add(v.url); return true;
   });
 }

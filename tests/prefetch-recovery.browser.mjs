@@ -13,9 +13,9 @@ const source = (vid, name, quality = '720p') => ({ codec: 'h264', quality, sourc
   url: `https://cdn.fqnovelvod.com/${vid}-${name}.mp4` });
 
 try {
-  for (const mode of ['active-slow', 'preload-slow', 'preload-exhausted', 'preload-refresh', 'preload-budget']) {
+  for (const mode of ['active-slow', 'active-slow-refresh', 'preload-slow', 'preload-exhausted', 'preload-refresh', 'preload-budget']) {
     const mediaRequests = [], sourceCalls = new Map(), timers = new Set();
-    const episodes = mode === 'active-slow' ? [{ vid: '16', index: 16, available: true }]
+    const episodes = mode.startsWith('active-slow') ? [{ vid: '16', index: 16, available: true }]
       : [{ vid: '24', index: 24, available: true }, { vid: '25', index: 25, available: true }];
     const server = createServer((request, response) => {
       const url = new URL(request.url, 'http://fixture.local');
@@ -30,7 +30,7 @@ try {
         const vid = url.searchParams.get('vid'); sourceCalls.set(vid, (sourceCalls.get(vid) || 0) + 1);
         const revision = sourceCalls.get(vid);
         const choices = mode === 'preload-budget' ? [source(vid, 'a-r' + revision), source(vid, 'b-r' + revision)]
-          : [source(vid, 'a'), source(vid, 'b'), ...(mode === 'preload-refresh' && revision >= 3 ? [source(vid, 'c')] : []), source(vid, 'lower', '360p')];
+          : [source(vid, 'a'), source(vid, 'b'), ...((mode === 'preload-refresh' && revision >= 3 || mode === 'active-slow-refresh' && revision >= 2) ? [source(vid, 'c')] : []), source(vid, 'lower', '360p')];
         return json({ variants: vid === '24' ? [source(vid, 'good')] : choices });
       }
       if (url.pathname !== '/api/media') { response.writeHead(404, cors); return response.end(); }
@@ -40,7 +40,7 @@ try {
       const first = Number(match[1]), last = match[2] ? Math.min(Number(match[2]), bytes.length - 1) : bytes.length - 1;
       const openEnded = !match[2];
       mediaRequests.push({ path, first, openEnded });
-      const failing = !path.includes('24-good') && path.endsWith('-a.mp4');
+      const failing = !path.includes('24-good') && (path.endsWith('-a.mp4') || mode === 'active-slow-refresh' && path.endsWith('-b.mp4'));
       if (!path.includes('24-good') && (mode === 'preload-budget' || openEnded && ['preload-exhausted', 'preload-refresh'].includes(mode) && !path.includes('-c.mp4'))) {
         response.writeHead(403, cors); return response.end();
       }
@@ -48,7 +48,7 @@ try {
         'Content-Range': `bytes ${first}-${last}/${bytes.length}` });
       if (!openEnded || !failing) return response.end(bytes.subarray(first, last + 1));
       // Enough for a picture in the active case; only init in the preload case.
-      let offset = Math.min(last + 1, first + (mode === 'active-slow' ? 262144 : 1024));
+      let offset = Math.min(last + 1, first + (mode.startsWith('active-slow') ? 262144 : 1024));
       response.write(bytes.subarray(first, offset));
       const timer = setInterval(() => {
         if (offset > last) { clearInterval(timer); timers.delete(timer); response.end(); }
@@ -101,15 +101,20 @@ try {
           assert.equal(mediaRequests.filter(r => r.openEnded && r.path === '/25-b.mp4').length, 1);
         }
       } else {
-        const episode = mode === 'active-slow' ? 16 : 25;
-        await page.waitForFunction(episode => {
+        const episode = mode.startsWith('active-slow') ? 16 : 25;
+        await page.waitForFunction(({ episode, candidate }) => {
           const v = document.querySelector('#player-video'), log = document.querySelector('#playback-log').value;
           return document.querySelector('#player-episode').textContent.includes(`第 ${episode} 集`) &&
             log.includes('CENC_SOURCE_SLOW') && v.currentTime > 0.5 &&
             v.getVideoPlaybackQuality().totalVideoFrames > 3 && !v.error &&
-            log.includes(`source.selected candidate=2 episode=${episode}`);
-        }, episode, { timeout: 35000 });
+            log.includes(`source.selected candidate=${candidate} episode=${episode}`);
+        }, { episode, candidate: mode === 'active-slow-refresh' ? 3 : 2 }, { timeout: 45000 });
         const log = await page.locator('#playback-log').inputValue();
+        if (mode === 'active-slow-refresh') {
+          assert.equal(sourceCalls.get('16'), 2);
+          assert.equal(mediaRequests.filter(r => r.openEnded && r.path === '/16-c.mp4').length, 1);
+          assert(!log.includes('playback.retry.scheduled'), 'CDN rotation and source refresh must be immediate');
+        }
         if (mode === 'preload-slow') {
           const ready = log.indexOf('prefetch.ready episode=25');
           assert(ready >= 0 && ready < log.indexOf('playback.open episode=25'),

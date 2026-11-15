@@ -9,7 +9,7 @@ const devices = [], sourceDevices = [];
 let failFirst = true, releaseSource, releaseDevice, releaseCdn, limitedAt = 0, retriedAt = 0;
 async function configure(context) {
   await context.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
-  await context.route('https://cdn.fqnovelvod.com/device-test.mp4', route => media(route));
+  await context.route('https://cdn.fqnovelvod.com/device-test*.mp4', route => media(route));
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.pathname === '/api/health') return route.fulfill({ json: {
@@ -32,7 +32,7 @@ async function configure(context) {
       const installation = JSON.parse(request.headers()['x-playback-device']); sourceDevices.push(installation);
       if (failFirst) { return route.fulfill({ status: 502, json: { error: { code: 'EMPTY_RESPONSE', message: 'empty fixture' } } }); }
       if (!releaseSource) await new Promise(resolve => { releaseSource = resolve; });
-      return route.fulfill({ json: { variants: [{ url: 'https://cdn.fqnovelvod.com/device-test.mp4', source: 'app', codec: 'h264', quality: '720p' }] } });
+      return route.fulfill({ json: { variants: [{ url: 'https://cdn.fqnovelvod.com/device-test' + (limitedAt ? '-fresh' : '') + '.mp4', source: 'app', codec: 'h264', quality: '720p' }] } });
     }
     if (url.pathname === '/api/media') return media(route);
     throw new Error('Unexpected fixture path: ' + url.pathname);
@@ -78,10 +78,9 @@ try {
   releaseSource();
   await page.waitForFunction(() => /探測 CDN.*CDN #1.*第 1\/20 次/.test(document.querySelector('#player-status').textContent));
   releaseCdn();
-  await page.waitForFunction(() => /HTTP 429.*秒後重試此步驟/.test(document.querySelector('#player-status').textContent));
   await ready(page);
-  assert(retriedAt - limitedAt >= 900, 'Honor Retry-After before retrying CDN');
-  assert.equal(sourceDevices.length, 2, 'A CDN 429 must not repeat the successful source API query');
+  assert(retriedAt >= limitedAt);
+  assert.equal(sourceDevices.length, 3, 'A CDN 429 immediately refreshes the exhausted source list');
   assert.equal(devices.length, 1); assert.equal(sourceDevices[0].device_id, sourceDevices[1].device_id);
   await open(page); await ready(page);
   assert.equal(devices.length, 1, 'Reload reuses localStorage identity');

@@ -2,10 +2,9 @@ import { retryAfterMs } from './retry-after.js';
 // SPDX-License-Identifier: GPL-3.0-only
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
-import { createCencRangeRecovery } from './cenc-range-recovery.js';
 import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
-import { mediaProxyUrl, errorWith } from './logic.js';
-import { createMediaTransport } from './media-transport.js';
+import { errorWith } from './logic.js';
+import { createMediaDownload } from './media-download.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
   movieDurationSeconds } from './mp4-track-formats.js';
@@ -385,7 +384,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
-  fetchImpl = fetch, onStage = () => {}, retrySameSource = false, preload = false, remainingMediaAttempts = 20,
+  fetchImpl = fetch, download = null, onStage = () => {}, preload = false, remainingMediaAttempts = 20,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -404,22 +403,17 @@ export async function openClearKeyStream({
   if (!mime || !source?.contentKey ||
       (codec !== 'hevc' && !video.canPlayType(mime))) return null;
   aborted(signal);
-  const proxyUrl = mediaProxyUrl(source.url, source.source === 'app' ? 'app' : 'web', workerOrigin, source.userAgent);
-  const transport = createMediaTransport({ directUrl: source.url, proxyUrl, fetchImpl,
+  const input = download || createMediaDownload({ fetchImpl, getWorkerOrigin: () => workerOrigin });
+  const { transport, url } = input.open(source,
+    (reason, fields) => onStage('media.transport.fallback', { reason, ...fields }), {
     direct: typeof window !== 'undefined' &&
-      !['localhost', '127.0.0.1'].includes(location.hostname),
-    onFallback: (reason, fields) => onStage('media.transport.fallback', { reason, ...fields }) });
-  const url = transport.mode === 'direct' ? source.url : proxyUrl;
+      !['localhost', '127.0.0.1'].includes(location.hostname) });
   const metadata = {};
   onStage('metadata');
   let kid;
   try {
-    const recovery = retrySameSource ? createCencRangeRecovery({
-      maxRetries: 1, retryInitial: true,
-      onRetry: fields => onStage('range.retry', fields)
-    }) : null;
     kid = await probeCencKid(url, signal, transport.fetch, metadata,
-      (stage, fields) => onStage(stage, fields), undefined, recovery);
+      (stage, fields) => onStage(stage, fields));
   }
   catch (error) {
     // A rejected/broken HTTP Range is a source/network failure, not a
@@ -447,11 +441,11 @@ export async function openClearKeyStream({
     try {
       onStage('remux-check');
       const remux = await openCencProgressiveStream({
-        video, url: transport.mode === 'direct' ? source.url : proxyUrl,
-        proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
+        video, input: input.input(source, transport),
+        fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
-        key: source.contentKey, signal, retrySameSource, preload, remainingMediaAttempts,
+        key: source.contentKey, signal, preload, remainingMediaAttempts,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(startSeconds,
           metadata.movieDurationSeconds || source.duration || null) ?? 0

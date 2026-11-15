@@ -4,6 +4,21 @@ import { createCachedMediaReader } from '../src/cached-media-reader.js';
 import { createCencRangeRecovery } from '../src/cenc-range-recovery.js';
 const data = Uint8Array.from({ length: 512 * 1024 }, (_, i) => i % 251);
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('a failed source is unavailable to every consumer without reopening it for a late waiter', async () => {
+  let calls = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const reader = createCachedMediaReader({ url: 'fixture', fileSize: data.length,
+    fetchImpl: async () => { calls++; await gate; return new Response('', { status: 520 }); } });
+  try {
+    reader.prefetch(true);
+    while (!calls) await tick();
+    const pending = assert.rejects(reader.read(0, 100), { code: 'CENC_RANGE_HTTP', status: 520 });
+    release(); await pending;
+    await assert.rejects(reader.read(0, 100), { code: 'CENC_RANGE_HTTP' });
+    assert.equal(calls, 1);
+  } finally { release(); reader.close(); }
+});
 function fixture(options = {}) {
   const starts = [];
   const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
@@ -143,7 +158,7 @@ test('a demanded seek interrupts stalled speculative headers without losing cach
   } finally { clearTimeout(deadline); reader.close(); }
 });
 
-test('speculative timeout does not spend the recovery budget needed by a demanded read', async () => {
+test('a source timeout fails subsequent missing-byte reads without spending retry budget', async () => {
   let calls = 0, stopped = false;
   const recovery = createCencRangeRecovery({ maxRetries: 1, wait: async () => {} });
   const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length,
@@ -166,8 +181,10 @@ test('speculative timeout does not spend the recovery budget needed by a demande
     for (let i = 0; i < 100 && !stopped; i++) await tick();
     assert(stopped);
     assert.equal(recovery.totalRetries, 0);
-    assert.deepEqual(await reader.read(32768, 100), data.slice(32768, 32868));
-    assert.equal(recovery.totalRetries, 1);
+    await assert.rejects(reader.read(32768, 100), { code: 'CENC_RANGE_TIMEOUT' });
+    assert.equal(recovery.totalRetries, 0);
+    assert.equal(calls, 1);
+    assert.deepEqual(await reader.read(0, 100), data.slice(0, 100), 'Existing cached bytes remain readable');
   } finally { reader.close(); }
 });
 
@@ -180,7 +197,7 @@ test('a fast persistent body can reach a later requested offset without another 
   } finally { reader.close(); }
 });
 
-test('a demanded read arriving during speculative HTTP failure uses its own recovery budget', async () => {
+test('a late missing-byte request sees the same failed source without a second HTTP attempt', async () => {
   let calls = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
   const recovery = createCencRangeRecovery({ maxRetries: 1, retryInitial: true, wait: async () => {} });
@@ -197,11 +214,11 @@ test('a demanded read arriving during speculative HTTP failure uses its own reco
   try {
     reader.prefetch(true);
     for (let i = 0; i < 100 && !calls; i++) await tick();
-    const pending = reader.read(0, 100);
+    const pending = assert.rejects(reader.read(0, 100), { code: 'CENC_RANGE_HTTP', status: 520 });
     release();
-    assert.deepEqual(await pending, data.slice(0, 100));
-    assert.equal(calls, 3);
-    assert.equal(recovery.totalRetries, 1, 'Only the required read spends a retry');
+    await pending;
+    assert.equal(calls, 1);
+    assert.equal(recovery.totalRetries, 0);
   } finally { release(); reader.close(); }
 });
 

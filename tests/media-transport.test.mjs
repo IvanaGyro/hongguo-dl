@@ -8,6 +8,16 @@ const range = () => new Response(new Uint8Array(16), {
   status: 206, headers: { 'Content-Range': 'bytes 0-15/100', 'Content-Length': '16' }
 });
 const response = (status, headers = {}, body = '') => new Response(body, { status, headers });
+
+test('playback never retries an explicit failed CDN through its proxy', async () => {
+  for (const status of [403, 429, 502, 520]) {
+    const seen = [];
+    const transport = createMediaTransport({ directUrl: direct, proxyUrl: proxy, retryRejectedDirect: false,
+      fetchImpl: async url => { seen.push(url); return response(status); } });
+    assert.equal((await transport.fetch(direct, { headers: { Range: 'bytes=0-15' } })).status, status);
+    assert.deepEqual(seen, [direct]);
+  }
+});
 test('allowlisted CDN and proxy, not lookalike or non-TLS CDN hosts', () => {
   assert.equal(isApprovedDirectMediaUrl(direct), true);
   assert.equal(isApprovedDirectMediaUrl('https://qznovelvod.com.evil.example/a'), false);

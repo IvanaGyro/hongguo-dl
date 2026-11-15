@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/ffmpeg.js'
       - 'src/main.js'
+      - 'src/download-source-session.js'
+      - 'src/media-download.js'
+      - 'src/media-session.js'
       - 'src/source-device-recovery.js'
       - 'src/playback-device.js'
       - 'tests/source-device-recovery.browser.mjs'

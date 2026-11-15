@@ -19,7 +19,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     bytesPerSecond = sampleBytes * 1000 / Math.max(1, activeMs);
     // Measure only awaited body I/O, never time paused at MSE/decoder ACKs.
     if (activeMs < Math.min(8000, timeoutMs)) return;
-    const slow = requiredRate > 0 && bytesPerSecond < requiredRate * 0.75 &&
+    const slow = requiredRate > 0 && bytesPerSecond < requiredRate &&
       (!externalCache || externalCache.firstMissing(0, fileSize) !== null);
     const fields = { bytesPerSecond, requiredBytesPerSecond: requiredRate, activeMs };
     sampleBytes = 0; activeMs = 0;

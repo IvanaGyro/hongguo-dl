@@ -3,23 +3,33 @@ import { retryAfterMs } from './retry-after.js';
 // cached-media-reader.js, which owns its own range cache and network lookahead.
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
+import { downloadSource } from './download-source-session.js';
 
 export function createMediaDownload({ fetchBytes, getWorkerOrigin, fetchImpl = (...args) => fetch(...args) }) {
   const profileFor = source => source.source === 'app' ? 'app' : 'web';
-  function open(source, onFallback) {
+  function open(handle, onFallback, options = {}) {
+    const source = downloadSource(handle);
     const profile = profileFor(source);
     const proxyUrl = mediaProxyUrl(source.url, profile, getWorkerOrigin(), source.userAgent);
     const transport = createMediaTransportForSource(source.url, profile, getWorkerOrigin(),
-      fetchImpl, onFallback, source.userAgent);
+      fetchImpl, onFallback, source.userAgent, { retryRejectedDirect: false, ...options });
     return { proxyUrl, transport, url: transport.mode === 'direct' ? source.url : proxyUrl };
   }
   return {
     open,
-    read(source, signal, maxBytes, onChunk, url = source.url) {
-      return fetchBytes(url, profileFor(source), signal, maxBytes, onChunk, source.userAgent);
+    input(handle, transport) {
+      const source = downloadSource(handle);
+      const proxyUrl = mediaProxyUrl(source.url, profileFor(source), getWorkerOrigin(), source.userAgent);
+      return { url: transport.mode === 'direct' ? source.url : proxyUrl, proxyUrl };
     },
-    async nativeSource(source, signal, onFallback, onStage = () => {}) {
-      const { proxyUrl, transport } = open(source, onFallback);
+    playlistUrl(handle) { return downloadSource(handle).url; },
+    read(handle, signal, maxBytes, onChunk, url) {
+      const source = downloadSource(handle);
+      return fetchBytes(url || source.url, profileFor(source), signal, maxBytes, onChunk, source.userAgent);
+    },
+    async nativeSource(handle, signal, onFallback, onStage = () => {}) {
+      const source = downloadSource(handle);
+      const { proxyUrl, transport } = open(handle, onFallback);
       if (!isApprovedDirectMediaUrl(source.url)) return { url: proxyUrl };
       onStage('cdn.probe', { offset: 0, bytes: 16 });
       const probe = await transport.fetch(source.url, {

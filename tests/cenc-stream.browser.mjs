@@ -134,6 +134,7 @@ const KEY = '00112233445566778899aabbccddeeff';
 const cdnRetry = process.env.CENC_TEST_CDN_RETRY === '1';
 const rangeRetry = process.env.CENC_TEST_RANGE_RETRY === '1';
 let transientFailures = 0, transientRange = '', recoveredRangeRequests = 0;
+let sourceQueries = 0, failedSourceUrl = '', failedSourceRepeats = 0;
 let deniedCdnRequests = 0, alternateCdnRequests = 0;
 assert(input.byteLength > 600000, 'Fixture must exceed Worker Range prefetch window');
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
@@ -265,18 +266,20 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
     body: JSON.stringify({ kind: 'series', seriesId: '123456789', title: 'CENC streaming fixture',
       total: 1, accessible: 1, episodes: [{ index: 1, vid: '111111111', available: true }] })
   });
-  if (u.pathname === '/api/source') return route.fulfill({
+  if (u.pathname === '/api/source') { sourceQueries++; return route.fulfill({
     contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' },
     body: JSON.stringify({ variants: (cdnRetry
       ? ['https://denied.fqnovelvod.com/cenc-progressive.mp4',
         'https://alternate.fqnovelvod.com/cenc-progressive.mp4']
-      : ['https://cdn.fqnovelvod.com/cenc-progressive.mp4']).map(url => ({
+      : [rangeRetry && sourceQueries > 1 ? 'https://fresh.fqnovelvod.com/cenc-progressive.mp4'
+        : 'https://cdn.fqnovelvod.com/cenc-progressive.mp4']).map(url => ({
         codec: 'h264', quality: '720p', source: 'app', url,
         contentKey: KEY, width: 480, height: 270
       })) })
-  });
+  }); }
   if (u.pathname !== '/api/media') throw new Error('Unexpected API endpoint');
+  if (failedSourceUrl && u.searchParams.get('url') === failedSourceUrl) failedSourceRepeats++;
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
   if (!range) {
     mediaRequests.push({ unbounded: true, method: route.request().method(),
@@ -304,6 +307,7 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
   if (rangeRetry && transientFailures === 0 && first >= 512 * 1024 &&
       await page.evaluate(() => Boolean(window.__cencFrame))) {
     transientFailures++;
+    failedSourceUrl = u.searchParams.get('url');
     transientRange = route.request().headers().range;
     return route.fulfill({ status: 520, body: 'synthetic transient CDN failure' });
   }
@@ -429,9 +433,7 @@ try {
         throw error;
       });
     if (rangeRetry) {
-      // A 520 during speculative download stops that pump without spending
-      // the decoder's retry budget. A later required read reconnects at the
-      // same offset; a failure during a required read emits media-range-retry.
+      // A failed CDN is abandoned even during background downloading.
       await page.waitForFunction(() => /phase=media-range(?:-retry)?\b.*status=520/.test(
         document.querySelector('#playback-log')?.value || ''), null, { timeout: 20000 }).catch(async error => {
         console.error('HTTP 520 recovery diagnostics', { transientFailures, recoveredRangeRequests, mediaRequests });
@@ -440,12 +442,11 @@ try {
       });
       const log = await page.locator('#playback-log').inputValue();
       assert.equal(transientFailures, 1);
-      assert(recoveredRangeRequests >= 1, 'Retry must request the identical failed Range');
-      assert.equal((log.match(/mse.init-appended/g) || []).length, 1,
-        'Transient Range failure must keep the same MSE stream');
-      assert.equal((log.match(/playback.attempt attempt=/g) || []).length, 1,
-        'Transient Range failure must not restart source selection/playback');
-      console.log('PASS ' + browserName + ' single-CDN HTTP 520 retries the same Range without restarting MSE');
+      assert.equal(failedSourceRepeats, 0, 'Never reconnect to a failed CDN');
+      assert.equal(sourceQueries, 2, 'Refresh immediately after the single candidate fails');
+      assert.match(log, /source.list.refreshed/);
+      assert(!/phase=media-range-retry|playback.retry.scheduled/.test(log), 'CDN failure must not enter same-source backoff');
+      console.log('PASS ' + browserName + ' HTTP 520 abandons the CDN and immediately refreshes to a fresh candidate');
     }
     const playback = await page.evaluate(() => {
       const video = document.querySelector('#player-video');

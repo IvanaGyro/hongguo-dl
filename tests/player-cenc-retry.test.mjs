@@ -114,12 +114,12 @@ test('API failures do not skip CDN candidates or revive failed URLs after an uns
     return new Response('', { status: media === source('c').url ? 416 : 520 });
   });
   assert.equal(calls, 4);
-  assert.deepEqual(requested, ['a', 'b', 'b', 'c'].map(name => source(name).url));
+  assert.deepEqual(requested, ['a', 'b', 'c'].map(name => source(name).url));
   assert.equal(logs.filter(row => row.event === 'source.list.refreshed').length, 1);
   assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RANGE_HTTP'));
 });
 
-test('single-source metadata recovers transient 520 without another source API call', async () => {
+test('single-source metadata failure immediately refreshes without retrying the failed CDN', async () => {
   let sourceCalls = 0;
   const requested = [];
   const { logs } = await runScenario(async () => {
@@ -129,11 +129,11 @@ test('single-source metadata recovers transient 520 without another source API c
     requested.push({ url, range: options.headers.Range });
     return new Response('', { status: requested.length === 1 ? 520 : 416 });
   });
-  assert.equal(sourceCalls, 1);
-  assert.equal(requested.length, 2);
-  assert.deepEqual(requested[0], requested[1], 'Retry only the failed bounded Range');
-  assert(logs.some(row => row.event === 'cenc.stage' && row.phase === 'range.retry' && row.status === 520));
-  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RANGE_INVALID'));
+  assert.equal(sourceCalls, 2);
+  assert.equal(requested.length, 1);
+  assert(!logs.some(row => row.event === 'cenc.stage' && row.phase === 'range.retry'));
+  assert(!logs.some(row => row.event === 'playback.retry.scheduled'));
+  assert(logs.some(row => row.event === 'source.list.stale'));
 });
 
 
@@ -194,14 +194,14 @@ test('source API 502 and media CDN failures retain separate diagnoses', async ()
   assert.match(playbackErrorSummary({ code: 'HTTP_403', stage: 'source-api', status: 403 }), /片源 API/);
 });
 
-test('CDN 429 waits and retries the same candidate instead of stopping playback', async () => {
+test('CDN 429 refreshes an exhausted list without retrying the same candidate', async () => {
   let sourceCalls = 0, mediaCalls = 0;
   const { logs } = await runScenario(async () => { sourceCalls++; return { variants: [source('limited')] }; }, async () => {
     mediaCalls++;
     return new Response('', { status: mediaCalls === 1 ? 429 : 416, headers: { 'Retry-After': '0' } });
   });
-  assert.equal(sourceCalls, 1); assert.equal(mediaCalls, 2);
-  assert(logs.some(row => row.event === 'playback.retry.scheduled' && row.code === 'CENC_RATE_LIMITED' && row.delayMs === 0));
+  assert.equal(sourceCalls, 2); assert.equal(mediaCalls, 1);
+  assert(!logs.some(row => row.event === 'playback.retry.scheduled'));
 });
 
 test('fresh same-quality CDN URLs may recover after more than one model refresh', async () => {

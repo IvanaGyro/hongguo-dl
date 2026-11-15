@@ -98,8 +98,8 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
  * before MSE opens; Worker output waits for sourceopen/SourceBuffer ACKs.
  */
 export async function openCencProgressiveStream({
-  video, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', retrySameSource = false, preload = false, remainingMediaAttempts = 20
+  video, input = null, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
+  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
 }) {
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
@@ -340,7 +340,7 @@ export async function openCencProgressiveStream({
     });
   };
   try {
-    processor.post({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource, maxMediaRetries: Math.max(0, Math.min(2, remainingMediaAttempts - 1)),
+    processor.post({ type: 'start', input: input || { url, proxyUrl }, fileSize, key, startSeconds,
       initialRanges, durationSeconds, bridge, deferProcessing: preload });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
@@ -362,8 +362,8 @@ export async function openCencProgressiveStream({
     }
     await close();
     const replacement = await openCencProgressiveStream({
-      video, url, proxyUrl, fileSize, codec, hasAac, key, signal, onStage,
-      startSeconds: seconds, durationSeconds, videoCodecString, bridge, retrySameSource, remainingMediaAttempts
+      video, input, url, proxyUrl, fileSize, codec, hasAac, key, signal, onStage,
+      startSeconds: seconds, durationSeconds, videoCodecString, bridge, remainingMediaAttempts
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;

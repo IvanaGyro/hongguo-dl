@@ -4,7 +4,6 @@
 import { createFmp4Assembler } from './fmp4-assembler.js';
 import { createCachedMediaReader } from './cached-media-reader.js';
 import { createMediaTransport, isAcceptedMediaTransportUrl } from './media-transport.js';
-import { createCencRangeRecovery } from './cenc-range-recovery.js';
 import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
 import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
 import { normalizeBvc2Config } from './bvc2-config.js';
@@ -27,7 +26,8 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, generation, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, maxMediaRetries = 2, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
+async function run({ input = null, url, proxyUrl = null, key, fileSize, startSeconds = 0, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
+  ({ url, proxyUrl = null } = input || { url, proxyUrl });
   if (started) throw new Error('Streaming worker already started');
   started = true;
   completed = false; releasing = false; generation = 0;
@@ -45,29 +45,33 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       (proxyUrl && !isAcceptedMediaTransportUrl(proxyUrl, self.location.origin)))
     throw new Error('Invalid media transport endpoint');
   const transport = createMediaTransport({
+    retryRejectedDirect: false,
     directUrl: mediaUrl.href, proxyUrl: proxyUrl || mediaUrl.href,
     onFallback: (reason, fields) => self.postMessage({
       type: 'stage', stage: 'media.transport.fallback', reason, ...fields
     })
   });
   controller = new AbortController();
-  let rangeRequests = 0, receivedBytes = 0;
+  let rangeRequests = 0, receivedBytes = 0, sourceFailed = false;
+  const reportSourceFailure = fields => {
+    if (sourceFailed) return;
+    sourceFailed = true;
+    self.postMessage({ type: 'error', code: fields.code, status: fields.status });
+  };
   lastRangeError = null;
-  const rangeRecovery = createCencRangeRecovery({
-    retryInitial: retrySameSource, maxRetries: retrySameSource ? Math.max(0, Math.min(2, maxMediaRetries)) : 0,
-    onRetry: event => self.postMessage({
-      type: 'stage', stage: 'media-range-retry', code: event.code, status: event.status,
-      attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining
-    })
-  });
   if (bridge === 'bvc2') {
     initialRanges = initialRanges.map(range => ({ ...range, data: normalizeBvc2Config(range.data, { inPlace: true }).bytes }));
     self.postMessage({ type: 'stage', stage: 'bvc2.config', indexNormalized: true });
   }
   stream = createCachedMediaReader({ fetchImpl: transport.fetch,
     initialRanges, durationSeconds, budget: cacheBudget,
-    onStage: (stage, fields) => self.postMessage({ type: 'stage', stage, ...fields }),
-    url: mediaUrl.href, fileSize, signal: controller.signal, recovery: rangeRecovery,
+    onStage: (stage, fields) => {
+      self.postMessage({ type: 'stage', stage, ...fields });
+      // A failed background pump invalidates this candidate immediately,
+      // even while the decoder still has buffered media to play.
+      if (stage === 'media.prefetch.stopped') reportSourceFailure(fields);
+    },
+    url: mediaUrl.href, fileSize, signal: controller.signal,
     onResponse: fields => self.postMessage({ type: 'stage', stage: 'media-range', ...fields })
   });
   const readRange = async (start, wanted) => {
@@ -92,7 +96,11 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       self.postMessage({ type: 'stage', stage: 'media-range-failed',
         request: stream.networkStats.requests, offset: start, bytes: wanted,
         ...lastRangeError, fetchMs: Math.round(performance.now() - fetchStarted) });
-      throw error;
+      reportSourceFailure(lastRangeError);
+      // Keep Asyncify suspended until the owner discards this failed worker.
+      // Returning EIO here resumes a partial encrypted sample and can produce
+      // misleading corruption diagnostics before the CDN switch is handled.
+      return await new Promise(() => {});
     }
   };
   if (deferProcessing) {

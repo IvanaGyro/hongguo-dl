@@ -25,12 +25,11 @@ test('auto quality can rotate only among first top-quality HEVC CDN variants', (
     'Never silently retry encrypted ByteVC2 at lower quality');
 });
 
-test('429, decoding failures, wrong episode and user-selected ByteVC2 never rotate', () => {
+test('decoding failures, wrong episode and user-selected ByteVC2 never rotate', () => {
   const base = { code: 'CENC_SOURCE_FORBIDDEN', variants,
     variantsVid: '101', episodeVid: '101', tried: 1,
     quality: '1080p', codec: 'hevc' };
-  for (const code of ['MEDIA_RATE_LIMITED', 'CENC_RATE_LIMITED',
-    'PLAYBACK_ERROR', 'CENC_RANGE_INVALID', 'HEVC_INIT_UNSUPPORTED'])
+  for (const code of ['PLAYBACK_ERROR', 'CENC_RANGE_INVALID', 'HEVC_INIT_UNSUPPORTED'])
     assert.equal(canTryNextCencSource({ ...base, code }), false);
   assert.equal(canTryNextCencSource({ ...base, episodeVid: '102' }), false);
   assert.equal(canTryNextCencSource({ ...base, quality: '720p', codec: 'bytevc2' }), false);
@@ -46,11 +45,11 @@ test('duplicate CDN URLs and single candidate do not cause redundant 403 retries
     variants: [hevc('https://cdn-a.example/1'), hevc('https://cdn-a.example/1')] }), false);
 });
 
-test('old Worker MEDIA_SOURCE_FORBIDDEN can rotate HEVC; not generic MEDIA_HTTP', () => {
+test('HTTP refusal and native HTTP errors rotate HEVC candidates', () => {
   const base = { variants, variantsVid: '101', episodeVid: '101',
     tried: 1, quality: '1080p', codec: 'hevc' };
   assert.equal(canTryNextCencSource({ ...base, code: 'MEDIA_SOURCE_FORBIDDEN' }), true);
-  assert.equal(canTryNextCencSource({ ...base, code: 'MEDIA_HTTP' }), false);
+  assert.equal(canTryNextCencSource({ ...base, code: 'MEDIA_HTTP' }), true);
 });
 
 
@@ -70,12 +69,11 @@ test('timeouts and 520 network errors rotate by actual tried URLs, ignoring API 
   const base = { variants, variantsVid:'101', episodeVid:'101', quality:'1080p', codec:'hevc',
     tier: { quality:'1080p', codec:'hevc' }, tried: 7,
     triedUrls: new Set(['https://cdn-a.example/1']) };
-  for (const code of ['CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW']) {
+  for (const code of ['CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED']) {
     assert.equal(canTryNextCencSource({ ...base, code }), true);
     assert.equal(canTryNextCencSource({ ...base, code,
       triedUrls: new Set(['https://cdn-a.example/1','https://cdn-b.example/1']) }), false);
   }
-  assert.equal(canTryNextCencSource({ ...base, code:'CENC_RATE_LIMITED' }), false);
 });
 
 test('ByteVC2 HTTP refusal rotates distinct same-quality sources without changing codec', () => {

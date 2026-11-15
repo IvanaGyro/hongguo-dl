@@ -12,6 +12,12 @@ on:
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
       - 'src/player.js'
+      - 'src/media-session.js'
+      - 'src/download-source-session.js'
+      - 'src/media-download.js'
+      - 'src/cenc-source-fallback.js'
+      - 'src/media-transport.js'
+      - 'tests/prefetch-recovery.browser.mjs'
       - 'src/codec-diagnostics.js'
       - 'src/main.js'
       - 'src/cenc-seek.js'
@@ -148,6 +154,7 @@ jobs:
           if [ "$CENC_SUITE" = "fast" ]; then
           CENC_BROWSER=chromium CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          TEST_APP_URL=http://127.0.0.1:4173/hongguo-dl/ node tests/prefetch-recovery.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium PRELOAD_HANDOFF=manual node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4

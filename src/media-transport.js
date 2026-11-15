@@ -28,7 +28,7 @@ export function isAcceptedMediaTransportUrl(value, baseOrigin = '') {
   } catch { return false; }
 }
 export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
-  onFallback = () => {}, direct = true,
+  onFallback = () => {}, direct = true, retryRejectedDirect = true,
   sessionFailureCache = typeof window !== 'undefined' ? sessionProxyPreferredHosts : null
 } = {}) {
   if (!proxyUrl) throw new TypeError('Missing media proxy endpoint');
@@ -59,6 +59,8 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
       return fallback;
     }
     const range = options.headers?.Range || options.headers?.range;
+    // An explicit failed CDN is rotated. CORS failures may still use a proxy.
+    if (!retryRejectedDirect && response.status >= 400) return response;
     const validRange = !range || /^bytes \d+-\d+\/\d+$/.test(
       response.headers.get('content-range') || '');
     if (response.status === 429) return response;
@@ -77,7 +79,7 @@ export function createMediaTransport({ directUrl, proxyUrl, fetchImpl = fetch,
   return { fetch: fetchMedia, get mode() { return useDirect ? 'direct' : 'proxy'; } };
 }
 export function createMediaTransportForSource(url, profile, workerOrigin,
-  fetchImpl = fetch, onFallback = () => {}, userAgent = '') {
+  fetchImpl = fetch, onFallback = () => {}, userAgent = '', options = {}) {
   return createMediaTransport({ directUrl: url,
-    proxyUrl: mediaProxyUrl(url, profile, workerOrigin, userAgent), fetchImpl, onFallback });
+    proxyUrl: mediaProxyUrl(url, profile, workerOrigin, userAgent), fetchImpl, onFallback, ...options });
 }

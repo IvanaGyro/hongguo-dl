@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/player.js'
       - 'src/main.js'
+      - 'src/download-source-session.js'
+      - 'src/media-download.js'
+      - 'src/media-session.js'
       - 'src/source-options.js'
       - 'src/cenc-source-fallback.js'
       - 'src/bvc2*.js'

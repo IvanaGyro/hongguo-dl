@@ -451,12 +451,11 @@ export function createPlayer({
         // source at the same resolution still returns usable media.
         // Limit retries to distinct candidates at the SAME quality and codec;
         // never broaden to ByteVC2, lower quality, or unlimited 403 retries.
-        if ((parsed.stepAttempt || 0) < 20 && media.canRetrySource(parsed.code, episode)) {
+        if ((parsed.stepAttempt || 0) < 20 && media.canResumeDownload(parsed.code)) {
           log('playback.cdn.rotate', { attempt: media.attempt, elapsedMs: ageMs() });
           setStatus('目前媒體來源無法使用，嘗試同畫質／編碼其他候選來源…');
           continue;
         }
-        if (['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED'].includes(parsed.code)) media.retryAfterRateLimit();
         errors = recordFailure(errors, parsed, 20, 20, { retryForbidden: true, retryRateLimited: true });
         failure = errors;
         setStatus(playbackFailureMessage(errors, parsed, 20));
@@ -696,7 +695,13 @@ export function createPlayer({
     log('media.error.cause', {
       code: parsed.code, status: transport?.status || 0, elapsedMs: ageMs()
     });
-    if (['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED'].includes(parsed.code)) media.retryAfterRateLimit();
+    if ((parsed.stepAttempt || 0) < 20 && media.canResumeDownload(parsed.code)) {
+      log('playback.cdn.rotate', { attempt: media.attempt, elapsedMs: ageMs() });
+      loading = true;
+      setStatus('下載來源無法使用，正在切換 CDN／重新取得片源…');
+      void run(current, currentToken, signal, true);
+      return;
+    }
     failure = recordFailure(failure, parsed, 20, 20, { retryForbidden: true, retryRateLimited: true });
     log('media.error.recovery', {
       code: parsed.code, retries: failure.attempts, enabled: failure.retry

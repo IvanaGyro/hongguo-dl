@@ -12,5 +12,5 @@ export function bvc2PlaybackMode(search = '') {
 
 export function blockHevcFullFileFallback(source) {
   return codecId(source?.codec) === 'hevc' &&
-    Boolean(source?.contentKey) && !isHlsUrl(source?.url || '');
+    Boolean(source?.contentKey) && !(source?.hls ?? isHlsUrl(source?.url || ''));
 }

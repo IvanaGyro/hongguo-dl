@@ -94,16 +94,16 @@ export function createCachedMediaReader({ fileSize, budget,
         } catch (error) {
           if (closed) break;
           if (current.controller.signal.aborted) continue; // Position change/cancel.
-          if (error?.code === 'CENC_SOURCE_SLOW') failure = error;
+          // Every consumer sees the same failed source. Only the caller that
+          // owns the candidate list can choose another CDN or refresh it.
+          failure = error;
           if (!read) {
             speculationFailed = true;
             onStage('media.prefetch.stopped', { code:
-              /^CENC_[A-Z_]+$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP' });
+              /^CENC_[A-Z_]+$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP', status: error.status || 0 });
           }
-          // A waiter arriving during speculation gets its own required read
-          // and recovery budget, rather than inheriting the background error.
-          if (read || failure) settle(error);
-          if (failure) break;
+          settle(error);
+          break;
         } finally { clearTimeout(deadline); if (packet === current) packet = null; }
         if (!read) await new Promise(resolve => setTimeout(resolve, 0));
       }
