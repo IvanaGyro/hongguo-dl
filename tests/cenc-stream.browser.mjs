@@ -421,10 +421,23 @@ try {
     }
     await page.waitForFunction(() =>
       document.querySelector('#player-video')?.currentTime > 1.5,
-      null, { timeout: 20000 });
+      null, { timeout: 20000 }).catch(async error => {
+        console.error('Playback progress diagnostics', await page.locator('#player-video').evaluate(v => ({
+          time: v.currentTime, paused: v.paused, ready: v.readyState, error: v.error?.message
+        })));
+        console.error(await page.locator('#playback-log').inputValue());
+        throw error;
+      });
     if (rangeRetry) {
-      await page.waitForFunction(() => /phase=media-range-retry.*status=520/.test(
-        document.querySelector('#playback-log')?.value || ''), null, { timeout: 20000 });
+      // A 520 during speculative download stops that pump without spending
+      // the decoder's retry budget. A later required read reconnects at the
+      // same offset; a failure during a required read emits media-range-retry.
+      await page.waitForFunction(() => /phase=media-range(?:-retry)?\b.*status=520/.test(
+        document.querySelector('#playback-log')?.value || ''), null, { timeout: 20000 }).catch(async error => {
+        console.error('HTTP 520 recovery diagnostics', { transientFailures, recoveredRangeRequests, mediaRequests });
+        console.error(await page.locator('#playback-log').inputValue());
+        throw error;
+      });
       const log = await page.locator('#playback-log').inputValue();
       assert.equal(transientFailures, 1);
       assert(recoveredRangeRequests >= 1, 'Retry must request the identical failed Range');

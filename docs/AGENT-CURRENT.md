@@ -61,3 +61,5 @@
 - 一般改動直接提交 `main`（若使用者特別指定 PR，依當次要求）；變動先跑對應單元、建置與 GitHub Actions，再更新**本文件**。避免同時編輯 ByteVC2 agent 負責的程式。
 - 真實 HEVC：[WebKit 端到端](../.github/workflows/live-hevc-webkit.yml)、[有界 WASM／FFmpeg 驗證](../.github/workflows/live-cenc-wasm-proof.yml)；合成回歸：[CENC Browser CI](../.github/workflows/cenc-browser.yml)。使用者可追蹤 [Issue #8](https://github.com/IvanaGyro/hongguo-dl/issues/8)。
 - **安全與判定**：測試只用有權存取的來源；不保存 signed URL、金鑰、Cookie 或影片片段；PASS、FAIL、NOT TESTED 分開陳述。過往細節由 Git history／Actions 查證，不再累積逐 commit 日誌。
+
+- **520 背景下載與必要讀取交接（2026-11-16）**：背景 HTTP 失敗到達前若已有解碼器等待，保留等待者並以必要讀取流程重連；不把背景錯誤直接傳給解碼器，也不消耗其重試額度。新增固定時序回歸測試，318 個單元通過；Chromium／Firefox 真實 CENC 520 同位置恢復、不重建 MSE 均通過。CI 斷言允許背景下載停止後恢復或必要讀取重試兩種內部路徑。

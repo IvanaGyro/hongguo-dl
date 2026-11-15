@@ -180,6 +180,31 @@ test('a fast persistent body can reach a later requested offset without another 
   } finally { reader.close(); }
 });
 
+test('a demanded read arriving during speculative HTTP failure uses its own recovery budget', async () => {
+  let calls = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const recovery = createCencRangeRecovery({ maxRetries: 1, retryInitial: true, wait: async () => {} });
+  const reader = createCachedMediaReader({ url: 'synthetic', fileSize: data.length, recovery,
+    fetchImpl: async (_, options) => {
+      const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
+      calls++;
+      if (calls === 1) { await gate; return new Response('', { status: 520 }); }
+      if (calls === 2) return new Response('', { status: 503 });
+      return new Response(data.slice(start), { status: 206,
+        headers: { 'Content-Range': `bytes ${start}-${data.length - 1}/${data.length}` } });
+    }
+  });
+  try {
+    reader.prefetch(true);
+    for (let i = 0; i < 100 && !calls; i++) await tick();
+    const pending = reader.read(0, 100);
+    release();
+    assert.deepEqual(await pending, data.slice(0, 100));
+    assert.equal(calls, 3);
+    assert.equal(recovery.totalRetries, 1, 'Only the required read spends a retry');
+  } finally { release(); reader.close(); }
+});
+
 test('one episode stalled in headers does not queue or cancel another episode download', async () => {
   let blockedCalls = 0;
   const blocked = createCachedMediaReader({ url: 'episode-a', fileSize: data.length,

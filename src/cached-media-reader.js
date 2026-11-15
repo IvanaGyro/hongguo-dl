@@ -100,9 +100,9 @@ export function createCachedMediaReader({ fileSize, budget,
             onStage('media.prefetch.stopped', { code:
               /^CENC_[A-Z_]+$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP' });
           }
-          // A waiter arriving during speculation observes the failure promptly;
-          // source recovery belongs to its normal processing-layer error path.
-          settle(error);
+          // A waiter arriving during speculation gets its own required read
+          // and recovery budget, rather than inheriting the background error.
+          if (read || failure) settle(error);
           if (failure) break;
         } finally { clearTimeout(deadline); if (packet === current) packet = null; }
         if (!read) await new Promise(resolve => setTimeout(resolve, 0));
