@@ -8,7 +8,10 @@ const browser = await (name === 'firefox' ? firefox : chromium).launch({ headles
 const context = await browser.newContext();
 const page = await context.newPage();
 // The app opens in watch mode; this suite was written against a download-mode start.
-await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+await page.addInitScript(() => {
+  window.__HONGGUO_START_MODE = 'download';
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
+});
 const errors = [], requests = [];
 page.on('pageerror', error => errors.push(error.message));
 await page.addInitScript(() => {
@@ -69,7 +72,8 @@ try {
   assert.match(log, /media.remote-seek.ready.*workerReused=true/);
   assert.match(log, /bufferedRanges=\[\[/);
   assert.match(log, /byteRanges=\[\[/);
-  assert.equal((log.match(/phase=wasm-start/g) || []).length, 1);
+  assert.equal((log.match(/cenc\.stage phase=wasm-start\b/g) || []).length, 1,
+    'Count runtime starts independently of playback.wait status notifications');
   assert.equal(errors.length, 0, errors.join('; '));
   // Close/reopen three times: episode-scoped cache/worker must still be freed.
   for (let i = 0; i < 3; i++) {
