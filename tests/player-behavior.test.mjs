@@ -1,6 +1,7 @@
 // Public player behavior: these scenarios also run against the pre-refactor player.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { rememberPlayback, watchRecords, playbackKey } from '../src/library.js';
 import { createPlayer } from '../src/player.js';
 
 class Element extends EventTarget {
@@ -30,10 +31,10 @@ const episodes = [{ vid: 'one', index: 1 }, { vid: 'two', index: 2 }];
 const source = vid => ({ url: `https://media.example/${vid}.mp4`, codec: 'h264', quality: '720p' });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-async function scenario(run, { sourceFor, cache } = {}) {
+async function scenario(run, { sourceFor, cache, values = new Map(), seriesId = 'series' } = {}) {
   const globals = ['location', 'window', 'document', 'Option', 'HTMLMediaElement', 'navigator'];
   const previous = globals.map(key => Object.getOwnPropertyDescriptor(globalThis, key));
-  const logs = [], calls = [], values = new Map();
+  const logs = [], calls = [];
   let player;
   try {
     const replacements = {
@@ -50,7 +51,7 @@ async function scenario(run, { sourceFor, cache } = {}) {
       'settingsToggle', 'settingsMenu', 'settingsClose', 'sourceInfo'].map(key => [key, new Element()]));
     const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
     player = createPlayer({ ...controls, video, qualitySelect, speedSelect, storage,
-      getSeries: () => ({ seriesId: 'series', episodes }), getWorkerOrigin: () => '',
+      getSeries: () => ({ seriesId, episodes }), getWorkerOrigin: () => '',
       cache: cache || { getEntry: () => null },
       sourceFor: async (...args) => {
         calls.push(args);
@@ -141,4 +142,93 @@ test('leaving playback cancels pending lookahead and releases the video source',
     assert.equal(player.current().vid, 'one');
   }, { sourceFor: (_series, vid) => vid === 'two'
     ? new Promise(() => {}) : { variants: [source(vid)] } });
+});
+
+test('reopening a series restores its last selected episode and position independently of other series', async () => {
+  const values = new Map();
+  await scenario(async ({ player, video, ready }) => {
+    player.open(episodes[1]); await ready(1);
+    video.currentTime = 37; video.dispatchEvent(new Event('pause'));
+  }, { values });
+  await scenario(async ({ player, video, ready }) => {
+    player.resume(); await ready(1);
+    assert.equal(player.current().vid, 'two'); assert.equal(video.currentTime, 37);
+  }, { values });
+  await scenario(async ({ player, video, ready }) => {
+    player.resume(); await ready(1);
+    assert.equal(player.current().vid, 'one'); assert.equal(video.currentTime, 0);
+  }, { values, seriesId: 'other-series' });
+});
+
+test('manual selection restores history, but actual next-episode transition replaces it with zero', async () => {
+  await scenario(async ({ player, video, ready, storage, logs, wait }) => {
+    rememberPlayback(storage, 'series', 'two', 30, 180);
+    player.open(episodes[1]); await ready(1); assert.equal(video.currentTime, 30);
+    player.open(episodes[0]); await ready(2);
+    video.currentTime = 160; video.dispatchEvent(new Event('timeupdate'));
+    await wait(() => logs.some(row => row.event === 'prefetch.prepared'));
+    video.currentTime = 180; video.dispatchEvent(new Event('ended'));
+    await ready(3);
+    assert.equal(player.current().vid, 'two'); assert.equal(video.currentTime, 0);
+    assert.equal(watchRecords(storage)[playbackKey('series', 'two')].seconds, 0);
+    video.dispatchEvent(new Event('pause'));
+    assert.equal(watchRecords(storage)[playbackKey('series', 'two')].seconds, 0, 'Old thirty-second progress must not return');
+  });
+});
+
+test('a manual selection of a preloaded episode still restores that episode saved position', async () => {
+  await scenario(async ({ player, video, ready, storage, logs, wait }) => {
+    rememberPlayback(storage, 'series', 'two', 30, 180);
+    player.open(episodes[0]); await ready(1);
+    video.currentTime = 160; video.dispatchEvent(new Event('timeupdate'));
+    await wait(() => logs.some(row => row.event === 'prefetch.prepared'));
+    player.open(episodes[1]); await ready(2);
+    assert.equal(video.currentTime, 30);
+  });
+});
+
+test('the last selected episode at zero wins over older partially watched episodes', async () => {
+  const values = new Map();
+  await scenario(async ({ player, ready, storage }) => {
+    rememberPlayback(storage, 'series', 'one', 30, 180);
+    player.open(episodes[1], false); await ready(1);
+  }, { values });
+  await scenario(async ({ player, ready, video }) => {
+    player.resume(); await ready(1);
+    assert.equal(player.current().vid, 'two'); assert.equal(video.currentTime, 0);
+  }, { values });
+});
+
+test('near-end history resumes the same episode until a real completion is recorded', async () => {
+  await scenario(async ({ player, video, ready, storage }) => {
+    rememberPlayback(storage, 'series', 'one', 175, 180);
+    player.resume(); await ready(1);
+    assert.equal(player.current().vid, 'one'); assert.equal(video.currentTime, 175);
+  });
+});
+
+test('a removed episode cursor cannot transfer its time to another episode', async () => {
+  await scenario(async ({ player, video, ready, storage }) => {
+    rememberPlayback(storage, 'series', 'removed', 30, 180);
+    player.resume(); await ready(1);
+    assert.equal(player.current().vid, 'one'); assert.equal(video.currentTime, 0);
+  });
+});
+
+test('reloading rendition while an automatic next episode loads preserves the zero-start intent', async () => {
+  let release, twoCalls = 0;
+  await scenario(async ({ player, video, ready, storage, wait }) => {
+    rememberPlayback(storage, 'series', 'two', 30, 180);
+    player.open(episodes[0]); await ready(1);
+    video.currentTime = 180; video.ended = true; video.dispatchEvent(new Event('ended'));
+    await wait(() => twoCalls === 1);
+    video.ended = false;
+    player.open(episodes[1], true, true); await ready(2);
+    assert.equal(video.currentTime, 0);
+    release({ variants: [source('two')] }); await tick();
+    assert.equal(video.currentTime, 0);
+  }, { sourceFor: async (_sid, vid) => {
+    if (vid === 'two' && ++twoCalls === 1) return new Promise(resolve => { release = resolve; });
+    return { variants: [source(vid)] };
+  } });
 });

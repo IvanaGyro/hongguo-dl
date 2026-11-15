@@ -2,6 +2,7 @@
 // playback positions, never signed media URLs, cookies, DRM keys, or video data.
 const SERIES_KEY = 'hongguo-dl-series-history-v1';
 const WATCH_KEY = 'hongguo-dl-playback-history-v1';
+const LAST_KEY = 'hongguo-dl-series-playback-v1';
 function read(storage, key, fallback) {
   try { const value = JSON.parse(storage.getItem(key) || 'null'); return value || fallback; }
   catch { return fallback; }
@@ -37,7 +38,8 @@ export function watchRecords(storage) {
 export function playbackKey(seriesId, vid) {
   return String(seriesId || 'direct') + ':' + String(vid);
 }
-export function rememberPlayback(storage, seriesId, vid, position, duration, completed = false) {
+export function rememberPlayback(storage, seriesId, vid, position, duration, completed = false,
+  { replacePosition = false } = {}) {
   if (!Number.isFinite(position) || position < 0) return;
   const history = watchRecords(storage);
   const key = playbackKey(seriesId, vid);
@@ -45,12 +47,12 @@ export function rememberPlayback(storage, seriesId, vid, position, duration, com
   const finished = completed || (duration > 0 && position / duration > 0.95);
   // A newly loaded or paused player sometimes reports time 0 during a
   // source swap. Do not erase an earlier valid position on that event.
-  const seconds = !finished && position < 0.5 && old.seconds > 1
+  const seconds = !replacePosition && !finished && position < 0.5 && old.seconds > 1
     ? old.seconds : position;
   history[key] = {
     seconds: finished ? (Number.isFinite(duration) && duration > 0 ? duration : position) : seconds,
     duration: Number.isFinite(duration) && duration > 0 ? duration : old.duration || 0,
-    completed: finished || !!old.completed,
+    completed: finished || !replacePosition && !!old.completed,
     viewedAt: Date.now()
   };
   const keys = Object.keys(history);
@@ -59,9 +61,28 @@ export function rememberPlayback(storage, seriesId, vid, position, duration, com
       delete history[k];
   }
   put(storage, WATCH_KEY, history);
+  const cursors = read(storage, LAST_KEY, {});
+  const next = cursors && typeof cursors === 'object' && !Array.isArray(cursors) ? cursors : {};
+  next[String(seriesId || 'direct')] = { vid: String(vid), seconds,
+    completed: completed === true, viewedAt: history[key].viewedAt };
+  const oldest = Object.keys(next).sort((a, b) => (next[b]?.viewedAt || 0) - (next[a]?.viewedAt || 0));
+  for (const key of oldest.slice(100)) delete next[key];
+  put(storage, LAST_KEY, next);
 }
-export function suggestedEpisode(series, records) {
+export function lastPlayback(storage, seriesId) {
+  const key = String(seriesId || 'direct');
+  const cursor = read(storage, LAST_KEY, {})?.[key];
+  if (typeof cursor?.vid === 'string' && Number.isFinite(cursor.seconds) && cursor.seconds >= 0) return cursor;
+  // Migrate existing per-episode history without persisting any media URLs.
+  const prefix = key + ':';
+  const latest = Object.entries(watchRecords(storage)).filter(([name]) => name.startsWith(prefix))
+    .sort((a, b) => (b[1]?.viewedAt || 0) - (a[1]?.viewedAt || 0))[0];
+  return latest ? { ...latest[1], vid: latest[0].slice(prefix.length) } : null;
+}
+export function suggestedEpisode(series, records, cursor = null) {
   const episodes = series?.episodes || [];
+  const latest = episodes.findIndex(ep => ep.vid === cursor?.vid);
+  if (latest >= 0) return cursor.completed ? episodes[latest + 1] || episodes[latest] : episodes[latest];
   const unfinished = episodes.filter(ep => !records[playbackKey(series.seriesId, ep.vid)]?.completed);
   const partlyViewed = unfinished
     .filter(ep => records[playbackKey(series.seriesId, ep.vid)]?.seconds > 1)

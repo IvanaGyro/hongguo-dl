@@ -376,6 +376,6 @@ export async function openCencProgressiveStream({
       processor.activate();
       setPrefetch();
     }, get mime() { return mime; },
-    durationSeconds, snapshot: () => processor.snapshot(), finished: () => finished || processor.finished() };
+    durationSeconds, startSeconds, snapshot: () => processor.snapshot(), finished: () => finished || processor.finished() };
   return streamHandle;
 }

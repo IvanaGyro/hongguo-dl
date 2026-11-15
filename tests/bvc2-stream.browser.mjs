@@ -9,7 +9,8 @@ const longInput = readFileSync(process.argv[3]);
 assert(longInput.length > 512 * 1024, 'Long media must exceed two 256 KiB Range windows');
 const whole = process.env.BVC2_TEST_WHOLE === '1';
 let input = whole ? shortInput : longInput;
-let denied = 0, firstFrameBytes = null, deliveredAtFirstFrame = null;
+const deniedPaths = [];
+let firstFrameBytes = null, deliveredAtFirstFrame = null;
 const browserName = process.env.BVC2_BROWSER || 'chromium';
 const browser = await (browserName === 'firefox' ? firefox : chromium).launch({ headless: true });
 const context = await browser.newContext();
@@ -22,12 +23,18 @@ page.on('console', message => { consoleMessages.push(message.text()); if (consol
 let deliveredBytes = 0;
 page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => {
+  // Synthetic API routes must stay on the test origin, independent of local .env.
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
   localStorage.setItem('hongguo-dl-player-preferences-v1', JSON.stringify({ quality: '720p', codec: 'hevc', autoNext: false }));
   const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
-  const live = new Set(); window.__activeMse = 0;
+  const live = new Map(); window.__activeMse = 0;
+  window.__mseInventory = () => [...live].map(([url, source]) => ({
+    attached: [...document.querySelectorAll('video')].some(video => video.src === url || video.currentSrc === url),
+    readyState: source.readyState, buffers: source.sourceBuffers.length
+  }));
   URL.createObjectURL = value => {
     const url = create(value);
-    if (value instanceof MediaSource) { live.add(url); window.__activeMse = live.size; }
+    if (value instanceof MediaSource) { live.set(url, value); window.__activeMse = live.size; }
     return url;
   };
   URL.revokeObjectURL = url => { live.delete(url); window.__activeMse = live.size; revoke(url); };
@@ -45,7 +52,7 @@ await context.route(url => url.pathname.startsWith('/api/'), async route => {
       (url.searchParams.get('vid') === '222222222' ? 'short.mp4' : 'play.mp4'), contentKey: null })) });
   assert.equal(url.pathname, '/api/media');
   if (new URL(url.searchParams.get('url')).hostname.startsWith('denied.')) {
-    denied++; return route.fulfill({ status: 403, body: 'Synthetic CDN denial' });
+    deniedPaths.push(new URL(url.searchParams.get('url')).pathname); return route.fulfill({ status: 403, body: 'Synthetic CDN denial' });
   }
   const media = new URL(url.searchParams.get('url')).pathname === '/short.mp4' ? shortInput : (whole ? shortInput : longInput);
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
@@ -79,13 +86,13 @@ try {
     return video.videoWidth === 160 && video.currentTime > 0.3 &&
       video.getVideoPlaybackQuality().totalVideoFrames > 2;
   }, null, { timeout: 90000 });
-  assert.equal(denied, 1, '403 must rotate to the other BVC2 CDN');
+  assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, '403 must rotate the visible episode to the other BVC2 CDN');
   const readyFrames = await page.locator('#player-video').evaluate(video =>
     video.getVideoPlaybackQuality().totalVideoFrames);
   await page.locator('[data-play-vid="111111111"]').click();
   await page.waitForFunction(frames => document.querySelector('#player-video')
     .getVideoPlaybackQuality().totalVideoFrames > frames + 1, readyFrames);
-  assert.equal(denied, 1, 'Selecting the healthy current episode must preserve its CDN');
+  assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, 'Selecting the healthy current episode must preserve its CDN');
   assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
   assert.match(await page.locator('#playback-log').inputValue(),
     whole ? /bvc2\.prepare\.begin mode=whole-file/ : /bvc2\.prepare\.begin mode=stream/);
@@ -111,10 +118,25 @@ try {
   }, beforeSeek.frames, { timeout: 90000 });
   assert(reads.length > 0);
   assert(reads.every(r => r.last - r.first + 1 <= 8 * 1024 * 1024));
-  assert.equal(await page.evaluate(() => window.__activeMse), 1);
+  await page.waitForFunction(() => /prefetch.prepared episode=2 media=true/.test(document.querySelector('#playback-log').value),
+    null, { timeout: 30000 });
+  const inventory = await page.evaluate(() => ({ sources: window.__mseInventory(),
+    prefetch: /prefetch.prepared episode=2 media=true/.test(document.querySelector('#playback-log').value) }));
+  console.log(browserName + ' MSE inventory after seek', JSON.stringify(inventory));
+  assert.equal(inventory.sources.filter(source => source.attached).length, 1, 'Exactly one MSE must own the visible video');
+  assert.equal(inventory.sources.length, 2, 'Visible episode plus one deliberately completed preload');
+  assert.equal(inventory.sources.find(source => source.attached).buffers, 1, 'Visible transcode owns one muxed SourceBuffer');
+  const speculative = inventory.sources.filter(source => !source.attached);
+  assert(speculative.length <= 1, 'At most one next-episode MSE is allowed');
+  if (speculative.length) {
+    assert.equal(inventory.prefetch, true, 'An extra MSE must belong to the prepared next episode');
+    assert.deepEqual(speculative, [{ attached: false, readyState: 'closed', buffers: 0 }],
+      'Preload must not attach another SourceBuffer to the visible video');
+  }
   }
   await page.locator('#mode-download').click();
   await page.waitForFunction(() => window.__activeMse === 0);
+  console.log(browserName + ' MSE inventory after leaving playback', JSON.stringify(await page.evaluate(() => window.__mseInventory())));
   // Download jobs use the short fixture to keep five codec tests bounded.
   await page.locator('[data-vid="111111111"]').uncheck();
   // Every requested output goes through the real download queue and worker.

@@ -7,7 +7,7 @@ import { createPlaybackStatus } from './playback-status.js';
 // Both progress recording and restoration are guarded against the common
 // reload race: a 0-second metadata load must never erase a saved position.
 import { errorWith, classifyError } from './logic.js';
-import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
+import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode, lastPlayback } from './library.js';
 import { recordFailure, playbackFailureMessage, playbackErrorSummary } from './retry.js';
 import { renditionOptions, parseRenditionValue, matchingRenditionValue, codecId, playableVariants } from './source-options.js';
 import { createMediaSession } from './media-session.js';
@@ -36,7 +36,7 @@ export function createPlayer({
   getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress,
   diagnostics = () => {}
 }) {
-  let current = null;
+  let current = null, currentStartSeconds = null;
   let controller = null, token = 0, activeUrl = null;
   let loading = false, readyForHistory = false, restoredTime = 0;
   let lastSaved = 0, lastUiPaint = 0, failure = null, recoveryStart = 0;
@@ -143,10 +143,11 @@ export function createPlayer({
     if (!current || !readyForHistory || !Number.isFinite(video.currentTime)) return;
     const series = getSeries();
     rememberPlayback(storage, series?.seriesId, current.vid,
-      video.currentTime, video.duration, completed);
+      video.currentTime, video.duration, completed || video.ended === true);
     onProgress?.();
   }
   function savedResumeSeconds(episode, seriesId = getSeries()?.seriesId) {
+    if (current?.vid === episode.vid && String(seriesId) === String(getSeries()?.seriesId) && currentStartSeconds !== null) return currentStartSeconds;
     const record = watchRecords(storage)[playbackKey(seriesId, episode.vid)];
     return !record?.completed && Number.isFinite(record?.seconds) &&
       record.seconds > 0.5 ? record.seconds : 0;
@@ -371,6 +372,18 @@ export function createPlayer({
     if (signal.aborted || currentToken !== token) return;
     const wanted = savedResumeSeconds(episode);
     if (wanted > 0.5) reportStartup('正在恢復觀看進度…', signal, attempt);
+    if (prepared && resolved.native?.seekTo && wanted > 0.5 &&
+        Math.abs((resolved.native.startSeconds || 0) - wanted) > 0.5) {
+      // Speculative processing starts at zero for sequential playback. A manual
+      // episode selection can reuse its worker/cache and seek to saved history.
+      const target = clampStreamSeek(wanted, resolved.native.durationSeconds || video.duration);
+      let timer;
+      try {
+        await Promise.race([resolved.native.seekTo(target), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(errorWith('PLAYBACK_TIMEOUT', '預載影片未能跳到保存的位置')), SESSION_TIMEOUT);
+        })]);
+      } finally { clearTimeout(timer); }
+    }
     await restoreTime(wanted, signal);
     await waitForCencStartup(wanted, signal, resolved.native);
     if (signal.aborted || currentToken !== token) return;
@@ -381,6 +394,9 @@ export function createPlayer({
     lastStartupSeconds = Math.max(0, (performance.now() - loadStartedAt) / 1000);
     console.info('[Hongguo playback] E' + episode.index + ' 可開始播放：' +
       Math.round(lastStartupSeconds * 1000) + 'ms' + (prepared ? '（使用預取）' : ''));
+    rememberPlayback(storage, getSeries()?.seriesId, episode.vid, video.currentTime, video.duration, false,
+      { replacePosition: true });
+    currentStartSeconds = null;
     log('playback.ready', { elapsedMs: ageMs(), resumed: wanted > 0 });
     setStatus(resolved.fallbackNotice || (wanted > 0 ? '已續播' : ''));
     onProgress?.();
@@ -456,7 +472,8 @@ export function createPlayer({
       }
     }
   }
-  function open(episode, autoPlay = true, keepSettings = false) {
+  function open(episode, autoPlay = true, keepSettings = false, { startAt = null } = {}) {
+    if (!episode) return;
     // Mode activation already opens its suggested episode. A repeated click
     // must not cancel/restart that selection, even if it became ready while
     // the pointer action was settling. Settings changes explicitly restart.
@@ -473,11 +490,12 @@ export function createPlayer({
       qualitySelect.replaceChildren(new Option('自動最佳', 'auto'));
       pendingQuality = quality;
     }
-    if (!episode) return;
+    const pendingStart = keepSettings && current?.vid === episode.vid ? currentStartSeconds : null;
     const handoff = media.takePrefetch(episode);
     savePosition();
     disposeSource();
     current = episode;
+    currentStartSeconds = Number.isFinite(startAt) && startAt >= 0 ? startAt : pendingStart;
     failure = null;
     media.begin(episode);
     log('playback.open', {
@@ -500,7 +518,7 @@ export function createPlayer({
   }
   function step(direction) {
     const list = ordered(), index = list.findIndex(ep => ep.vid === current?.vid);
-    if (list[index + direction]) open(list[index + direction]);
+    if (list[index + direction]) open(list[index + direction], true, false, direction > 0 ? { startAt: 0 } : {});
   }
   // Passive media telemetry: no source URLs, samples, keys, or media payloads.
   const mediaSnapshot = () => {
@@ -638,7 +656,7 @@ export function createPlayer({
     savePosition(true);
     const index = ordered().findIndex(ep => ep.vid === current.vid);
     const next = ordered()[index + 1];
-    if (next) open(next);
+    if (next) open(next, true, false, { startAt: 0 });
     else setStatus('播放完成');
   });
   video.addEventListener('error', () => {
@@ -803,7 +821,13 @@ export function createPlayer({
     open, current: () => current,
     resume() {
       const series = getSeries();
-      if (series) open(suggestedEpisode(series, watchRecords(storage)));
+      if (series) {
+        const saved = lastPlayback(storage, series.seriesId);
+        const cursor = series.episodes.some(episode => episode.vid === saved?.vid) ? saved : null;
+        const episode = suggestedEpisode(series, watchRecords(storage), cursor);
+        const startAt = cursor ? (cursor.completed ? 0 : cursor.seconds) : null;
+        open(episode, true, false, { startAt });
+      }
     },
     stop() {
       media.cancelPrefetch();

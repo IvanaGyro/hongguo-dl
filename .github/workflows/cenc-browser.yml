@@ -150,6 +150,11 @@ jobs:
           CENC_BROWSER=firefox CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=chromium PRELOAD_HANDOFF=manual node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox PRELOAD_HANDOFF=manual node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=160x96:rate=12 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 4 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -movflags +faststart -y /tmp/resume-short.mp4
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=160x96:rate=12 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 60 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -movflags +faststart -y /tmp/resume-long.mp4
+          node tests/playback-resume.browser.mjs /tmp/resume-short.mp4 /tmp/resume-long.mp4
           CENC_BROWSER=chromium node tests/playback-cancel.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox node tests/playback-cancel.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4

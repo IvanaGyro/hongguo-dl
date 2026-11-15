@@ -328,6 +328,7 @@ function renderRecentSeries() {
 }
 function showSeries(result, fromHistory = false) {
   player?.stop();
+  if (fromHistory) currentMode = 'play';
   series = { ...result, episodes: result.episodes.map(x => ({ ...x, url: x.url || null })) };
   selected = new Set(series.episodes.filter(ep => ep.available !== false).map(ep => ep.vid));
   episodePage = 0;
@@ -519,7 +520,7 @@ async function loadDownloadQualitySample(target) {
     // No quality is invented when the sample episode has no source.
   }
 }
-async function lookupIds(ids) {
+async function lookupIds(ids, { play = false } = {}) {
   const list = [...new Set(ids)].slice(0, 20);
   const currentRequest = ++lookupSequence;
   loadingDeepLinks = true;
@@ -539,6 +540,7 @@ async function lookupIds(ids) {
       results.push({ id, title: result.title, ok: true });
       if (!shown) {
         $('input-url').value = id;
+        if (play) currentMode = 'play';
         showSeries(result);
         shown = true;
       } else renderRecentSeries();
@@ -565,7 +567,7 @@ async function lookup(event) {
   if (!input) return;
   const ids = /^\d+(?:[\s,;，、]+\d+)+$/.test(input)
     ? input.split(/[\s,;，、]+/) : null;
-  if (ids?.length) return lookupIds(ids);
+  if (ids?.length) return lookupIds(ids, { play: true });
   ++lookupSequence;
   $('linked-series').hidden = true;
   $('lookup-button').disabled = true;
@@ -573,7 +575,9 @@ async function lookup(event) {
   $('lookup-button').textContent = '查詢分集列表…';
   try {
     const response = await apiJson('/api/series?input=' + encodeURIComponent(input));
+    if (response.kind === 'series') currentMode = 'play';
     showSeries(response);
+    if (currentMode === 'play') $('player-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
     $('lookup-error').textContent = classifyError(error).message;
     $('lookup-error').hidden = false;

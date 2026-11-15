@@ -151,7 +151,10 @@ const browser = await (browserName === 'firefox' ? firefox : chromium).launch({
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 // The app opens in watch mode; this suite was written against a download-mode start.
-await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+await page.addInitScript(() => {
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
+  window.__HONGGUO_START_MODE = 'download';
+});
 // Only the multi-seek/mode-switch acceptance needs lifetime instrumentation.
 // Track MSE object URLs without exposing media URLs or CENC keys.
 if (process.env.CENC_TEST_MULTI_SEEK === '1') {
@@ -408,8 +411,10 @@ try {
       assert.equal(deniedCdnRequests, 1, 'First CDN should fail once, then rotate');
       assert(alternateCdnRequests >= 2, 'Alternate must serve metadata and media Ranges');
       const statuses = await page.evaluate(() => window.__playbackStatusLog);
-      assert(statuses.some(s => /HTTP 403.*第 1 次重試/.test(s)), JSON.stringify(statuses));
-      assert(statuses.some(s => /第 1 次重試.*HTTP 403.*影片索引/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => /HTTP 403.*CDN #1/.test(s)), JSON.stringify(statuses));
+      assert(statuses.some(s => /讀取 MP4.*CDN #2.*第 2\/20 次/.test(s)), JSON.stringify(statuses));
+      assert(!statuses.some(s => /HTTP 403.*CDN #2|第 1 次重試.*HTTP 403/.test(s)),
+        'The working candidate must not carry the previous CDN refusal: ' + JSON.stringify(statuses));
       assert(statuses.some(s => s.includes('載入增量串流工具')), JSON.stringify(statuses));
       assert(!statuses.some(s => s.includes('整集下載備援')), JSON.stringify(statuses));
       console.log('PASS ' + browserName + ' CENC 403 rotates CDN and streams before EOF with stage/retry UI');

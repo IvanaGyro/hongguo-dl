@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
 const bytes = readFileSync(process.argv[2]);
 const bvc2 = process.env.PRELOAD_BRIDGE === 'bvc2';
+const manual = process.env.PRELOAD_HANDOFF === 'manual';
 const name = process.env.CENC_BROWSER === 'firefox' ? 'firefox' : 'chromium';
 const browser = await (name === 'firefox' ? firefox : chromium).launch({ headless: true,
   ...(name === 'chromium' && process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
@@ -12,7 +13,17 @@ const browser = await (name === 'firefox' ? firefox : chromium).launch({ headles
 const page = await browser.newPage();
 const requests = [], sourceCalls = [], errors = [];
 page.on('pageerror', e => errors.push(e.message));
-await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+await page.addInitScript(() => {
+  // Synthetic API routes must stay on the test origin, independent of local .env.
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
+  window.__HONGGUO_START_MODE = 'download';
+  localStorage.setItem('hongguo-dl-series-playback-v1', JSON.stringify({
+    '42': { vid: '1013', seconds: 0, completed: false, viewedAt: Date.now() }
+  }));
+  localStorage.setItem('hongguo-dl-playback-history-v1', JSON.stringify({
+    '42:1014': { seconds: 4, duration: 8, completed: false, viewedAt: Date.now() }
+  }));
+});
 await page.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/health') return route.fulfill({ json: { ok: true } });
@@ -34,9 +45,10 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
   }, body: bytes.subarray(first, last + 1) });
 });
 try {
-  await page.goto('http://127.0.0.1:4173/hongguo-dl/?id=42');
+  await page.goto((process.env.TEST_APP_URL || 'http://127.0.0.1:4173/hongguo-dl/') + '?id=42');
   await page.waitForFunction(() => document.querySelector('#series-title')?.textContent.includes('Stream preload'));
   await page.locator('#mode-play').click();
+  await page.locator('[data-play-vid="1013"]').click();
   await page.waitForFunction(() => /prefetch.stage episode=14 phase=preload.buffer[^\n]*ready=true/
     .test(document.querySelector('#playback-log').value), null, { timeout: 25000 });
   const before = await page.locator('#playback-log').inputValue();
@@ -46,16 +58,23 @@ try {
   assert(!before.includes('playback.open episode=14'), 'Media must be preloaded before switching');
   assert(requests.some(r => r.vid === '1014'), 'Next episode must fetch actual bytes');
   const beforeRequests = requests.filter(r => r.vid === '1014').length;
+  if (manual) await page.locator('[data-play-vid="1014"]').click();
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 14 集') &&
-    document.querySelector('#player-video').currentTime > 0.5, null, { timeout: 25000 });
+    document.querySelector('#player-video').currentTime > 0.5 &&
+    document.querySelector('#player-video').getVideoPlaybackQuality().totalVideoFrames > 2, null, { timeout: 25000 });
   const state = await page.locator('#player-video').evaluate(v => ({ time: v.currentTime,
     width: v.videoWidth, frames: v.getVideoPlaybackQuality().totalVideoFrames, error: v.error?.code }));
   assert(state.width === (bvc2 ? 160 : 480) && state.frames > 0 && !state.error, JSON.stringify(state));
   const after = await page.locator('#playback-log').inputValue();
   assert.match(after, /prefetch.handoff episode=14 media=true/);
+  assert(state.time >= (manual ? 4 : 0) && state.time < (manual ? 6 : 2),
+    'Manual handoff restores history; natural next episode starts at zero: ' + JSON.stringify(state));
   assert.equal(sourceCalls.filter(v => v === '1014').length, 1, 'Handoff must reuse the source list');
   assert.equal(requests.filter(r => r.vid === '1014').length, beforeRequests, 'Handoff must not refetch cached media');
   assert.equal((after.match(/prefetch.stage episode=14 phase=wasm-start/g) || []).length, 1);
   assert.deepEqual(errors, []);
   console.log('PASS ' + name + ' ' + (bvc2 ? 'ByteVC2' : 'CENC') + ' real episode 13 -> 14 preload, serialized processing and cached worker handoff', JSON.stringify(state));
+} catch (error) {
+  console.error(await page.locator('#playback-log').inputValue().catch(() => 'No diagnostics'));
+  throw error;
 } finally { await browser.close(); }

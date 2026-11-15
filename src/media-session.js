@@ -139,7 +139,7 @@ export function createMediaSession({
         if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       }
       // This API may return 10 variants but only two HEVC URLs at 1080p.
-      // Rotate just those candidates; refresh signed URLs once when exhausted.
+      // Rotate just those candidates; refresh signed URLs within the shared attempt budget.
       const sameEpisode = !quiet && lastVariants && lastVariantsVid === episode.vid;
       const rateRetry = sameEpisode && rateRetryUrl;
       const priorCandidates = sameEpisode && cencRetryTier
@@ -148,13 +148,14 @@ export function createMediaSession({
       let refreshingCencSources = false;
       const sameList = Boolean(sameEpisode && attempt > 0 &&
         (rateRetry || (cencRetryTier ? withinCycle : attempt < lastVariants.length)));
-      if (!quiet && cencRetryTier && sameEpisode && attempt > 0 && !sameList) {
+      if (!quiet && cencRetryTier && sameEpisode && (attempt > 0 || options.refresh) && !sameList) {
         if (sourceRefreshCount >= 20) {
           log('source.list.exhausted', {
             attempts: attempt, tier: cencRetryTier.quality, refreshed: sourceRefreshCount
           });
-          throw errorWith('CENC_SOURCE_EXHAUSTED',
-            '同畫質片源刷新已達 20 次上限；請稍後重新整理頁面再試。');
+          throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT',
+            '同畫質片源刷新已達 20 次上限；請稍後重新整理頁面再試。'),
+            { retryStep: 'source-auto', stepAttempt: 20 });
         }
         refreshingCencSources = true;
         log('source.list.refresh', {
@@ -369,7 +370,7 @@ export function createMediaSession({
             codec: 'h264', hasAac: metadata.hasAac, retrySameSource: retryCurrentSource(variants, source, options.triedUrls),
             key: source.contentKey || '', signal, bridge: 'bvc2', remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
             durationSeconds: metadata.movieDurationSeconds || source.duration || null,
-            startSeconds: clampStreamSeek(savedResumeSeconds(episode, seriesId),
+            startSeconds: clampStreamSeek(quiet ? 0 : savedResumeSeconds(episode, seriesId),
               metadata.movieDurationSeconds || source.duration || null) || 0
           });
           if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
@@ -434,7 +435,7 @@ export function createMediaSession({
         const native = await (quiet ? openClearKeyStream : prepareNativeStream)({
           preload: quiet && options.nativePrefetch, video, source, codec: codecId(source.codec),
           workerOrigin: getWorkerOrigin(), signal, remainingMediaAttempts: 20 - steps.count('media-download'),
-          startSeconds: savedResumeSeconds(episode, seriesId), onStage,
+          startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId), onStage,
           retrySameSource: retryCurrentSource(variants, source, options.triedUrls)
         });
         if (native) {
@@ -570,7 +571,8 @@ export function createMediaSession({
     let refresh = false;
     if (remaining && !remaining.length) {
       if (entry.refreshCount >= 20) {
-        entry.error = errorWith('CENC_SOURCE_EXHAUSTED', '預載的同畫質來源及刷新來源均已失敗');
+        entry.error = Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '預載片源刷新已達 20 次上限'),
+          { retryStep: 'source-auto', stepAttempt: 20 });
         entry.prepared = null; entry.ready = false; entry.promise = Promise.resolve(null);
         log('prefetch.failed', { episode: Number(entry.episode.index), code: entry.error.code });
         return;
@@ -632,7 +634,7 @@ export function createMediaSession({
       log('playback.attempt', { attempt: attempt + 1, elapsedMs: ageMs() });
       if (handoff && attempt === 0)
         reportStartup('正在接續預取的影片來源…', signal, attempt);
-      let prepared = null;
+      let prepared = null, refreshExhaustedPrefetch = false;
       if (handoff && attempt === 0) {
         let pending;
         do { pending = handoff.promise; prepared = await pending; } while (pending !== handoff.promise);
@@ -645,10 +647,16 @@ export function createMediaSession({
         }
         cencRetryTier = handoff.tier;
         sourceRefreshCount = handoff.refreshCount || 0;
-        if (!prepared && handoff.error) throw handoff.error;
+        if (!prepared && handoff.error) {
+          if (handoff.error.code !== 'CENC_SOURCE_EXHAUSTED' || sourceRefreshCount >= 20) throw handoff.error;
+          // A failed speculative list is not proof that a fresh foreground query will fail.
+          refreshExhaustedPrefetch = true;
+          log('prefetch.handoff.refresh', { episode: Number(episode.index) || 0, refreshed: sourceRefreshCount });
+        }
       }
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      let resolved = prepared || await sourceForEpisode(episode, signal, attempt);
+      let resolved = prepared || await sourceForEpisode(episode, signal, attempt,
+        { refresh: refreshExhaustedPrefetch });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       if (prepared?.native?.activate) {
         prepared.native.activate();
