@@ -2,7 +2,8 @@ import { createPlaybackAttempts } from './playback-attempts.js';
 // Persist one anonymous browser installation independently of proxy routing. No accounts, cookies or signed URLs.
 export function createPlaybackDeviceStore({ storage, fetchImpl = fetch, cryptoImpl = crypto,
   locks = globalThis.navigator?.locks, now = Date.now, background = () => globalThis.document?.hidden === true, onEvent = () => {} } = {}) {
-  const states = new Map(), pending = new Map(), attempts = createPlaybackAttempts();
+  const states = new Map(), pending = new Map();
+  let attempts = createPlaybackAttempts();
   const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
   function valid(value, profile) {
     return typeof profile === 'string' && value?.profile === profile && uuid.test(value.clientId || '') && uuid.test(value.cdid || '') &&
@@ -77,5 +78,19 @@ export function createPlaybackDeviceStore({ storage, fetchImpl = fetch, cryptoIm
     // Scheduled registration updates run independently; normal source reads keep using the IDs.
     return existing?.device_id ? existing : job;
   }
-  return { ensure };
+  async function renew(apiUrl, profile, onStage) {
+    // Recovery creates a fresh installation, rather than scheduling an update
+    // with the potentially rejected did/iid (which may return the same IDs).
+    await pending.get('hongguo-playback-device-v1')?.catch(() => {});
+    attempts = createPlaybackAttempts();
+    const identity = { profile, clientId: cryptoImpl.randomUUID(), cdid: cryptoImpl.randomUUID(),
+      clientudid: cryptoImpl.randomUUID(),
+      openudid: Array.from(cryptoImpl.getRandomValues(new Uint8Array(8)), x => x.toString(16).padStart(2, '0')).join(''),
+      firstInstallAt: now() };
+    states.set('hongguo-playback-device-v1', identity);
+    states.delete('hongguo-playback-device-v1:retry');
+    try { storage?.setItem('hongguo-playback-device-v1', JSON.stringify(identity)); } catch { /* Memory fallback. */ }
+    return ensure(apiUrl, profile, onStage);
+  }
+  return { ensure, renew };
 }

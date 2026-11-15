@@ -117,9 +117,17 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.match(options.headers['User-Agent'], /^com\.phoenix\.read\/74532 /);
       return new Response('');
     };
-    await assert.rejects(fetchAppPlayUrl('123', { identity: installation, session: {} }), { code: 'EMPTY_RESPONSE' });
+    await assert.rejects(fetchAppPlayUrl('123', { identity: installation, session: {} }), {
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 3 });
     assert.equal(calls.length, 3);
     assert.ok(calls.every(url => url.pathname.includes('multi_video_model')));
+    const response = await worker.fetch(new Request('https://example.workers.dev/api/source?sid=1&vid=123&channel=app', {
+      headers: { 'X-Playback-Device': JSON.stringify(installation) }
+    }), {});
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json().then(data => ({ code: data.error.code,
+      upstreamStatus: data.error.upstreamStatus, count: data.error.emptyResponseCount })), {
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 3 });
   } finally { globalThis.fetch = original; }
 });
 

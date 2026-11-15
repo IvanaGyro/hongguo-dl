@@ -15,6 +15,10 @@ async function retryEmptyResponse(request, {
         try { return await request(attempt); }
         catch (error) {
             throwIfAborted(signal);
+            if (error?.code === 'EMPTY_RESPONSE') {
+                error.emptyResponseCount = attempt + 1;
+                error.upstreamStatus = 200;
+            }
             if (error?.code !== 'EMPTY_RESPONSE' || attempt + 1 >= attempts ||
                 deadline - Date.now() < 1500) throw error;
             await afterEmpty(attempt);

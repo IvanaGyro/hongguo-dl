@@ -1,11 +1,13 @@
 // Beta status: name the operation and its own attempt, never a previous failure.
-const attemptText = fields => fields.attempt ? ` · 第 ${fields.attempt}/20 次` : '';
+const attemptText = fields => fields.attempt ? ` · 第 ${fields.attempt}/${fields.limit || 20} 次` : '';
 const candidateText = fields => fields.candidate ? ` · CDN #${fields.candidate}` : '';
 const rangeText = fields => Number.isSafeInteger(fields.offset) && fields.bytes > 0
   ? ` · bytes ${fields.offset}–${fields.offset + fields.bytes - 1}` : '';
 const sourceNames = {
   'worker-capabilities': '確認 Worker API 能力（/api/health）',
   'device-register': '初始化播放裝置／等待註冊（POST /api/device）',
+  'device-renew': '取源連續空白，正在更新播放裝置識別（POST /api/device）',
+  'device-cooldown': '更新裝置連續失敗 3 次，請等一分鐘',
   'source-web': '查詢網頁片源候選（/api/source）',
   'source-app': '查詢 App 片源／畫質候選（/api/source）',
   'source-auto': '查詢片源／畫質候選（/api/source）'

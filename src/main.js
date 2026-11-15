@@ -1,4 +1,5 @@
 import { createPlaybackDeviceStore } from './playback-device.js';
+import { createSourceDeviceRecovery } from './source-device-recovery.js';
 // Video.js 10 HTML preset and composable native UI components.
 import '@videojs/html/video/player';
 import '@videojs/html/ui/container';
@@ -358,6 +359,9 @@ function setMode(mode) {
   else player?.deactivate();
 }
 const playbackDevices = createPlaybackDeviceStore({ onEvent: (phase, fields) => playbackDiagnostics.log('device.lifecycle', { phase, ...fields }), storage: (() => { try { return localStorage; } catch { return null; } })() });
+const sourceDeviceRecovery = createSourceDeviceRecovery({ devices: playbackDevices,
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
+  onEvent: (phase, fields) => playbackDiagnostics.log('device.lifecycle', { phase, ...fields }) });
 async function apiJson(route, signal, onWait = () => 0) {
   let stepAttempt = 0;
   const sourcePhase = route.includes("channel=app") ? "source-app" : route.includes("channel=web") ? "source-web" : "source-auto";
@@ -366,25 +370,30 @@ async function apiJson(route, signal, onWait = () => 0) {
     await supportsIndependentSourceChannels();
     const capabilities = await sourceChannelProbe;
     if (capabilities?.deviceSessions === true && typeof capabilities.deviceProfile === 'string') {
-      const identity = await playbackDevices.ensure(apiRoute(route), capabilities.deviceProfile, (phase, fields) => onWait(phase, fields));
-      headers['X-Playback-Device'] = JSON.stringify(identity);
+      return sourceDeviceRecovery.request({ apiUrl: apiRoute(route), profile: capabilities.deviceProfile,
+        signal, onWait, run: identity => request(identity) });
     }
   }
-  if (route.startsWith('/api/source?')) stepAttempt = onWait(sourcePhase);
-  const response = await fetch(apiRoute(route), { headers, signal }).catch(error => {
-    if (route.startsWith('/api/source?')) Object.assign(error, { stage: 'source-api', retryStep: sourcePhase, stepAttempt });
-    throw error;
-  });
-  const apiError = (code, message) => Object.assign(errorWith(code, message), {
-    status: response.status,
-    ...(route.startsWith('/api/source?') ? { stage: 'source-api', retryStep: sourcePhase, stepAttempt } : {})
-  });
-  let data;
-  try { data = await response.json(); } catch { throw apiError('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
-  if (!response.ok) throw Object.assign(apiError(data?.error?.code || 'HTTP_' + response.status,
-    data?.error?.message || '請求失敗（HTTP ' + response.status + '）'),
-    Number.isFinite(data?.error?.retryAfterMs) ? { retryAfterMs: data.error.retryAfterMs } : {});
-  return data;
+  return request();
+  async function request(identity) {
+    if (identity) headers['X-Playback-Device'] = JSON.stringify(identity);
+    if (route.startsWith('/api/source?')) stepAttempt = onWait(sourcePhase);
+    const response = await fetch(apiRoute(route), { headers, signal }).catch(error => {
+      if (route.startsWith('/api/source?')) Object.assign(error, { stage: 'source-api', retryStep: sourcePhase, stepAttempt });
+      throw error;
+    });
+    const apiError = (code, message) => Object.assign(errorWith(code, message), {
+      status: response.status,
+      ...(route.startsWith('/api/source?') ? { stage: 'source-api', retryStep: sourcePhase, stepAttempt } : {})
+    });
+    let data;
+    try { data = await response.json(); } catch { throw apiError('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
+    if (!response.ok) throw Object.assign(apiError(data?.error?.code || 'HTTP_' + response.status,
+      data?.error?.message || '請求失敗（HTTP ' + response.status + '）'),
+      { ...(Number.isFinite(data?.error?.retryAfterMs) ? { retryAfterMs: data.error.retryAfterMs } : {}),
+        ...(data?.error?.upstreamStatus === 200 ? { upstreamStatus: 200, emptyResponseCount: data.error.emptyResponseCount } : {}) });
+    return data;
+  }
 }
 // Old production Workers may not have the independent web/App channels yet.
 // Check the versioned health flag once per Worker origin instead of doubling
@@ -413,9 +422,9 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
   const tasks = new Map();
   const updateWait = (channel, phase, fields = {}) => {
     if (!phase) tasks.delete(channel);
-    else if (tasks.get(channel)?.phase !== phase) {
+    else if (tasks.get(channel)?.phase !== phase || fields.attempt && tasks.get(channel)?.attempt !== fields.attempt || fields.remainingSeconds) {
       const attempt = phase.startsWith('source-') ? attempts?.begin(phase) || 1 : fields.attempt || 0;
-      tasks.set(channel, { phase, attempt });
+      tasks.set(channel, { phase, ...fields, attempt });
       trace('source.wait', { channel, phase, attempt });
     }
     if (!signal.aborted) onStage('source.wait', { tasks: [...tasks.values()] });

@@ -193,7 +193,8 @@ async function loadSource(sid, vid, channel = 'auto', installation = null) {
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
     const message = String(e.message || 'App 取源失敗').slice(0, 250);
     throw Object.assign(httpError(e.status && e.status >= 400 ? e.status : 502,
-      e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message), { retryAfterMs: e.retryAfterMs });
+      e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message), {
+        retryAfterMs: e.retryAfterMs, emptyResponseCount: e.emptyResponseCount, upstreamStatus: e.upstreamStatus });
   }
 }
 async function relayMedia(request, timing) {
@@ -366,6 +367,8 @@ export default {
     } catch (error) {
       return withCors(withMediaTiming(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
         message: String(error.message || '未知錯誤').slice(0, 300),
+        ...(error.code === 'EMPTY_RESPONSE' && error.upstreamStatus === 200 ? {
+          upstreamStatus: 200, emptyResponseCount: Math.min(3, error.emptyResponseCount || 1) } : {}),
         ...(Number.isFinite(error.retryAfterMs) ? { retryAfterMs: error.retryAfterMs } : {}) } },
         Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), mediaTiming), allowed);
     }

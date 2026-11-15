@@ -25,6 +25,7 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
 // Keep retry explanations short and independent of signed media URLs.
 export function playbackErrorSummary(error) {
   const code = error?.code || '';
+  if (code === 'DEVICE_RECOVERY_COOLDOWN') return '更新裝置連續失敗 3 次，請等一分鐘';
   if (error?.retryStep === 'device-register') return '裝置註冊 API 失敗' +
     (error.status >= 400 ? '（HTTP ' + error.status + '）' : '');
   if (error?.stage === 'source-api' || code === 'EMPTY_RESPONSE') {

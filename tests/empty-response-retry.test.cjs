@@ -24,7 +24,7 @@ test('three consecutive empty bodies fail after bounded attempts',async()=>{
   let count=0;
   await assert.rejects(retryEmptyResponse(async()=>{count++;throw empty()},{
     wait:noop,deadline:Date.now()+12000
-  }),e=>e.code==='EMPTY_RESPONSE'&&e.status===200);
+  }),e=>e.code==='EMPTY_RESPONSE'&&e.status===200&&e.upstreamStatus===200&&e.emptyResponseCount===3);
   assert.equal(count,3);
 });
 test('403, 429 and explicit business denial are never retried',async()=>{
