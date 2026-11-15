@@ -1,3 +1,4 @@
+import { retryAfterMs } from './retry-after.js';
 // Layer 1: source transport and complete-byte reads. Streaming byte reads use
 // cached-media-reader.js, which owns its own range cache and network lookahead.
 import { mediaProxyUrl, errorWith } from './logic.js';
@@ -17,16 +18,18 @@ export function createMediaDownload({ fetchBytes, getWorkerOrigin, fetchImpl = (
     read(source, signal, maxBytes, onChunk, url = source.url) {
       return fetchBytes(url, profileFor(source), signal, maxBytes, onChunk, source.userAgent);
     },
-    async nativeSource(source, signal, onFallback) {
+    async nativeSource(source, signal, onFallback, onStage = () => {}) {
       const { proxyUrl, transport } = open(source, onFallback);
       if (!isApprovedDirectMediaUrl(source.url)) return { url: proxyUrl };
+      onStage('cdn.probe', { offset: 0, bytes: 16 });
       const probe = await transport.fetch(source.url, {
         headers: { Range: 'bytes=0-15' }, signal, cache: 'no-store'
       });
       await probe.body?.cancel().catch(() => {});
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       if (probe.status === 429)
-        throw errorWith('MEDIA_RATE_LIMITED', '來源回傳 HTTP 429，暫停重試');
+        throw Object.assign(errorWith('MEDIA_RATE_LIMITED', '來源回傳 HTTP 429，等待後重試'),
+          { status: 429, retryAfterMs: retryAfterMs(probe.headers.get('retry-after')) });
       // Native video can consume a complete 200 response; JS range demux needs 206.
       if (probe.status !== 206 && probe.status !== 200)
         throw errorWith(probe.status === 403 ? 'MEDIA_SOURCE_FORBIDDEN' : 'MEDIA_HTTP',

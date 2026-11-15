@@ -42,6 +42,7 @@ export function createCachedMediaReader({ fileSize, budget,
   };
   const network = createHttpStreamReader({ ...options, fileSize, durationSeconds, externalCache: cache,
     onSlow: fields => onStage('media.slow', fields),
+    onRequest: fields => onStage('media.request', fields),
     maxPacketBytes: fileSize <= budget ? budget : Math.max(4 * 1024 * 1024, budget / 2),
     onChunk: (offset, data) => {
       cache.write(offset, data);
@@ -131,12 +132,13 @@ export function createCachedMediaReader({ fileSize, budget,
       if (failure) throw failure;
       return new Promise((resolve, reject) => {
         const entry = { start, size, resolve, reject, requestedAt: performance.now(), timer: null,
-          cleanup: () => { clearTimeout(entry.timer); readSignal?.removeEventListener('abort', abort); } };
+          cleanup: () => { clearTimeout(entry.timer); readSignal?.removeEventListener('abort', abort);
+            onStage('media.wait', { pending: reads.size, offset: reads.values().next().value?.start ?? entry.start, bytes: reads.values().next().value?.size ?? entry.size }); } };
         const abort = () => {
           reads.delete(entry); entry.cleanup(); reject(canceled());
           if (!reads.size && !enabled) packet?.controller.abort();
         };
-        reads.add(entry); readSignal?.addEventListener('abort', abort, { once: true });
+        reads.add(entry); onStage('media.wait', { pending: reads.size, offset: reads.values().next().value?.start ?? entry.start, bytes: reads.values().next().value?.size ?? entry.size }); readSignal?.addEventListener('abort', abort, { once: true });
         if (packet && reads.values().next().value === entry) {
           const missing = cache.firstMissing(start, start + size);
           const distance = missing - packet.offset, rate = network.stats.bytesPerSecond;

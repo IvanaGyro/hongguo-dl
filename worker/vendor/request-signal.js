@@ -39,4 +39,10 @@ function networkFailure(code) {
     return undefined;
 }
 
-module.exports = { abortError, throwIfAborted, boundedSignal, networkFailure };
+function retryAfterMs(value, now = Date.now()) {
+    if (!value?.trim()) return undefined;
+    const delay = /^\d+$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - now;
+    return Number.isFinite(delay) && delay >= 0 ? delay : undefined;
+}
+
+module.exports = { retryAfterMs, abortError, throwIfAborted, boundedSignal, networkFailure };

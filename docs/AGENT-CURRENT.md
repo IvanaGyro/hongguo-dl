@@ -1,6 +1,6 @@
 # Hongguo DL — 專案進度與當前目標
 
-更新：2026-11-15。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
+更新：2026-11-16。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
 
 ## 階段總覽
 
@@ -18,7 +18,9 @@
 
 ### 已確認的實測證據
 
-- **來源／解密**：公開來源可能同時出現 403 和 206，有限輪替新取得、相同畫質／編碼的候選可找到合法 206；[真實 metadata 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343959663) **PASS**。不得對 429 持續請求。
+- **匿名裝置重用與 Beta 播放等待提示（2026-11-16）**：裝置資料由瀏覽器 localStorage 保存，與代理 Worker 網址無關；新增 POST /api/device 初始化／背景更新，正常 App 取源以標頭沿用 did／iid／安裝識別。更新保留既有 ID，6／12 小時為更新排程而非到期日；空白 200 不再觸發換裝置。移除取源固定間隔、全域佇列及跨請求拒絕狀態。註冊、各 App API 及媒體 UA 的設定集中於 device-profile.js，App 版本統一為已分析 APK Manifest 的 7.4.5.32／74532；SDK 協定與硬體樣板不冒稱已抓包確認。提示只顯示當前前景等待層，必要下載未命中才覆蓋處理提示，背景預載不覆寫；重試開始不再帶前次錯誤前綴。Beta 文字分出裝置註冊、網頁／App 片源畫質候選查詢、CDN 候選、MP4 檔頭／moov／byte 範圍與必要影片下載，各步驟嘗試次數獨立、含預載，最多 20 次；可多輪刷新新的同畫質 URL，若沒有新候選仍提早停止。429 依 Retry-After 倒數後重試同一候選；APK 尚無完整 429 runtime 證據。101 集 Log 指向 CDN 開頭 64 KiB 慢／卡住，metadata 改為 10 秒閒置期限＋30 秒總上限，避免晚到的 206 標頭吃掉本文預算。**本機驗證 PASS**：310 個單元測試、前端 build、Worker dry-run、Chromium 裝置跨 reload／跨使用者隔離與 502 恢復提示、原生 no-referrer／403 代理接續、實際 CENC WASM 的慢速來源與 24→25 預載復原。**尚未驗證**：新識別重用策略在真實 CDN／連看情境是否減少 502；本輪未部署或觸發遠端 Actions。設計見 [播放資料流](playback-data-flow.md)。
+
+- **來源／解密**：公開來源可能同時出現 403 和 206，有限輪替新取得、相同畫質／編碼的候選可找到合法 206；[真實 metadata 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43343959663) **PASS**。429 須等待服務端 Retry-After 或有界退避，不能無等待連續重送。
 - **真實檔案轉封裝與解碼**：[實際 WASM + FFmpeg 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43350204732) **PASS**，來源 EOF 前就產生 fMP4；真實 HEVC 影格可解，AAC 經 FFmpeg 解碼在 0 秒及 120 秒區間有非靜音音量。**這不直接證明 WebKit 的音訊輸出**。
 - **真實瀏覽器畫面／Seek**：[macOS WebKit 首影格](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43348194611) **PASS**：1080p、實際解碼影格、時間前進、無 media error；[延伸實測](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43349532681) **120 秒未緩衝 Seek 與後續影格 PASS**，但整個 job 因 AAC 測量未通過而是 failure。
 - **WebKit MSE Web Audio 測量已判定不可靠**：[合成對照及真實 HEVC 驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43354990348) 中，已知有聲的 native MP4 RMS=0.089815，但**同一 AAC 的 H.264 MSE RMS=0**；真實 HEVC MSE 亦為 0，兩者影片均正常前進。這符合 [WebKit Bug 266922](https://bugs.webkit.org/show_bug.cgi?id=266922) 和 [Bug 256445](https://bugs.webkit.org/show_bug.cgi?id=256445) 已知的 `MediaElementAudioSourceNode`／MSE 問題。**不能用 MSE RMS=0 推論實際無聲；真實裝置能否聽到聲音仍 NOT TESTED**。瀏覽器已看到第一畫格；已修正遠距 Seek 舊影格計數誤判，並在 [WebKit 重新驗收](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43355534407) 中再次 **PASS** 120 秒新影格；有聲輸出仍明確為 `NOT TESTED`。

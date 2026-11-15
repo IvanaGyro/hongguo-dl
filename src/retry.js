@@ -1,24 +1,32 @@
+import { playbackStepNames } from './playback-attempts.js';
 // Consecutive identical errors, rather than a fixed retry count, determine
 // when a job stops. A separate safety ceiling prevents alternating failures
 // from retrying indefinitely when the server is permanently unavailable.
 export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
-  { retryForbidden = false } = {}) {
+  { retryForbidden = false, retryRateLimited = false } = {}) {
+  const step = error.retryStep;
+  const scoped = step ? previous?.byStep?.[step] : previous;
   const key = String(error.code || 'UNKNOWN') + '\u0000' + String(error.message || '');
-  const streak = previous?.key === key ? (previous.streak || 0) + 1 : 1;
-  const attempts = (previous?.attempts || 0) + 1;
-  const stoppedBy = ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
+  const streak = scoped?.key === key ? (scoped.streak || 0) + 1 : 1;
+  const attempts = Math.max((scoped?.attempts || 0) + 1, step ? Number(error.stepAttempt) || 0 : 0);
+  const rateLimited = error.status === 429 || ['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'HTTP_429'].includes(error.code);
+  const stoppedBy = error.code === 'PLAYBACK_STEP_LIMIT' || step && attempts >= attemptLimit ? 'step-limit' : ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
     'CENC_SOURCE_FORBIDDEN', 'CENC_SOURCE_EXHAUSTED', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'CENC_RANGE_INVALID',
     'CENC_RANGE_UNSUPPORTED'].includes(error.code) &&
-    !(retryForbidden && error.code === 'CENC_SOURCE_FORBIDDEN')
+    !(retryForbidden && error.code === 'CENC_SOURCE_FORBIDDEN') && !(retryRateLimited && rateLimited)
     ? 'not-retryable' : streak >= repeatedLimit ? 'repeated'
     : attempts >= attemptLimit ? 'total-limit' : null;
-  return { key, streak, attempts, stoppedBy, retry: !stoppedBy,
-    delay: Math.min(8000, 700 * (2 ** Math.min(4, streak - 1))) };
+  const backoff = Math.min(8000, 700 * (2 ** Math.min(4, (step ? attempts : streak) - 1)));
+  return { key, streak, attempts, stoppedBy, retry: !stoppedBy, step,
+    ...(step ? { byStep: { ...previous?.byStep, [step]: { key, streak, attempts } } } : {}),
+    delay: Number.isFinite(error.retryAfterMs) ? Math.max(0, error.retryAfterMs) : rateLimited && retryRateLimited ? Math.max(8000, backoff) : backoff };
 }
 
 // Keep retry explanations short and independent of signed media URLs.
 export function playbackErrorSummary(error) {
   const code = error?.code || '';
+  if (error?.retryStep === 'device-register') return '裝置註冊 API 失敗' +
+    (error.status >= 400 ? '（HTTP ' + error.status + '）' : '');
   if (error?.stage === 'source-api' || code === 'EMPTY_RESPONSE') {
     const status = error?.status >= 400 && error.status <= 599 ? '（HTTP ' + error.status + '）' : '';
     return (code === 'EMPTY_RESPONSE' ? '片源 API 回傳空白資料' : '片源 API 讀取失敗') + status;
@@ -55,8 +63,13 @@ export function playbackFailureMessage(failure, error, repeatedLimit = 5) {
   const detail = error?.stage === 'source-api'
     ? playbackErrorSummary(error) + ' · ' + rawDetail : rawDetail;
   const code = error?.code ? ' [' + error.code + ']' : '';
+  const stepName = failure.step ? (playbackStepNames[failure.step] || failure.step) : '';
+  if (failure.retry && stepName) return stepName + '第 ' + failure.attempts + '/20 次未成功 · ' + playbackErrorSummary(error) +
+    ' · ' + (failure.delay / 1000).toFixed(1) + ' 秒後重試此步驟';
   if (failure.retry) return playbackErrorSummary(error) + ' · ' +
     (failure.delay / 1000).toFixed(1) + ' 秒後進行第 ' + failure.attempts + ' 次重試';
+  if (failure.stoppedBy === 'step-limit') return '已停止播放 · ' + stepName + '已達 20 次嘗試上限 · ' +
+    playbackErrorSummary(error) + '；請稍後重新整理頁面再試';
   const reason = failure.stoppedBy === 'repeated'
     ? '連續相同錯誤 ' + failure.streak + ' 次'
     : failure.stoppedBy === 'total-limit'

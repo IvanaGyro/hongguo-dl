@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Download-only Cloudflare Worker: static assets plus narrowly-scoped media/API access.
 import appModule from './vendor/app-source.js';
+import installationModule from './vendor/playback-installation.js';
+import deviceProfile from './vendor/device-profile.js';
+import requestSignal from './vendor/request-signal.js';
+const { PROFILE, installationSession, prepareInstallation } = installationModule;
 
 const { fetchAppPlayUrl } = appModule;
 const SITE = 'https://hongguoduanju.com';
@@ -12,7 +16,7 @@ const MEDIA_HOSTS = [
 ];
 const MAX_HTML = 4 * 1024 * 1024;
 const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
-const APP_UA = 'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C)';
+const { APP_UA } = deviceProfile;
 const ID = /^\d{1,30}$/;
 const isHost = (host, suffixes) => suffixes.some(s => host === s || host.endsWith('.' + s));
 
@@ -31,7 +35,8 @@ function httpError(status, code, message) {
 function asJson(value, status = 200) {
   return new Response(JSON.stringify(value), {
     status, headers: { 'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }
+      'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+      ...(Number.isFinite(value?.error?.retryAfterMs) ? { 'Retry-After': String(Math.ceil(value.error.retryAfterMs / 1000)) } : {}) }
   });
 }
 async function fetchLimited(url, { maxBytes = MAX_HTML, accept = 'text/html', timeout = 10000 } = {}) {
@@ -158,7 +163,7 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, channel = 'auto') {
+async function loadSource(sid, vid, channel = 'auto', installation = null) {
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
   if (!['auto', 'web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
@@ -176,7 +181,9 @@ async function loadSource(sid, vid, channel = 'auto') {
   try {
     // Source metadata is complete. Quality and codec are a client-side
     // selection policy, not a Worker concern.
-    const result = await fetchAppPlayUrl(vid);
+    const session = installation ? installationSession(installation) : null;
+    if (session && !session.identity.device_id) throw httpError(409, 'DEVICE_REQUIRED', '請先初始化播放裝置');
+    const result = await fetchAppPlayUrl(vid, session ? { identity: session.identity, session } : {});
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
@@ -185,8 +192,8 @@ async function loadSource(sid, vid, channel = 'auto') {
   } catch (e) {
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
     const message = String(e.message || 'App 取源失敗').slice(0, 250);
-    throw httpError(e.status && e.status >= 400 ? e.status : 502,
-      e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message);
+    throw Object.assign(httpError(e.status && e.status >= 400 ? e.status : 502,
+      e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message), { retryAfterMs: e.retryAfterMs });
   }
 }
 async function relayMedia(request, timing) {
@@ -232,7 +239,7 @@ async function relayMedia(request, timing) {
         : res.status === 429
           ? '媒體 CDN 限制請求頻率（HTTP 429），請勿連續重試'
           : '媒體來源回傳 HTTP ' + res.status;
-      throw httpError(res.status, code, message);
+      throw Object.assign(httpError(res.status, code, message), { retryAfterMs: requestSignal.retryAfterMs(res.headers.get('retry-after')) });
     }
     const type = String(res.headers.get('content-type') || '');
     if (/text\/html|application\/json/i.test(type)) throw httpError(502, 'NOT_MEDIA', '媒體來源回傳錯誤頁面');
@@ -268,9 +275,36 @@ function withCors(response, origin) {
   if (!origin) return response;
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', origin);
-  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, Server-Timing');
+  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, Server-Timing, Retry-After');
   headers.append('Vary', 'Origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+// Device data is carried in headers/body, never in logged URLs or shared source caches.
+function parseDeviceHeader(request) {
+  const raw = request.headers.get('X-Playback-Device');
+  if (!raw) return null;
+  if (raw.length > 2048) throw httpError(400, 'INVALID_DEVICE', '裝置資料過長');
+  try { return JSON.parse(raw); } catch { throw httpError(400, 'INVALID_DEVICE', '無效的裝置資料'); }
+}
+async function readDeviceBody(request) {
+  const reader = request.body?.getReader();
+  if (!reader) throw httpError(400, 'INVALID_DEVICE', '缺少裝置資料');
+  const chunks = []; let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > 4096) { await reader.cancel(); throw httpError(413, 'INVALID_DEVICE', '裝置資料過長'); }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (error) {
+    if (error.status) throw error;
+    throw httpError(400, 'INVALID_DEVICE', '無效的裝置資料');
+  } finally { reader.releaseLock(); }
 }
 export default {
   async fetch(request, env) {
@@ -288,12 +322,12 @@ export default {
     if (request.method === 'OPTIONS') {
       const requestedMethod = request.headers.get('Access-Control-Request-Method') || 'GET';
       const requestedHeaders = request.headers.get('Access-Control-Request-Headers') || '';
-      if (!['GET', 'HEAD'].includes(requestedMethod) ||
-          requestedHeaders.split(',').some(x => x.trim() && !['accept', 'range'].includes(x.trim().toLowerCase())))
+      if (!['GET', 'HEAD', ...(url.pathname === '/api/device' ? ['POST'] : [])].includes(requestedMethod) ||
+          requestedHeaders.split(',').some(x => x.trim() && !['accept', 'range', 'content-type', 'x-playback-device'].includes(x.trim().toLowerCase())))
         return withCors(asJson({ error: { code: 'CORS_PREFLIGHT', message: '不支援的預檢方法或標頭' } }, 403), allowed);
       const headers = new Headers({
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Access-Control-Allow-Headers': 'Accept, Range',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Accept, Range, Content-Type, X-Playback-Device',
         'Access-Control-Max-Age': '86400'
       });
       if (allowed) {
@@ -306,8 +340,13 @@ export default {
     const mediaTiming = url.pathname === '/api/media' ? { upstreamMs: 0 } : null;
     try {
       if (url.pathname === '/api/health') return withCors(asJson({
-        ok: true, runtime: 'cloudflare-worker', sourceChannels: true
+        ok: true, runtime: 'cloudflare-worker', sourceChannels: true, deviceSessions: true, deviceProfile: PROFILE
       }), allowed);
+      if (url.pathname === '/api/device' && request.method === 'POST') {
+        const body = await readDeviceBody(request);
+        return withCors(asJson(await prepareInstallation(body?.installation, appModule.requestJson,
+          { background: body?.background === true })), allowed);
+      }
       if (request.method !== 'GET' && request.method !== 'HEAD')
         throw httpError(405, 'METHOD_NOT_ALLOWED', '不支援的 HTTP 方法');
       let response;
@@ -319,14 +358,15 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
-          url.searchParams.get('channel') || 'auto'));
+          url.searchParams.get('channel') || 'auto', parseDeviceHeader(request)));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request, mediaTiming);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');
       return withCors(withMediaTiming(response, mediaTiming), allowed);
     } catch (error) {
       return withCors(withMediaTiming(asJson({ error: { code: String(error.code || 'UNEXPECTED'),
-        message: String(error.message || '未知錯誤').slice(0, 300) } },
+        message: String(error.message || '未知錯誤').slice(0, 300),
+        ...(Number.isFinite(error.retryAfterMs) ? { retryAfterMs: error.retryAfterMs } : {}) } },
         Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502), mediaTiming), allowed);
     }
   }

@@ -95,13 +95,15 @@ test('upstream media HTTP 403 is classified as CDN access refusal without leakin
 test('upstream HTTP 429 is classified as rate limiting without retrying in Worker', async () => {
   const native = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = async () => { calls++; return new Response('rate limited', { status: 429 }); };
+  globalThis.fetch = async () => { calls++; return new Response('rate limited', { status: 429, headers: { 'Retry-After': '17' } }); };
   try {
     const target = 'https://cdn.fqnovelvod.com/sample.mp4';
     const req = new Request('https://example.workers.dev/api/media?url=' + encodeURIComponent(target));
     const response = await worker.fetch(req, {});
     assert.equal(response.status, 429);
-    assert.equal((await response.json()).error.code, 'MEDIA_RATE_LIMITED');
+    const error = (await response.json()).error;
+    assert.equal(error.code, 'MEDIA_RATE_LIMITED'); assert.equal(error.retryAfterMs, 17000);
+    assert.equal(response.headers.get('Retry-After'), '17');
     assert.equal(calls, 1);
   } finally { globalThis.fetch = native; }
 });

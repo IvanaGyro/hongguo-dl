@@ -175,14 +175,16 @@ async function getMediaPlaylist(url, fetchBytes, signal) {
   throw errorWith('HLS_MANIFEST', 'HLS 主清單巢狀過深');
 }
 export async function convertHls(url, {
-  mode = 'copy', contentKey = null, signal, fetchBytes, segmentProgress, progress
+  mode = 'copy', contentKey = null, signal, fetchBytes, segmentProgress, progress, onStage = () => {}
 } = {}) {
+  onStage('hls-tool');
   return exclusive(async ffmpeg => {
     const files = new Set();
     const unique = new Map();
     let size = 0;
     const id = fileId(), playlist = id + '.m3u8', output = id + '.mp4';
     try {
+      onStage('hls-playlist');
       const media = await getMediaPlaylist(url, fetchBytes, signal);
       const plan = planHlsMediaPlaylist(media.text);
       const total = plan.segmentCount;
@@ -223,6 +225,7 @@ export async function convertHls(url, {
       }
       const rewritten = rewriteHlsMediaPlaylist(plan, localNames);
       await ffmpeg.writeFile(playlist, new TextEncoder().encode(rewritten)); files.add(playlist);
+      onStage('hls-remux');
       await run(ffmpeg, argsFor(mode, contentKey, playlist, output, true), signal, progress);
       files.add(output);
       return new Uint8Array(await ffmpeg.readFile(output));

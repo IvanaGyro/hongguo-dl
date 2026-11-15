@@ -62,7 +62,7 @@ function release(worker, bridge) {
 export function createMediaProcessor({ bridge, preload = false, onStage = () => {} }) {
   const worker = acquire(bridge);
   let generation = 0;
-  let closed = false, completed = false, failed = false, cacheInfo = {};
+  let closed = false, completed = false, failed = false, cacheInfo = {}, pendingRead = { pending: 0 };
   const post = message => {
     if (closed) return;
     if (message.type === 'seek') { generation = message.generation; completed = false; }
@@ -78,6 +78,7 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
     activate() {
       const pending = staging.activate();
       onStage('preload.handoff', { units: pending.length });
+      if (pendingRead.pending > 0) onStage('media.wait', pendingRead);
       for (const unit of pending) processor.onunit(unit);
     },
     snapshot: () => cacheInfo,
@@ -97,6 +98,7 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
     if (data.type === 'stage') {
       const { type, stage, ...fields } = data;
       if (stage === 'media.cache') cacheInfo = fields;
+      if (stage === 'media.wait') pendingRead = fields;
       onStage(stage, fields);
       return;
     }

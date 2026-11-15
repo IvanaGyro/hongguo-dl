@@ -27,7 +27,7 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, generation, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
+async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retrySameSource = false, maxMediaRetries = 2, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
   if (started) throw new Error('Streaming worker already started');
   started = true;
   completed = false; releasing = false; generation = 0;
@@ -54,7 +54,7 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
   let rangeRequests = 0, receivedBytes = 0;
   lastRangeError = null;
   const rangeRecovery = createCencRangeRecovery({
-    retryInitial: retrySameSource, maxRetries: retrySameSource ? 2 : 0,
+    retryInitial: retrySameSource, maxRetries: retrySameSource ? Math.max(0, Math.min(2, maxMediaRetries)) : 0,
     onRetry: event => self.postMessage({
       type: 'stage', stage: 'media-range-retry', code: event.code, status: event.status,
       attempt: event.attempt, delayMs: event.delayMs, remaining: event.remaining
@@ -86,7 +86,8 @@ async function run({ url, proxyUrl = null, key, fileSize, startSeconds = 0, retr
       if (activeRun?.signal.aborted) throw canceled();
       lastRangeError = {
         code: /^CENC_[A-Z_]{2,45}$/.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP',
-        status: Number.isInteger(error?.status) ? error.status : 0
+        status: Number.isInteger(error?.status) ? error.status : 0,
+        retryAfterMs: error.retryAfterMs
       };
       self.postMessage({ type: 'stage', stage: 'media-range-failed',
         request: stream.networkStats.requests, offset: start, bytes: wanted,
@@ -236,7 +237,8 @@ self.onmessage = ({ data }) => {
     runtimeCore = null; runtimeBridge = null;
     self.postMessage({ type: 'error',
       code: lastRangeError?.code || bridgeFailure,
-      status: lastRangeError?.status || 0 });
+      status: lastRangeError?.status || 0,
+      ...(Number.isFinite(lastRangeError?.retryAfterMs) ? { retryAfterMs: lastRangeError.retryAfterMs } : {}) });
   }).finally(() => {
     stream?.close(); stream = null; runtimeIO = null;
     started = false; pendingAck = null; requestedSeek = null;

@@ -1,3 +1,4 @@
+import { retryAfterMs } from './retry-after.js';
 // SPDX-License-Identifier: GPL-3.0-only
 // CENC Clear Key uses the browser CDM and HTTP Range rather than decrypting
 // millions of samples in JS/WASM. JS inspects bounded MP4 metadata (max 8 MiB moov).
@@ -64,10 +65,18 @@ function aborted(signal) {
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
 }
 function rangeFetch(url, start, bytes, signal, fetchImpl, onProbe, timeoutMs) {
-  return withRangeDeadline(localSignal =>
-    rangeFetchOnce(url, start, bytes, localSignal, fetchImpl, onProbe), signal, timeoutMs);
+  let phase = 'headers', receivedBytes = 0;
+  return withRangeDeadline((localSignal, progress) =>
+    rangeFetchOnce(url, start, bytes, localSignal, fetchImpl, (stage, fields) => {
+      if (stage === 'range.response') phase = 'body';
+      if (stage === 'range.progress') receivedBytes = fields.receivedBytes;
+      onProbe(stage, fields);
+    }, progress), signal, timeoutMs, { maxDurationMs: timeoutMs * 3 }).catch(error => {
+      if (error.code === 'CENC_RANGE_TIMEOUT') onProbe('range.timeout', { readPhase: phase, receivedBytes, timeoutMs });
+      throw error;
+    });
 }
-async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = () => {}) {
+async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = () => {}, progress = () => {}) {
   const started = performance.now();
   onProbe('range.request', { offset: start, bytes });
   aborted(signal);
@@ -90,6 +99,7 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
     await res.body?.cancel().catch(() => {});
     aborted(signal);
   }
+  progress();
   onProbe('range.response', { status: res.status, elapsedMs: performance.now() - started,
     ...rangeTiming(res) });
   if (res.status !== 206) {
@@ -104,7 +114,7 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
     };
     const [code, message] = statuses[res.status] ||
       ['CENC_RANGE_HTTP', '來源 HTTP Range 請求失敗（HTTP ' + res.status + '）'];
-    throw Object.assign(errorWith(code, message), { status: res.status });
+    throw Object.assign(errorWith(code, message), { status: res.status, retryAfterMs: retryAfterMs(res.headers?.get?.('retry-after')) });
   }
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range') || '');
   if (!match || Number(match[1]) !== start || Number(match[2]) >= start + bytes ||
@@ -141,7 +151,8 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
       count += value.byteLength;
       if (!(value instanceof Uint8Array) || count > declaredBytes)
         throw errorWith('CENC_RANGE_INVALID', 'HTTP Range 超過預算');
-      chunks.push(value);
+      chunks.push(value); progress();
+      onProbe('range.progress', { receivedBytes: count, bytes: declaredBytes });
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
@@ -163,8 +174,9 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
 export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
   onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS, recovery = null) {
   const initialRanges = [];
-  const read = async (start, bytes) => {
-    const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl, onProbe, timeoutMs);
+  const read = async (start, bytes, part) => {
+    const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl,
+      (stage, fields) => onProbe(stage, { part, ...fields }), timeoutMs);
     const result = await (recovery ? recovery.read(once, signal) : once());
     initialRanges.push({ offset: start, data: result.data });
     return result;
@@ -175,7 +187,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
     aborted(signal);
     if (tried.has(offset)) return null;
     tried.add(offset);
-    const { data, fileSize } = await read(offset, HEADER_SIZE);
+    const { data, fileSize } = await read(offset, HEADER_SIZE, probe === 0 ? 'header' : 'locate-moov');
     const boxes = mp4Boxes(data, offset);
     if (probe === 0 && boxes[0]?.type !== 'ftyp') return null;
     for (const box of boxes) {
@@ -185,7 +197,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
           'MP4 索引超過 8 MiB 有界串流安全限制，不能改用整檔下載');
       const moov = box.complete
         ? data.subarray(box.offset - offset, box.offset - offset + box.size)
-        : (await read(box.offset, box.size)).data;
+        : (await read(box.offset, box.size, 'moov')).data;
       if (metadata) {
         metadata.fragmented = mp4Boxes(moov.subarray(8))
           .some(child => child.type === 'mvex');
@@ -373,7 +385,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
-  fetchImpl = fetch, onStage = () => {}, retrySameSource = false, preload = false,
+  fetchImpl = fetch, onStage = () => {}, retrySameSource = false, preload = false, remainingMediaAttempts = 20,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -412,7 +424,7 @@ export async function openClearKeyStream({
   catch (error) {
     // A rejected/broken HTTP Range is a source/network failure, not a
     // demux/decode failure. Never turn it into a whole-file FFmpeg fallback.
-    if (signal?.aborted || error?.code === 'CENC_METADATA_LIMIT' ||
+    if (signal?.aborted || error?.code === 'PLAYBACK_STEP_LIMIT' || error?.code === 'CENC_METADATA_LIMIT' ||
         error?.code?.startsWith('CENC_RANGE_') ||
         ['CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED'].includes(error?.code))
       throw error;
@@ -439,7 +451,7 @@ export async function openClearKeyStream({
         proxyUrl, fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
-        key: source.contentKey, signal, retrySameSource, preload,
+        key: source.contentKey, signal, retrySameSource, preload, remainingMediaAttempts,
         durationSeconds: metadata.movieDurationSeconds || source.duration || null,
         startSeconds: clampStreamSeek(startSeconds,
           metadata.movieDurationSeconds || source.duration || null) ?? 0
@@ -450,7 +462,7 @@ export async function openClearKeyStream({
         return remux;
       }
     } catch (error) {
-      if (signal?.aborted) throw error;
+      if (signal?.aborted || error?.code === 'PLAYBACK_STEP_LIMIT') throw error;
       onStage('cenc.remux-failed', { code: error?.code || 'UNKNOWN' });
       console.info('[Hongguo CENC] remux preparation unavailable:', error?.name || 'Error');
     }

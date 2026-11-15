@@ -1,3 +1,5 @@
+import { playbackStage, processingMessage } from './playback-stage.js';
+import { createPlaybackStatus } from './playback-status.js';
 // Video.js 10 controls with a native <video> media element.
 // Layer 3: media presentation, controls, resume and episode navigation.
 // Playable-media preparation and lookahead belong to media-session.js.
@@ -6,7 +8,7 @@
 // reload race: a 0-second metadata load must never erase a saved position.
 import { errorWith, classifyError } from './logic.js';
 import { watchRecords, playbackKey, rememberPlayback, suggestedEpisode } from './library.js';
-import { recordFailure, playbackFailureMessage, playbackAttemptMessage, playbackErrorSummary } from './retry.js';
+import { recordFailure, playbackFailureMessage, playbackErrorSummary } from './retry.js';
 import { renditionOptions, parseRenditionValue, matchingRenditionValue, codecId, playableVariants } from './source-options.js';
 import { createMediaSession } from './media-session.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
@@ -41,12 +43,13 @@ export function createPlayer({
   let lastStartupSeconds = 0, loadStartedAt = 0;
   let nativeStream = null, keyCleanup = Promise.resolve();
   let directNativeProxyFallback = null;
-  let retryError = null;
   let restartingRemoteSeek = false;
   // All measurements refer to the same selected-episode click, not the start
   // of an individual fetch or decoder stage. Never log signed URLs or keys.
   let startupStages = new Set();
   const log = (event, fields = {}) => diagnostics(event, fields);
+  const waitStatus = createPlaybackStatus({ render: value => { status.textContent = value; }, log });
+  let metadataRead = {};
   const ageMs = () => loadStartedAt ? Math.round(performance.now() - loadStartedAt) : 0;
   function markStartupStage(stage) {
     if (!current || startupStages.has(stage) || !loadStartedAt) return;
@@ -70,8 +73,23 @@ export function createPlayer({
     savedResumeSeconds, waitForOutputCleanup: () => keyCleanup,
     mimeSupport, mseSupport, bvc2Mode, log, ageMs, markStartupStage,
     reportStartup,
-    reportStage: (stage, signal, attempt) => {
-      if (streamStages[stage]) reportStartup(streamStages[stage], signal, attempt);
+    reportStage: (stage, signal, attempt, fields = {}) => {
+      if (signal.aborted) return;
+      if (!loading && readyForHistory && !video.paused && !video.seeking && video.readyState >= 3) waitStatus.playing();
+      if (stage === 'media.request') { waitStatus.downloadAttempt(fields); return; }
+      if (stage === 'media.wait') { waitStatus.mediaRead(fields.pending, fields); return; }
+      if (stage === 'range.request') metadataRead = fields;
+      if (['range.retry', 'range.response', 'range.progress'].includes(stage)) fields = { ...metadataRead, ...fields };
+      const detailed = playbackStage(stage, fields);
+      if (detailed) { waitStatus.update(detailed.layer, detailed.message, detailed.phase); return; }
+      if (stage === 'first-fragment') { waitStatus.update(2, processingMessage(fields.codec) + (fields.attempt ? ' · 第 ' + fields.attempt + '/20 次' : ''), 'processing'); return; }
+      if (['mse.media-appended', 'mse.done', 'seek.buffer-ready'].includes(stage)) {
+        waitStatus.update(3, '正在等待影片顯示畫面…', 'frame'); return;
+      }
+      if (streamStages[stage]) {
+        const layer = ['metadata', 'range.retry', 'media-range-retry'].includes(stage) ? 1 : 2;
+        reportStartup(streamStages[stage] + (fields.attempt ? ' · 第 ' + fields.attempt + '/20 次' : ''), signal, attempt, layer, stage);
+      }
     },
     onVariants: (variants, requested) => { updateRenditionOptions(variants, requested); persistPrefs(); },
     onSelection: selectRendition
@@ -99,7 +117,7 @@ export function createPlayer({
     } catch { /* storage might be disabled */ }
   }
   persistPrefs(); // Migrate legacy stored quality/codec; only speed persists.
-  function setStatus(value) { status.textContent = value; }
+  function setStatus(value) { waitStatus.reset(); status.textContent = value; }
   function updateRenditionOptions(variants, requested = selection()) {
     pendingQuality = null;
     const options = renditionOptions(playableVariants(variants, mimeSupport, media.bvc2Available, mseSupport));
@@ -158,8 +176,8 @@ export function createPlayer({
   }
   function streamPlaybackError(message) {
     return media.failure?.code?.startsWith('CENC_')
-      ? errorWith(media.failure.code, playbackErrorSummary(media.failure))
-      : errorWith('PLAYBACK_ERROR', message);
+      ? Object.assign(errorWith(media.failure.code, playbackErrorSummary(media.failure)), media.failure)
+      : media.decoratePlaybackError(errorWith('PLAYBACK_ERROR', message));
   }
   async function waitMetadata(signal) {
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) return;
@@ -266,19 +284,19 @@ export function createPlayer({
     });
   }
   const streamStages = {
-    metadata: '正在讀取影片索引與加密資訊…',
+    metadata: '正在讀取影片播放資訊…',
     'remux-check': '正在檢查增量串流支援…',
     'eme-access': '正在檢查瀏覽器串流解密支援…',
     'eme-session': '正在初始化串流解密…',
     'wasm-download': '正在載入增量串流工具…',
     'wasm-verify': '正在驗證串流工具…',
     'wasm-start': '正在初始化串流工具…',
-    'first-fragment': '正在讀取並解密首段影片…',
-    'range.retry': '影片來源暫時無回應，正在重試同一段索引…',
-    'media-range-retry': '影片傳輸暫時中斷，正在重試同一段資料…'
+    'first-fragment': '正在解密、解碼或轉碼影片…',
+    'range.retry': '正在重新讀取影片播放資訊…',
+    'media-range-retry': '影片下載暫時失敗，正在重試…'
   };
-  function reportStartup(message, signal, attempt = 0) {
-    if (!signal.aborted) setStatus(playbackAttemptMessage(message, attempt, retryError));
+  function reportStartup(message, signal, attempt = 0, layer = 3, phase = 'prepare') {
+    if (!signal.aborted) waitStatus.update(layer, message, phase);
   }
   async function load(episode, currentToken, signal, autoPlay, handoff = null) {
     const { resolved, prepared, attempt } = await media.request(episode, signal, handoff);
@@ -328,7 +346,9 @@ export function createPlayer({
     // Keep the chosen speed across quality/codec changes, resume and next episode.
     video.defaultPlaybackRate = selectedRate;
     video.style.objectFit = 'contain';
+    const presentationAttempt = media.beginPlayback();
     video.load();
+    log('presentation.attempt', { attempt: presentationAttempt });
     video.playbackRate = selectedRate;
     reportStartup(resolved.fullFileFallback
       ? '整集下載備援處理完成，正在開啟影片…'
@@ -372,13 +392,28 @@ export function createPlayer({
       }
     }
   }
+  async function waitForRetry(state, error, signal, currentToken) {
+    const until = Date.now() + state.delay;
+    await new Promise(resolve => {
+      let timer;
+      const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
+      const tick = () => {
+        if (signal.aborted || currentToken !== token) return finish();
+        const remaining = Math.max(0, until - Date.now());
+        if (!remaining) return finish();
+        setStatus(playbackFailureMessage({ ...state, delay: remaining }, error, 20));
+        timer = setTimeout(tick, Math.min(1000, remaining));
+      };
+      signal.addEventListener('abort', finish, { once: true }); tick();
+    });
+  }
   async function run(episode, currentToken, signal, autoPlay, previous = null, handoff = null) {
     let errors = previous;
     while (!signal.aborted && currentToken === token) {
       try { await load(episode, currentToken, signal, autoPlay, handoff); return; }
       catch (error) {
         if (signal.aborted || currentToken !== token) return;
-        const parsed = classifyError(error);
+        const parsed = classifyError(error.retryStep ? error : media.decoratePlaybackError(error));
         log('playback.attempt.failed', {
           code: parsed.code || 'UNKNOWN', attempt: media.attempt, elapsedMs: ageMs(),
           stage: parsed.stage || 'media', status: parsed.status
@@ -400,15 +435,15 @@ export function createPlayer({
         // source at the same resolution still returns usable media.
         // Limit retries to distinct candidates at the SAME quality and codec;
         // never broaden to ByteVC2, lower quality, or unlimited 403 retries.
-        if (media.canRetrySource(parsed.code, episode)) {
+        if ((parsed.stepAttempt || 0) < 20 && media.canRetrySource(parsed.code, episode)) {
           log('playback.cdn.rotate', { attempt: media.attempt, elapsedMs: ageMs() });
           setStatus('目前媒體來源無法使用，嘗試同畫質／編碼其他候選來源…');
           continue;
         }
-        errors = recordFailure(errors, parsed, 5, 20, { retryForbidden: true });
+        if (['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED'].includes(parsed.code)) media.retryAfterRateLimit();
+        errors = recordFailure(errors, parsed, 20, 20, { retryForbidden: true, retryRateLimited: true });
         failure = errors;
-        retryError = parsed;
-        setStatus(playbackFailureMessage(errors, parsed, 5));
+        setStatus(playbackFailureMessage(errors, parsed, 20));
         if (!errors.retry) {
           log('playback.retry.stopped', { code: parsed.code || 'UNKNOWN' });
           loading = false;
@@ -417,7 +452,7 @@ export function createPlayer({
         log('playback.retry.scheduled', {
           attempt: media.attempt, delayMs: errors.delay, code: parsed.code || 'UNKNOWN'
         });
-        await new Promise(resolve => setTimeout(resolve, errors.delay));
+        await waitForRetry(errors, parsed, signal, currentToken);
       }
     }
   }
@@ -449,7 +484,6 @@ export function createPlayer({
       episode: Number(episode.index) || 0, quality: selection().quality,
       codec: selection().codec, resumeSeconds: savedResumeSeconds(episode)
     });
-    retryError = null;
     refreshButtons();
     label.textContent = '第 ' + episode.index + ' 集';
     sourceInfo.textContent = '';
@@ -490,6 +524,8 @@ export function createPlayer({
     'error', 'ended', 'emptied']) {
     video.addEventListener(eventName, () => {
       if (!current) return;
+      if (eventName === 'playing') waitStatus.playing();
+      if (['waiting', 'stalled'].includes(eventName) && readyForHistory && !loading) waitStatus.waiting();
       log('media.' + eventName, {
         ...mediaSnapshot(), elapsedMs: ageMs(),
         ...(eventName === 'error' ? { errorCode: video.error?.code || 0 } : {})
@@ -637,20 +673,20 @@ export function createPlayer({
       'CENC_RANGE_UNSUPPORTED', 'CENC_RANGE_HTTP', 'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW', 'CENC_REMUX_FAILED'
     ];
     const parsed = transport && knownCodes.includes(transport.code)
-      ? { code: transport.code, message: playbackErrorSummary(transport) }
-      : { code: 'PLAYBACK_ERROR', message: '影片解碼或串流中斷' };
+      ? { ...transport, message: playbackErrorSummary(transport) }
+      : media.decoratePlaybackError({ code: 'PLAYBACK_ERROR', message: '影片解碼或串流中斷' });
     log('media.error.cause', {
       code: parsed.code, status: transport?.status || 0, elapsedMs: ageMs()
     });
-    retryError = parsed;
-    failure = recordFailure(failure, parsed, 5, 20, { retryForbidden: true });
+    if (['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED'].includes(parsed.code)) media.retryAfterRateLimit();
+    failure = recordFailure(failure, parsed, 20, 20, { retryForbidden: true, retryRateLimited: true });
     log('media.error.recovery', {
       code: parsed.code, retries: failure.attempts, enabled: failure.retry
     });
-    setStatus(playbackFailureMessage(failure, parsed, 5));
+    setStatus(playbackFailureMessage(failure, parsed, 20));
     if (!failure.retry) return;
     const prior = failure;
-    void new Promise(resolve => setTimeout(resolve, prior.delay)).then(() => {
+    void waitForRetry(prior, parsed, signal, currentToken).then(() => {
       if (currentToken === token && !signal.aborted) void run(current, currentToken, signal, true, prior);
     });
   });

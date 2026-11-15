@@ -16,9 +16,18 @@ class Select extends Element {
   replaceChildren(...options) { this.options = options; this.value = options[0]?.value || ''; }
 }
 
-async function runScenario(sourceFor, fetchImpl, { canPlayType = () => 'probably' } = {}) {
+async function runScenario(sourceFor, fetchImpl, { canPlayType = () => 'probably', fastClock = false } = {}) {
   const globals = ['location', 'window', 'document', 'Option', 'fetch'];
   const previous = globals.map(key => Object.getOwnPropertyDescriptor(globalThis, key));
+  const realTimeout = globalThis.setTimeout, realNow = Date.now;
+  let clock = realNow();
+  if (fastClock) {
+    Date.now = () => clock;
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      const advance = ms <= 1000;
+      return realTimeout(() => { if (advance) clock += ms; callback(...args); }, advance ? 0 : ms);
+    };
+  }
   let player, timer;
   const logs = [];
   try {
@@ -33,7 +42,7 @@ async function runScenario(sourceFor, fetchImpl, { canPlayType = () => 'probably
     let finish;
     const done = new Promise((resolve, reject) => {
       finish = resolve;
-      timer = setTimeout(() => reject(new Error('Player retry scenario did not stop')), 7000);
+      timer = setTimeout(() => reject(new Error('Player retry scenario did not stop')), 14000);
     });
     const qualitySelect = new Select();
     const controls = Object.fromEntries(['status', 'label', 'prevButton', 'nextButton',
@@ -53,10 +62,11 @@ async function runScenario(sourceFor, fetchImpl, { canPlayType = () => 'probably
     });
     player.open(episode, false);
     await done;
-    return { logs, labels: qualitySelect.options.map(o => o.textContent) };
+    return { logs, labels: qualitySelect.options.map(o => o.textContent), status: controls.status.textContent };
   } finally {
     clearTimeout(timer);
     player?.stop();
+    globalThis.setTimeout = realTimeout; Date.now = realNow;
     globals.forEach((key, i) => {
       if (previous[i]) Object.defineProperty(globalThis, key, previous[i]);
       else delete globalThis[key];
@@ -76,18 +86,18 @@ test('a source failure before CENC setup does not disable incremental playback o
   }, async (_url, options) => {
     mediaCalls++;
     assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
-    return new Response('', { status: 429 });
+    return new Response('', { status: 416 });
   });
   assert.equal(calls, 2);
   assert.equal(mediaCalls, 1);
   assert(logs.some(row => row.event === 'playback.attempt' && row.attempt === 2));
   assert(logs.some(row => row.event === 'cenc.prepare.begin' && row.codec === 'hevc'));
-  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RATE_LIMITED'));
+  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RANGE_INVALID'));
   assert(!logs.some(row => row.event === 'playback.fallback.blocked'));
   assert.deepEqual(labels, ['自動最佳', '1080p']);
 });
 
-test('API failures do not skip CDN candidates or revive failed URLs after an unsuccessful refresh', async () => {
+test('API failures do not skip CDN candidates or revive failed URLs after an unsuccessful refresh', { timeout: 15000 }, async () => {
   let calls = 0;
   const requested = [];
   const { logs } = await runScenario(async (...args) => {
@@ -101,7 +111,7 @@ test('API failures do not skip CDN candidates or revive failed URLs after an uns
     assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
     const media = new URL(url, 'https://worker.example').searchParams.get('url');
     requested.push(media);
-    return new Response('', { status: media === source('c').url ? 429 : 520 });
+    return new Response('', { status: media === source('c').url ? 416 : 520 });
   });
   assert.equal(calls, 4);
   assert.deepEqual(requested, ['a', 'b', 'b', 'c'].map(name => source(name).url));
@@ -117,13 +127,13 @@ test('single-source metadata recovers transient 520 without another source API c
     return { variants: [source('only')] };
   }, async (url, options) => {
     requested.push({ url, range: options.headers.Range });
-    return new Response('', { status: requested.length === 1 ? 520 : 429 });
+    return new Response('', { status: requested.length === 1 ? 520 : 416 });
   });
   assert.equal(sourceCalls, 1);
   assert.equal(requested.length, 2);
   assert.deepEqual(requested[0], requested[1], 'Retry only the failed bounded Range');
   assert(logs.some(row => row.event === 'cenc.stage' && row.phase === 'range.retry' && row.status === 520));
-  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RATE_LIMITED'));
+  assert(logs.some(row => row.event === 'cenc.prepare.failed' && row.code === 'CENC_RANGE_INVALID'));
 });
 
 
@@ -133,7 +143,7 @@ test('unsupported HEVC stays out of the player menu and makes no media request',
   const fetchImpl = async (_url, options) => {
     requests++;
     assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
-    return new Response('', { status: 429 });
+    return new Response('', { status: 416 });
   };
   const standard = await runScenario(sourceFor, fetchImpl, { canPlayType: () => '' });
   assert.equal(requests, 0, 'Ordinary entry must keep unsupported HEVC filtered');
@@ -163,7 +173,7 @@ test('a refreshed list containing old failures only tries its new same-tier cand
     ? [source('a'), source('b')] : [source('a'), source('c')] }), async url => {
     const target = new URL(url, 'https://worker.example').searchParams.get('url');
     requested.push(target);
-    return new Response('', { status: target === source('c').url ? 429 : 403 });
+    return new Response('', { status: target === source('c').url ? 416 : 403 });
   });
   assert.equal(calls, 2);
   assert.deepEqual(requested, ['a', 'b', 'c'].map(name => source(name).url));
@@ -174,12 +184,43 @@ test('source API 502 and media CDN failures retain separate diagnoses', async ()
   const { logs } = await runScenario(async () => {
     if (++calls === 1) throw Object.assign(failure('EMPTY_RESPONSE'), { status: 502 });
     return { variants: [source('a')] };
-  }, async () => new Response('', { status: 429 }));
+  }, async () => new Response('', { status: 416 }));
   const attempts = logs.filter(row => row.event === 'playback.attempt.failed');
   assert.equal(attempts[0].stage, 'source-api');
   assert.equal(attempts[0].status, 502);
   assert.match(playbackErrorSummary(attempts[0]), /片源 API.*HTTP 502/);
   assert.equal(attempts[1].stage, 'media');
-  assert.equal(attempts[1].code, 'CENC_RATE_LIMITED');
+  assert.equal(attempts[1].code, 'CENC_RANGE_INVALID');
   assert.match(playbackErrorSummary({ code: 'HTTP_403', stage: 'source-api', status: 403 }), /片源 API/);
+});
+
+test('CDN 429 waits and retries the same candidate instead of stopping playback', async () => {
+  let sourceCalls = 0, mediaCalls = 0;
+  const { logs } = await runScenario(async () => { sourceCalls++; return { variants: [source('limited')] }; }, async () => {
+    mediaCalls++;
+    return new Response('', { status: mediaCalls === 1 ? 429 : 416, headers: { 'Retry-After': '0' } });
+  });
+  assert.equal(sourceCalls, 1); assert.equal(mediaCalls, 2);
+  assert(logs.some(row => row.event === 'playback.retry.scheduled' && row.code === 'CENC_RATE_LIMITED' && row.delayMs === 0));
+});
+
+test('fresh same-quality CDN URLs may recover after more than one model refresh', async () => {
+  let calls = 0; const opened = [];
+  const { logs } = await runScenario(async () => ({ variants: [source('revision-' + ++calls)] }), async url => {
+    opened.push(new URL(url, 'https://worker.example').searchParams.get('url'));
+    return new Response('', { status: calls >= 4 ? 416 : 520 });
+  }, { fastClock: true });
+  assert.equal(calls, 4);
+  assert.equal(new Set(opened).size, 4);
+  assert.equal(logs.filter(row => row.event === 'source.list.refreshed').length, 3);
+});
+
+test('twenty failed source queries stop with refresh guidance and never attempt a CDN', async () => {
+  let calls = 0;
+  const { status, logs } = await runScenario(async () => {
+    calls++; throw failure('EMPTY_RESPONSE');
+  }, () => assert.fail('Source query failure must not contact a CDN'), { fastClock: true });
+  assert.equal(calls, 20);
+  assert.match(status, /片源候選查詢已達 20 次嘗試上限.*重新整理/);
+  assert.equal(logs.filter(row => row.event === 'playback.retry.stopped').length, 1);
 });

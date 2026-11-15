@@ -73,7 +73,9 @@ export function classifyError(error) {
       : rawMessage || descriptions[code] || '下載失敗';
   return { code, message: message.slice(0, 300),
     ...(error?.stage === 'source-api' ? { stage: 'source-api' } : {}),
-    ...(Number.isInteger(error?.status) ? { status: error.status } : {})
+    ...(Number.isInteger(error?.status) ? { status: error.status } : {}),
+    ...(typeof error?.retryStep === 'string' ? { retryStep: error.retryStep, stepAttempt: error.stepAttempt } : {}),
+    ...(Number.isFinite(error?.retryAfterMs) ? { retryAfterMs: error.retryAfterMs } : {})
   };
 }
 export function errorWith(code, message) {

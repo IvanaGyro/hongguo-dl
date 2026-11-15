@@ -33,6 +33,8 @@ GitHub Pages (Bun/Vite)        Cloudflare Worker           官方來源
        +-- Service Worker 串流 ZIP / MP4 無損合併 / 本機資料夾
 ```
 
+瀏覽器會保存自己的匿名播放裝置識別，重新整理、切集及更換代理 Worker 都會沿用。首次使用透過 `POST /api/device` 註冊；之後的註冊更新在背景進行，不阻塞一般取源。這項功能需同步更新前端與 Worker，舊版 API 仍保留相容路徑；細節見 [播放資料流](docs/playback-data-flow.md)。
+
 Worker 是**唯一需要執行的服務端運算**。GitHub Pages 沒有反向代理能力，無法直接替代 Worker。因為是不同網域，Worker 僅允許設定的網站 Origin 存取 API，預設包含 `https://ivanagyro.github.io`（不會因為頁面子路徑而改變 Origin）。亦可設定 Worker 環境變數 `FRONTEND_ORIGINS`，例如 `https://www.example.org,https://another.example.org`。CORS 不是驗證機制，公開部署前仍建議設置 Cloudflare Rate Limiting / WAF。
 
 ### 1. 安裝 Bun 與執行驗證

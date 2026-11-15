@@ -233,3 +233,22 @@ test('metadata Range deadline covers both headers and an idle body', async () =>
     if (phase === 'body') assert.equal(canceled, 1);
   }
 });
+
+test('late metadata headers leave a fresh body idle budget, while progress identifies the exact bytes', async () => {
+  const data = concat(ftyp, moov), stages = [];
+  const fetchImpl = async (_url, { headers }) => {
+    const first = Number(/bytes=(\d+)-/.exec(headers.Range)[1]);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const body = new ReadableStream({ start(controller) {
+      setTimeout(() => { controller.enqueue(data.subarray(first)); controller.close(); }, 60);
+    } });
+    return new Response(body, { status: 206, headers: {
+      'Content-Range': `bytes ${first}-${data.length - 1}/${data.length}`, 'Content-Length': String(data.length - first)
+    } });
+  };
+  const kid = await probeCencKid('https://example.com/fixture', undefined, fetchImpl, null,
+    (stage, fields) => stages.push({ stage, ...fields }), 100);
+  assert.deepEqual(kid, KID);
+  assert(stages.some(row => row.stage === 'range.request' && row.part === 'header' && row.offset === 0));
+  assert(stages.some(row => row.stage === 'range.progress' && row.receivedBytes === data.length));
+});

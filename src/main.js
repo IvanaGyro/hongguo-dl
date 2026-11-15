@@ -1,3 +1,4 @@
+import { createPlaybackDeviceStore } from './playback-device.js';
 // Video.js 10 HTML preset and composable native UI components.
 import '@videojs/html/video/player';
 import '@videojs/html/ui/container';
@@ -112,8 +113,8 @@ try { exportSelected = new Set(JSON.parse(localStorage.getItem(EXPORT_STORE) || 
 catch { /* browser restrictions */ }
 const mediaCache = new MediaCache();
 let downloadQualitySeriesId = null, downloadQualitySampleVid = null, sampleRequestToken = 0;
-const sourceStore = createEpisodeSourceStore((sid, vid, { signal }) =>
-  resolveSourceFromNetwork(sid, vid, signal), (sid, vid, variants) => {
+const sourceStore = createEpisodeSourceStore((sid, vid, { signal, onStage, attempts }) =>
+  resolveSourceFromNetwork(sid, vid, signal, onStage, attempts), (sid, vid, variants) => {
     if (String(series?.seriesId) === String(sid) && vid === downloadQualitySampleVid)
       renderDownloadQualityChoices(variants);
   });
@@ -355,16 +356,33 @@ function setMode(mode) {
   if (currentMode === 'play' && series) player?.activate();
   else player?.deactivate();
 }
-async function apiJson(route, signal) {
-  const response = await fetch(apiRoute(route), { headers: { Accept: 'application/json' }, signal });
+const playbackDevices = createPlaybackDeviceStore({ onEvent: (phase, fields) => playbackDiagnostics.log('device.lifecycle', { phase, ...fields }), storage: (() => { try { return localStorage; } catch { return null; } })() });
+async function apiJson(route, signal, onWait = () => 0) {
+  let stepAttempt = 0;
+  const sourcePhase = route.includes("channel=app") ? "source-app" : route.includes("channel=web") ? "source-web" : "source-auto";
+  const headers = { Accept: 'application/json' };
+  if (route.startsWith('/api/source?') && !route.includes('channel=web')) {
+    await supportsIndependentSourceChannels();
+    const capabilities = await sourceChannelProbe;
+    if (capabilities?.deviceSessions === true && typeof capabilities.deviceProfile === 'string') {
+      const identity = await playbackDevices.ensure(apiRoute(route), capabilities.deviceProfile, (phase, fields) => onWait(phase, fields));
+      headers['X-Playback-Device'] = JSON.stringify(identity);
+    }
+  }
+  if (route.startsWith('/api/source?')) stepAttempt = onWait(sourcePhase);
+  const response = await fetch(apiRoute(route), { headers, signal }).catch(error => {
+    if (route.startsWith('/api/source?')) Object.assign(error, { stage: 'source-api', retryStep: sourcePhase, stepAttempt });
+    throw error;
+  });
   const apiError = (code, message) => Object.assign(errorWith(code, message), {
     status: response.status,
-    ...(route.startsWith('/api/source?') ? { stage: 'source-api' } : {})
+    ...(route.startsWith('/api/source?') ? { stage: 'source-api', retryStep: sourcePhase, stepAttempt } : {})
   });
   let data;
   try { data = await response.json(); } catch { throw apiError('INVALID_JSON', 'Worker 沒有回傳有效 JSON'); }
-  if (!response.ok) throw apiError(data?.error?.code || 'HTTP_' + response.status,
-    data?.error?.message || '請求失敗（HTTP ' + response.status + '）');
+  if (!response.ok) throw Object.assign(apiError(data?.error?.code || 'HTTP_' + response.status,
+    data?.error?.message || '請求失敗（HTTP ' + response.status + '）'),
+    Number.isFinite(data?.error?.retryAfterMs) ? { retryAfterMs: data.error.retryAfterMs } : {});
   return data;
 }
 // Old production Workers may not have the independent web/App channels yet.
@@ -380,17 +398,29 @@ function supportsIndependentSourceChannels() {
     sourceChannelProbeOrigin = url;
     sourceChannelProbe = fetch(url, { headers: { Accept: 'application/json' } })
       .then(response => response.ok ? response.json() : null)
-      .then(data => data?.sourceChannels === true)
-      .catch(() => false);
+      .then(data => data || {})
+      .catch(() => ({}));
   }
-  return sourceChannelProbe;
+  return sourceChannelProbe.then(data => data?.sourceChannels === true);
 }
 let sourceRequestSequence = 0;
-async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortController().signal) {
+async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortController().signal, onStage = () => {}, attempts) {
   const requestId = ++sourceRequestSequence;
   const episode = String(series?.seriesId) === String(seriesId)
     ? Number(series.episodes?.find(item => String(item.vid) === String(vid))?.index || 0) : 0;
   const trace = (event, fields = {}) => playbackDiagnostics.log(event, { requestId, episode, ...fields });
+  const tasks = new Map();
+  const updateWait = (channel, phase, fields = {}) => {
+    if (!phase) tasks.delete(channel);
+    else if (tasks.get(channel)?.phase !== phase) {
+      const attempt = phase.startsWith('source-') ? attempts?.begin(phase) || 1 : fields.attempt || 0;
+      tasks.set(channel, { phase, attempt });
+      trace('source.wait', { channel, phase, attempt });
+    }
+    if (!signal.aborted) onStage('source.wait', { tasks: [...tasks.values()] });
+    return tasks.get(channel)?.attempt || 0;
+  };
+  updateWait('health', 'worker-capabilities');
   const started = performance.now();
   trace('source.api.request', {});
   // Expose slow Worker/API resolution while the promise is still pending.
@@ -406,7 +436,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
     const begin = performance.now();
     trace('source.channel.request', { channel });
     try {
-      const data = await apiJson(endpoint + '&channel=' + channel, signal);
+      const data = await apiJson(endpoint + '&channel=' + channel, signal, (phase, fields) => updateWait(channel, phase, fields));
       trace('source.channel.ready', {
         channel, elapsedMs: performance.now() - begin,
         variants: data?.variants?.length || 0
@@ -418,16 +448,17 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
         code: error?.code || 'SOURCE_UNAVAILABLE', status: error?.status
       });
       throw error;
-    }
+    } finally { updateWait(channel, null); }
   };
   try {
     // The worker returns all variants; quality and codec are selected locally.
     {
       const supported = await supportsIndependentSourceChannels();
+      updateWait('health', null);
       if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
       trace('source.api.independent', { supported });
       if (!supported) {
-        const data = await apiJson(endpoint, signal);
+        const data = await apiJson(endpoint, signal, (phase, fields) => updateWait('legacy', phase, fields));
         trace('source.api.response', {
           elapsedMs: performance.now() - started, channel: 'legacy',
           variants: data?.variants?.length || 0
@@ -458,8 +489,8 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
 // Quality and codec arguments remain accepted for older call sites but are
 // intentionally not forwarded: all selection happens in the frontend.
 async function getSource(seriesId, vid, quality = 'auto', codec = 'auto',
-  signal, { refresh = false, complete = false } = {}) {
-  return sourceStore.get(seriesId, vid, { signal, refresh, complete });
+  signal, { refresh = false, complete = false, onStage } = {}) {
+  return sourceStore.get(seriesId, vid, { signal, refresh, complete, onStage });
 }
 function renderDownloadQualityChoices(variants) {
   const select = $('quality');
@@ -496,7 +527,7 @@ async function lookupIds(ids) {
   $('lookup-error').hidden = true;
   const area = $('linked-series');
   area.hidden = false;
-  area.innerHTML = '<span class="subtle">讀取 ' + list.length + ' 部影集…</span>';
+  area.innerHTML = '<span class="subtle">讀取 ' + list.length + ' 部影集的分集列表（/api/series）…</span>';
   const results = [];
   let shown = false;
   for (const [index, id] of list.entries()) {
@@ -539,13 +570,14 @@ async function lookup(event) {
   $('linked-series').hidden = true;
   $('lookup-button').disabled = true;
   $('lookup-error').hidden = true;
+  $('lookup-button').textContent = '查詢分集列表…';
   try {
     const response = await apiJson('/api/series?input=' + encodeURIComponent(input));
     showSeries(response);
   } catch (error) {
     $('lookup-error').textContent = classifyError(error).message;
     $('lookup-error').hidden = false;
-  } finally { $('lookup-button').disabled = false; }
+  } finally { $('lookup-button').disabled = false; $('lookup-button').textContent = '尋找影集'; }
 }
 async function chooseFolder() {
   try {

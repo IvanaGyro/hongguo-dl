@@ -1,24 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Bound the entire small Range operation (headers AND body), not an episode.
+// Bound active I/O; metadata may reset its idle timer while retaining a hard total cap.
 // Race the task as well as aborting fetch: adapters need not honor AbortSignal.
 export const RANGE_TIMEOUT_MS = 10000;
-export function withRangeDeadline(run, signal, timeoutMs = RANGE_TIMEOUT_MS) {
+export function withRangeDeadline(run, signal, timeoutMs = RANGE_TIMEOUT_MS, { maxDurationMs = timeoutMs } = {}) {
   const canceled = () => Object.assign(new Error('Canceled'), { code: 'CANCELED' });
   if (signal?.aborted) return Promise.reject(canceled());
   const controller = new AbortController();
-  let timer, onAbort;
+  let timer, onAbort, resetDeadline, active = true;
+  const deadline = Date.now() + maxDurationMs;
   const interrupted = new Promise((_, reject) => {
     onAbort = () => { reject(canceled()); controller.abort(); };
-    timer = setTimeout(() => {
-      reject(Object.assign(new Error('影片 Range 請求逾時'), { code: 'CENC_RANGE_TIMEOUT' }));
-      controller.abort();
-    }, timeoutMs);
+    resetDeadline = () => {
+      if (!active) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        reject(Object.assign(new Error('影片 Range 請求逾時'), { code: 'CENC_RANGE_TIMEOUT' }));
+        controller.abort();
+      }, Math.max(0, Math.min(timeoutMs, deadline - Date.now())));
+    };
+    resetDeadline();
     signal?.addEventListener('abort', onAbort, { once: true });
   });
   let task;
-  try { task = Promise.resolve(run(controller.signal)); }
+  try { task = Promise.resolve(run(controller.signal, resetDeadline)); }
   catch (error) { task = Promise.reject(error); }
   return Promise.race([task, interrupted]).finally(() => {
+    active = false;
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   });

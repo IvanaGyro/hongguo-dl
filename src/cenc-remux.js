@@ -99,8 +99,10 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
  */
 export async function openCencProgressiveStream({
   video, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', retrySameSource = false, preload = false
+  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', retrySameSource = false, preload = false, remainingMediaAttempts = 20
 }) {
+  if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
+    { retryStep: 'media-download', stepAttempt: 20 });
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
     throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
@@ -338,7 +340,7 @@ export async function openCencProgressiveStream({
     });
   };
   try {
-    processor.post({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource,
+    processor.post({ type: 'start', url, proxyUrl, fileSize, key, startSeconds, retrySameSource, maxMediaRetries: Math.max(0, Math.min(2, remainingMediaAttempts - 1)),
       initialRanges, durationSeconds, bridge, deferProcessing: preload });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
@@ -361,7 +363,7 @@ export async function openCencProgressiveStream({
     await close();
     const replacement = await openCencProgressiveStream({
       video, url, proxyUrl, fileSize, codec, hasAac, key, signal, onStage,
-      startSeconds: seconds, durationSeconds, videoCodecString, bridge, retrySameSource
+      startSeconds: seconds, durationSeconds, videoCodecString, bridge, retrySameSource, remainingMediaAttempts
     });
     if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
     return replacement;

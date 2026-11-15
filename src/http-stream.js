@@ -1,3 +1,4 @@
+import { retryAfterMs } from './retry-after.js';
 // SPDX-License-Identifier: GPL-3.0-only
 // Pull one persistent response as AVIO needs bytes. Timers cover active I/O,
 // never time deliberately spent waiting for the player's buffer backpressure.
@@ -5,7 +6,7 @@ import { RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 const fail = (code, status = 0) => Object.assign(new Error(code), { code, status });
 const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
-  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onChunk = () => {}, externalCache = null,
+  recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onRequest = () => {}, onChunk = () => {}, externalCache = null,
   maxPacketBytes = 4 * 1024 * 1024, durationSeconds = 0, onSlow = () => {} }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
   const bytes = externalCache ? null : new Uint8Array(8 * 1024 * 1024);
@@ -61,6 +62,7 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     session = current;
     const started = performance.now();
     requests++;
+    onRequest({ requests, offset });
     const response = await io(async () => {
       const result = await fetchImpl(url, {
         headers: { Range: 'bytes=' + offset + '-' }, signal: current.controller.signal, cache: 'no-store'
@@ -87,8 +89,8 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     if ((!full && !valid) || (length !== null && (!/^\d+$/.test(length) || Number(length) !== expected)) || !response.body) {
       void response.body?.cancel().catch(() => {});
       const status = response.status;
-      throw fail(status === 403 ? 'CENC_SOURCE_FORBIDDEN' : status === 429 ? 'CENC_RATE_LIMITED' :
-        status >= 400 && status !== 416 ? 'CENC_RANGE_HTTP' : 'CENC_RANGE_INVALID', status);
+      throw Object.assign(fail(status === 403 ? 'CENC_SOURCE_FORBIDDEN' : status === 429 ? 'CENC_RATE_LIMITED' :
+        status >= 400 && status !== 416 ? 'CENC_RANGE_HTTP' : 'CENC_RANGE_INVALID', status), { retryAfterMs: retryAfterMs(response.headers.get('retry-after')) });
     }
     const tag = response.headers.get('etag');
     if (validator && tag && validator !== tag) {
