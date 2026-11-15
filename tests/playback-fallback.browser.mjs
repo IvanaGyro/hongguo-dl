@@ -1,5 +1,5 @@
 // Synthetic encrypted MP4: force the supported full-file fallback and observe
-// the user-visible warnings through download, decryption and playback.
+// the user-visible active layer through download, decryption and playback.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
@@ -12,7 +12,10 @@ const browser = await (name === 'firefox' ? firefox : chromium).launch({
 });
 const page = await browser.newPage();
 // The app opens in watch mode; this suite was written against a download-mode start.
-await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+await page.addInitScript(() => {
+  window.__HONGGUO_START_MODE = 'download';
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
+});
 let wholeFileRequests = 0;
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -44,8 +47,8 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
   if (!range || range[1] === '0' && range[2] === '') {
     wholeFileRequests++;
     const status = await page.locator('#player-status').textContent();
-    assert.match(status, /⚠.*整集下載備援.*完成後才能播放/,
-      'Warn before starting the full-file request');
+    assert.match(status, /下載｜正在下載整集影片.*第 1\/20 次/,
+      'Identify the download layer before starting the full-file request');
     await new Promise(resolve => setTimeout(resolve,100));
     return route.fulfill({ status: range ? 206 : 200, contentType:'video/mp4',
       headers:{'Content-Length':String(input.length), ...(range ? { 'Content-Range':`bytes 0-${input.length - 1}/${input.length}` } : {})}, body:input });
@@ -66,8 +69,8 @@ try {
   }, null, {timeout:90000});
   const statuses = await page.evaluate(() => window.__statusLog);
   assert.equal(wholeFileRequests,1);
-  assert(statuses.some(s=>/整集下載備援.*下載整集 \d+%/.test(s)),JSON.stringify(statuses));
-  assert(statuses.some(s=>/整集下載備援.*解密並重新封裝/.test(s)),JSON.stringify(statuses));
+  assert(statuses.some(s=>/下載｜下載整集 \d+%/.test(s)),JSON.stringify(statuses));
+  assert(statuses.some(s=>/解密.*｜正在解密並重新封裝整集影片/.test(s)),JSON.stringify(statuses));
   assert(!errors.length, errors.join('; '));
-  console.log('PASS '+name+' full-file fallback warns before download and through decrypt/remux');
+  console.log('PASS '+name+' full-file fallback identifies active download and decrypt/remux layers');
 } finally { await browser.close(); }

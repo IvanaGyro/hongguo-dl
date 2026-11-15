@@ -14,7 +14,10 @@ const browser = await firefox.launch({
 const context = await browser.newContext({ acceptDownloads: true, serviceWorkers: 'allow' });
 const page = await context.newPage();
 // The app opens in watch mode; this suite was written against a download-mode start.
-await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+await page.addInitScript(() => {
+  window.__HONGGUO_START_MODE = 'download';
+  localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
+});
 const errors = [];
 const calls = [];
 let downloadEvents = 0;
@@ -101,7 +104,7 @@ async function zipInspect(path, count, first = '第001集.mp4', last = null) {
     '  assert all(f.read(name) == open(sys.argv[5],"rb").read() for name in names)',
     '  assert f.testzip() is None'
   ].join('\n');
-  const result = spawnSync('python3', ['-c', script, path, String(count),
+  const result = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', script, path, String(count),
     first, last || '-', process.argv[2]], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
 }
@@ -304,6 +307,8 @@ try {
   assert.equal(calls.length, beforeMp4, 'Lossless concat must use staged files without re-fetching');
 
   await page.locator('button[data-linked-id="60"]').click();
+  await page.locator('#player-panel').waitFor({ state: 'visible' });
+  await page.locator('#mode-download').click();
   await page.locator('#queue-select-none').click();
   await page.locator('#add-queue').click();
   await waitCompleted(62, 180000);
@@ -355,7 +360,10 @@ try {
     'Controls should not obscure most of the video on mobile: ' + JSON.stringify(mobile));
 
   // A prepared next episode must be handed off without another /api/source call.
-  await page.evaluate(() => localStorage.removeItem('hongguo-dl-playback-history-v1'));
+  await page.evaluate(() => {
+    localStorage.removeItem('hongguo-dl-playback-history-v1');
+    localStorage.removeItem('hongguo-dl-series-playback-v1');
+  });
   await page.goto(base + '?id=42', { waitUntil: 'domcontentloaded' });
   await page.locator('#mode-play').click();
   await page.waitForFunction(() => document.querySelector('#player-video')?.readyState >= 1);
