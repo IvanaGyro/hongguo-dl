@@ -59,7 +59,7 @@ test('60 listed episodes cause only one source lookup and at most two 256-byte m
 test('explicit ByteVC2 mode sends device_level=3 and reads the actual ByteVC2 CDN variant', async () => {
   const mock = responder();
   const result = await runLiveSmoke({
-    fetchImpl: mock.fetchImpl, codec: 'bytevc2', log: () => {}
+    fetchImpl: mock.fetchImpl, requireBytevc2: true, log: () => {}
   });
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.results[0].codec, 'bytevc2');
@@ -67,6 +67,8 @@ test('explicit ByteVC2 mode sends device_level=3 and reads the actual ByteVC2 CD
   assert.equal(result.requestBudget, 4);
   assert.deepEqual(mock.paths.map(x => x.path), ['/api/series', '/api/source', '/api/media']);
   assert.equal(mock.paths[1].headers.Accept, 'application/json');
+  // Only device_level is sent. The source API must not regain codec filtering.
+  assert.equal(mock.paths.filter(x => x.path === '/api/source').length, 1);
 });
 
 test('explicit ByteVC2 mode fails if the upstream response no longer advertises ByteVC2', async () => {
@@ -82,7 +84,7 @@ test('explicit ByteVC2 mode fails if the upstream response no longer advertises 
     }
     return response.fetchImpl(url, options);
   };
-  await assert.rejects(runLiveSmoke({ fetchImpl, codec: 'bytevc2', log: () => {} }),
+  await assert.rejects(runLiveSmoke({ fetchImpl, requireBytevc2: true, log: () => {} }),
     /No bytevc2 source variant/);
   assert.equal(requests, 2, 'Missing codec must fail before contacting any CDN');
 });
