@@ -6,6 +6,7 @@ import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadli
 import { errorWith } from './logic.js';
 import { createMediaDownload } from './media-download.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
+import { openProgressiveMediaDownload } from './progressive-media-download.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
   movieDurationSeconds } from './mp4-track-formats.js';
 import { clampStreamSeek } from './cenc-seek.js';
@@ -171,12 +172,13 @@ async function rangeFetchOnce(url, start, bytes, signal, fetchImpl, onProbe = ()
 }
 
 export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata = null,
-  onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS, recovery = null) {
+  onProbe = () => {}, timeoutMs = RANGE_TIMEOUT_MS, recovery = null, byteReader = null) {
   const initialRanges = [];
   const read = async (start, bytes, part) => {
     const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl,
       (stage, fields) => onProbe(stage, { part, ...fields }), timeoutMs);
-    const result = await (recovery ? recovery.read(once, signal) : once());
+    const result = byteReader ? await byteReader.read(start, bytes) :
+      await (recovery ? recovery.read(once, signal) : once());
     initialRanges.push({ offset: start, data: result.data });
     return result;
   };
@@ -410,12 +412,18 @@ export async function openClearKeyStream({
       !['localhost', '127.0.0.1'].includes(location.hostname) });
   const metadata = {};
   onStage('metadata');
-  let kid;
+  let kid, progressive = null;
   try {
+    // Layer 1 opens one persistent 0- response. The metadata parser only
+    // asks this downloader for bytes and never owns the network response.
+    progressive = await openProgressiveMediaDownload({
+      url, fetchImpl: transport.fetch, signal, onStage
+    });
     kid = await probeCencKid(url, signal, transport.fetch, metadata,
-      (stage, fields) => onStage(stage, fields));
+      (stage, fields) => onStage(stage, fields), RANGE_TIMEOUT_MS, null, progressive);
   }
   catch (error) {
+    progressive?.close();
     // A rejected/broken HTTP Range is a source/network failure, not a
     // demux/decode failure. Never turn it into a whole-file FFmpeg fallback.
     if (signal?.aborted || error?.code === 'PLAYBACK_STEP_LIMIT' || error?.code === 'CENC_METADATA_LIMIT' ||
@@ -431,18 +439,25 @@ export async function openClearKeyStream({
     codec: metadata.videoCodec || 'unknown',
     codecString: metadata.hevcCodecString || 'unknown'
   });
-  if (!kid) return declined('no-cenc-kid');
+  if (!kid) { progressive.close(); return declined('no-cenc-kid'); }
   if (metadata.videoCodec &&
       (codec === 'hevc' && !['hvc1', 'hev1'].includes(metadata.videoCodec) ||
-       codec === 'h264' && !['avc1', 'avc3'].includes(metadata.videoCodec)))
+       codec === 'h264' && !['avc1', 'avc3'].includes(metadata.videoCodec))) {
+    progressive.close();
     return declined('stsd-declared-codec-mismatch');
+  }
   const key = hexKey(source.contentKey);
   if (!metadata.fragmented) {
     try {
       onStage('remux-check');
+      const shared = progressive.handoff();
+      const initialRanges = [...shared.initialRanges, ...metadata.initialRanges.filter(r =>
+        !shared.initialRanges.some(prefix => r.offset >= prefix.offset &&
+          r.offset + r.data.length <= prefix.offset + prefix.data.length))];
       const remux = await openCencProgressiveStream({
         video, input: input.input(source, transport),
-        fileSize: metadata.fileSize, initialRanges: metadata.initialRanges, onStage,
+        fileSize: metadata.fileSize, initialRanges, initialStream: shared.initialStream,
+        initialOffset: shared.initialOffset, initialEnd: shared.initialEnd, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
         key: source.contentKey, signal, preload, remainingMediaAttempts,
@@ -453,6 +468,8 @@ export async function openClearKeyStream({
       if (remux) {
         onStage('cenc.route', { kind: 'progressive-remux' });
         console.info('[Hongguo CENC] playback route: progressive-remux-to-mse');
+        const oldClose = remux.close;
+        remux.close = async (...args) => { progressive.close(); return oldClose(...args); };
         return remux;
       }
     } catch (error) {
@@ -462,6 +479,7 @@ export async function openClearKeyStream({
     }
     onStage('cenc.remux-unavailable', { codec });
   }
+  progressive.close();
   // Never attach a speculative EME session to the currently playing video.
   if (preload) return declined('preload-remux-unavailable');
   // Already-fragmented CENC remains encrypted and is delivered through EME.
