@@ -29,26 +29,6 @@ page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text());
 page.route('**/bvc2/bvc2-core.wasm', route => route.fulfill({
   status: 404, contentType: 'text/plain', body: 'not installed for this test'
 }));
-// Playback may use direct CDN URLs for clear media instead of /api/media.
-// Route fictional CDN names to the same local synthetic sample; otherwise
-// Firefox tries the public network and CORS masks the intended UI assertions.
-page.route(url => url.hostname.endsWith('.fqnovelvod.com'), route => {
-  const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
-  const first = range ? Number(range[1]) : 0;
-  const last = range && range[2] ? Math.min(Number(range[2]), sample.length - 1) : sample.length - 1;
-  assert(first >= 0 && last >= first && last < sample.length, 'Invalid synthetic CDN range');
-  const payload = sample.subarray(first, last + 1);
-  return route.fulfill({
-    status: range ? 206 : 200, contentType: 'video/mp4',
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Range, Accept',
-      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
-      'Accept-Ranges': 'bytes', 'Content-Length': String(payload.length),
-      ...(range ? { 'Content-Range': `bytes ${first}-${last}/${sample.length}` } : {})
-    }, body: payload
-  });
-});
 page.route(url => url.pathname.startsWith('/api/'), route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/series') {
