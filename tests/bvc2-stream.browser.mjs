@@ -88,7 +88,9 @@ try {
     const video = document.querySelector('#player-video');
     if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => window.recordBvcFirstFrame());
   });
-  await page.locator('[data-play-vid="111111111"]').click();
+  // Entering playback mode already selects the first episode. Clicking it
+  // again before its first frame aborts that CDN attempt and creates an
+  // unrelated second 403, obscuring the same-session rotation assertion.
   await page.waitForFunction(() => {
     const video = document.querySelector('#player-video');
     return video.videoWidth === 160 && video.currentTime > 0.3 &&
