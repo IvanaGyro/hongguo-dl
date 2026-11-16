@@ -1,5 +1,5 @@
 // Bounded REAL upstream smoke: no signed URLs or media keys in diagnostics.
-// Runs only from the dedicated weekly/manual workflow, never on every push.
+// Runs only from the dedicated scheduled/manual workflow, never on PR pushes.
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,13 +26,12 @@ async function readJson(response, context) {
   return response.json();
 }
 
-function variantsForProbe(variants, codec = 'auto') {
+function variantsForProbe(variants, requireBytevc2 = false) {
   assert.ok(Array.isArray(variants) && variants.length, 'No source variants');
-  if (!['auto', 'bytevc2'].includes(codec)) throw new Error('Unsupported live codec filter');
-  // Explicit ByteVC2 monitoring detects upstream device capability and codec
-  // negotiation drift; auto mode retains the original smoke behavior.
-  const primary = codec === 'auto' ? variants[0] : variants.find(v => v.codec === codec);
-  assert.ok(primary, 'No ' + codec + ' source variant advertised by live Worker');
+  // Only the monitoring assertion changes. The Worker always supplies a full
+  // variant list; we do not ask the source API to filter it by codec.
+  const primary = requireBytevc2 ? variants.find(v => v.codec === 'bytevc2') : variants[0];
+  assert.ok(primary, 'No bytevc2 source variant advertised by live Worker');
   assert.ok(primary.url && primary.codec && primary.quality,
     'First source lacks URL, codec or quality metadata');
   const seenHosts = new Set();
@@ -54,11 +53,11 @@ export async function runLiveSmoke({
   fetchImpl = fetch,
   workerOrigin = DEFAULT_WORKER,
   episodeCount = 1,
-  codec = 'auto',
+  requireBytevc2 = false,
   log = console.log
 } = {}) {
   checkEpisodeCount(episodeCount);
-  if (!['auto', 'bytevc2'].includes(codec)) throw new Error('Unsupported live codec filter');
+  if (typeof requireBytevc2 !== 'boolean') throw new TypeError('requireBytevc2 must be a boolean');
   const origin = new URL(workerOrigin);
   assert.equal(origin.protocol, 'https:', 'Worker origin must use HTTPS');
   assert.equal(origin.pathname, '/', 'Worker origin must be a root URL');
@@ -96,17 +95,18 @@ export async function runLiveSmoke({
     ' episodes listed; inspecting only ' + sample.length + ' source(s)');
   const results = [];
   for (const episode of sample) {
-    // The v5 player supports 1/2/3; tier 3 is expected to expose ByteVC2.
-    // Older deployed Workers ignore device_level until the v5 rollout.
+    // Request all variants. device_level is a capability tier, not a codec
+    // selector; the deployed Worker only honors it after the v5 rollout.
     const params = new URLSearchParams({
-      sid: SERIES_ID, vid: episode.vid, ...(codec === 'bytevc2' ? { device_level: '3' } : {})
+      sid: SERIES_ID, vid: episode.vid,
+      ...(requireBytevc2 ? { device_level: '3' } : {})
     });
     const source = await readJson(
       await get('/api/source?' + params, { Accept: 'application/json' }),
       'source episode #' + episode.index);
     const variants = source.variants;
-    const choices = variantsForProbe(variants, codec);
-    const codec = choices[0].codec;
+    const choices = variantsForProbe(variants, requireBytevc2);
+    const selectedCodec = choices[0].codec;
     const quality = choices[0].quality;
     const probes = [];
     let passed = false;
@@ -162,9 +162,9 @@ export async function runLiveSmoke({
     }
     const statuses = probes.map(p => String(p.status)).join(',');
     log('Episode #' + episode.index + ': ' + variants.length +
-      ' variant URLs; chosen ' + codec + '/' + quality +
+      ' variant URLs; chosen ' + selectedCodec + '/' + quality +
       '; CDN probe status ' + statuses + (passed ? ' ✓' : ' ✗'));
-    results.push({ episode: episode.index, codec, quality, probes, passed });
+    results.push({ episode: episode.index, codec: selectedCodec, quality, probes, passed });
     if (!passed) throw new Error('Episode #' + episode.index +
       ': no CDN returned a valid 206 Partial Content (' + statuses + ')');
   }
@@ -176,16 +176,17 @@ const invokedDirectly = process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const episodeCount = Number(process.env.LIVE_EPISODES || '1');
-  const codec = process.env.LIVE_CODEC || 'auto';
+  const requireBytevc2 = process.env.LIVE_REQUIRE_BYTEVC2 === '1';
+  const probeName = requireBytevc2 ? 'ByteVC2' : 'default';
   try {
-    const result = await runLiveSmoke({ episodeCount, codec });
-    console.log('Live upstream smoke passed for ' + codec + ': ' + result.checkedEpisodes +
+    const result = await runLiveSmoke({ episodeCount, requireBytevc2 });
+    console.log('Live upstream smoke passed for ' + probeName + ': ' + result.checkedEpisodes +
       ' episode(s), ' + result.requestCount + '/' + result.requestBudget +
       ' HTTP requests');
     if (process.env.GITHUB_STEP_SUMMARY) {
       const { appendFile } = await import('node:fs/promises');
       await appendFile(process.env.GITHUB_STEP_SUMMARY,
-        '### Live origin smoke (' + codec + ')\n\n- Episodes checked: ' + result.checkedEpisodes +
+        '### Live origin smoke (' + probeName + ')\n\n- Episodes checked: ' + result.checkedEpisodes +
         ' / ' + result.totalEpisodes + '\n- HTTP requests: ' + result.requestCount +
         ' / ' + result.requestBudget +
         '\n- Media: 256-byte Range only, no complete videos\n');
