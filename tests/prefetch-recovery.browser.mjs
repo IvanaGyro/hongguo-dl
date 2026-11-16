@@ -47,8 +47,10 @@ try {
       response.writeHead(206, { ...cors, 'Content-Type': 'video/mp4', 'Content-Length': String(last - first + 1),
         'Content-Range': `bytes ${first}-${last}/${bytes.length}` });
       if (!openEnded || !failing) return response.end(bytes.subarray(first, last + 1));
-      // Enough for a picture in the active case; only init in the preload case.
-      let offset = Math.min(last + 1, first + (mode.startsWith('active-slow') ? 262144 : 1024));
+      // Shared 0- responses must complete the 64 KiB metadata prefix first.
+      // Then a slow preload should stall media bytes rather than the parser.
+      let offset = Math.min(last + 1, first +
+        (mode.startsWith('active-slow') ? 262144 : 65536 + 1024));
       response.write(bytes.subarray(first, offset));
       const timer = setInterval(() => {
         if (offset > last) { clearInterval(timer); timers.delete(timer); response.end(); }
