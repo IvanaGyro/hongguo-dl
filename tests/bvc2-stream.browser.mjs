@@ -39,7 +39,7 @@ await page.addInitScript(() => {
   };
   URL.revokeObjectURL = url => { live.delete(url); window.__activeMse = live.size; revoke(url); };
 });
-await context.route(url => url.pathname.startsWith('/api/') || url.hostname.endsWith('.fqnovelvod.com'), async route => {
+await context.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());
   const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: false });
@@ -50,22 +50,14 @@ await context.route(url => url.pathname.startsWith('/api/') || url.hostname.ends
     codec: 'bytevc2', quality: '720p', source: 'app',
     url: 'https://' + host + '.fqnovelvod.com/' +
       (url.searchParams.get('vid') === '222222222' ? 'short.mp4' : 'play.mp4'), contentKey: null })) });
-  // The player may read an unencrypted ByteVC2 URL directly, whereas
-  // encrypted/relayed variants go through /api/media. Mock both transports:
-  // CI must never depend on DNS/CORS for the fictional CDN hosts.
-  const cdn = url.pathname === '/api/media' ? new URL(url.searchParams.get('url')) : url;
-  assert(cdn.hostname.endsWith('.fqnovelvod.com'), 'Unexpected media host');
-  const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Range, Accept',
-    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges' };
-  if (cdn.hostname.startsWith('denied.')) {
-    deniedPaths.push(cdn.pathname);
-    return route.fulfill({ status: 403, headers: cors, body: 'Synthetic CDN denial' });
+  assert.equal(url.pathname, '/api/media');
+  if (new URL(url.searchParams.get('url')).hostname.startsWith('denied.')) {
+    deniedPaths.push(new URL(url.searchParams.get('url')).pathname); return route.fulfill({ status: 403, body: 'Synthetic CDN denial' });
   }
-  const media = cdn.pathname === '/short.mp4' ? shortInput : (whole ? shortInput : longInput);
+  const media = new URL(url.searchParams.get('url')).pathname === '/short.mp4' ? shortInput : (whole ? shortInput : longInput);
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
   // Original, unencrypted downloads use the existing direct streaming writer.
-  if (!range) return route.fulfill({ contentType: 'video/mp4',
-    headers: { ...cors, 'Accept-Ranges': 'bytes' }, body: media });
+  if (!range) return route.fulfill({ contentType: 'video/mp4', body: media });
   const first = Number(range[1]), last = range[2] ? Math.min(Number(range[2]), media.length - 1)
     : Math.min(first + (whole ? media.length : 65536) - 1, media.length - 1);
   assert(first >= 0 && last >= first && last < media.length);
@@ -73,7 +65,7 @@ await context.route(url => url.pathname.startsWith('/api/') || url.hostname.ends
   deliveredBytes += last - first + 1;
   if (!whole) await new Promise(resolve => setTimeout(resolve, 20));
   return route.fulfill({ status: 206, contentType: 'video/mp4',
-    headers: { ...cors, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${first}-${last}/${media.length}`,
+    headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${first}-${last}/${media.length}`,
       'Content-Length': String(last - first + 1) }, body: media.subarray(first, last + 1) });
 });
 await page.exposeFunction('recordBvcFirstFrame', () => { firstFrameBytes ??= deliveredBytes; });
@@ -88,9 +80,7 @@ try {
     const video = document.querySelector('#player-video');
     if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => window.recordBvcFirstFrame());
   });
-  // Entering playback mode already selects the first episode. Clicking it
-  // again before its first frame aborts that CDN attempt and creates an
-  // unrelated second 403, obscuring the same-session rotation assertion.
+  await page.locator('[data-play-vid="111111111"]').click();
   await page.waitForFunction(() => {
     const video = document.querySelector('#player-video');
     return video.videoWidth === 160 && video.currentTime > 0.3 &&
