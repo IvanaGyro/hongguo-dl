@@ -33,7 +33,7 @@ page.route('**/bvc2/bvc2-core.wasm', route => route.fulfill({
 // Route fictional CDN names to the same local synthetic sample; otherwise
 // Firefox tries the public network and CORS masks the intended UI assertions.
 page.route(url => url.hostname.endsWith('.fqnovelvod.com'), route => {
-  const range = /^bytes=(\\d+)-(\\d*)$/.exec(route.request().headers().range || '');
+  const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
   const first = range ? Number(range[1]) : 0;
   const last = range && range[2] ? Math.min(Number(range[2]), sample.length - 1) : sample.length - 1;
   assert(first >= 0 && last >= first && last < sample.length, 'Invalid synthetic CDN range');
