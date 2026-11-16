@@ -18,7 +18,7 @@ on:
       - 'tests/bvc2-stream.browser.mjs'
   workflow_dispatch:
 concurrency:
-  group: bvc2-wasm-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: write
