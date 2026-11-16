@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHttpStreamReader } from '../src/http-stream.js';
+import { createMediaByteCache } from '../src/media-byte-cache.js';
 import { createCencRangeRecovery } from '../src/cenc-range-recovery.js';
 import { createMediaTransport } from '../src/media-transport.js';
 const data = Uint8Array.from({ length: 4 * 1024 * 1024 }, (_, i) => i % 251);
@@ -30,6 +31,31 @@ test('many sequential AVIO reads share one direct CDN HTTP response and bounded 
     assert(stream.stats.cachedBytes <= 2 * 1024 * 1024);
   } finally { stream.close(); }
 });
+
+test('AVIO at 100658 reuses the transferred 0- response after 64 KiB metadata', async () => {
+  const cache = createMediaByteCache({ fileSize: data.length, budget: 8 * 1024 * 1024 });
+  cache.write(0, data.slice(0, 65536), true);
+  let extraFetches = 0;
+  const initialStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(data.slice(65536));
+      controller.close();
+    }
+  });
+  const stream = createHttpStreamReader({
+    url: 'https://example.test/media.mp4', fileSize: data.length,
+    externalCache: cache, initialStream, initialOffset: 65536,
+    initialEnd: data.length,
+    fetchImpl: async () => { extraFetches++; throw new Error('Unnecessary Range'); },
+    onChunk: (offset, bytes) => cache.write(offset, bytes)
+  });
+  try {
+    assert.deepEqual(await stream.read(100658, 32768), data.slice(100658, 133426));
+    assert.equal(extraFetches, 0, 'Small AVIO seek must not reopen a CDN Range');
+    assert.equal(stream.stats.requests, 1, 'The transferred response counts as one network request');
+  } finally { stream.close(); }
+});
+
 test('disconnect resumes at the first missing byte and keeps partially received data', async () => {
   const starts = [];
   const recovery = createCencRangeRecovery({ retryInitial: true, wait: async () => {} });
