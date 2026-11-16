@@ -34,7 +34,7 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const pr = context.payload.pull_request;
-            const branch = pr?.head?.ref || context.ref.replace(/^refs\\/heads\\//, '');
+            const branch = pr?.head?.ref || context.ref.slice('refs/heads/'.length);
             const sourceRepoId = pr?.head?.repo?.id || context.payload.repository?.id;
             if (!sourceRepoId || !branch) throw new Error('Missing source repository or branch');
 
