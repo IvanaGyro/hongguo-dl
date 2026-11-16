@@ -49,7 +49,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: bvc2-browser-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   playback:
