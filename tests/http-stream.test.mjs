@@ -182,3 +182,62 @@ test('time spent waiting for the consumer does not count as inadequate download 
     assert.equal(calls, 1);
   } finally { stream.close(); }
 });
+
+
+test('handoff validates the original ETag when resuming a capped response', async () => {
+  const cache = createMediaByteCache({ fileSize: data.length, budget: 8 * 1024 * 1024 });
+  cache.write(0, data.slice(0, 65536), true);
+  const initialStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(data.slice(65536, 131072));
+      controller.close();
+    }
+  });
+  let resumed = 0;
+  const stream = createHttpStreamReader({
+    url: 'https://example.test/etag.mp4', fileSize: data.length,
+    externalCache: cache, initialStream, initialOffset: 65536, initialEnd: 131072,
+    initialEtag: '"version-1"',
+    fetchImpl: async (_, opts) => {
+      resumed++;
+      assert.equal(offset(opts), 131072);
+      const res = response(131072, 196608);
+      res.headers.set('etag', '"version-2"');
+      return res;
+    },
+    onChunk: (at, bytes) => cache.write(at, bytes)
+  });
+  try {
+    await assert.rejects(stream.read(65536, 131072), { code: 'CENC_RANGE_INVALID' });
+    assert.equal(resumed, 1);
+  } finally { stream.close(); }
+});
+
+test('handoff permits a matching original ETag after a capped response', async () => {
+  const cache = createMediaByteCache({ fileSize: data.length, budget: 8 * 1024 * 1024 });
+  cache.write(0, data.slice(0, 65536), true);
+  const initialStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(data.slice(65536, 131072));
+      controller.close();
+    }
+  });
+  let resumed = 0;
+  const stream = createHttpStreamReader({
+    url: 'https://example.test/etag.mp4', fileSize: data.length,
+    externalCache: cache, initialStream, initialOffset: 65536, initialEnd: 131072,
+    initialEtag: '"version-1"',
+    fetchImpl: async (_, opts) => {
+      resumed++;
+      assert.equal(offset(opts), 131072);
+      const res = response(131072, 196608);
+      res.headers.set('etag', '"version-1"');
+      return res;
+    },
+    onChunk: (at, bytes) => cache.write(at, bytes)
+  });
+  try {
+    assert.deepEqual(await stream.read(65536, 131072), data.slice(65536, 196608));
+    assert.equal(resumed, 1);
+  } finally { stream.close(); }
+});

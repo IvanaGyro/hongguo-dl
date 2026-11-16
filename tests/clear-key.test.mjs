@@ -252,3 +252,46 @@ test('late metadata headers leave a fresh body idle budget, while progress ident
   assert(stages.some(row => row.stage === 'range.request' && row.part === 'header' && row.offset === 0));
   assert(stages.some(row => row.stage === 'range.progress' && row.receivedBytes === data.length));
 });
+
+
+test('a CENC source above the WASM limit remains eligible for native EME', async () => {
+  const fileSize = 261 * 1024 * 1024;
+  const prefix = new Uint8Array(65536);
+  prefix.set(concat(ftyp, moov, mdat));
+  const listeners = new Map();
+  const session = {
+    addEventListener: (name, cb) => listeners.set(name, cb),
+    generateRequest: async () => queueMicrotask(() => listeners.get('message')({
+      message: new TextEncoder().encode(JSON.stringify({
+        kids: ['AQIDBAUGBwgJCgsMDQ4PEA'], type: 'temporary'
+      }))
+    })),
+    update: async () => {},
+    close: async () => {}
+  };
+  let calls = 0;
+  const result = await openClearKeyStream({
+    video: { canPlayType: () => 'probably', setMediaKeys: async () => {} },
+    source: {
+      url: 'https://cdn.example/large.mp4', codec: 'h264', source: 'app',
+      contentKey: '00112233445566778899aabbccddeeff'
+    },
+    codec: 'h264', workerOrigin: 'https://worker.example',
+    fetchImpl: async (_, opts) => {
+      calls++;
+      assert.equal(opts.headers.Range, 'bytes=0-');
+      return new Response(new ReadableStream({
+        start(controller) { controller.enqueue(prefix); controller.close(); }
+      }), { status: 206, headers: {
+        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`
+      } });
+    },
+    requestAccess: async () => ({
+      createMediaKeys: async () => ({ createSession: () => session })
+    })
+  });
+  try {
+    assert.equal(result.kind, 'progressive');
+    assert.equal(calls, 1);
+  } finally { await result?.close(); }
+});
