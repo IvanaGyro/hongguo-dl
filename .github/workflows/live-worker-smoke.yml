@@ -1,7 +1,7 @@
 name: Live Worker source smoke (rate limited)
 on:
   # No push/PR trigger: a shared GitHub runner IP must not issue requests on
-  # every commit. Daily, at most one episode per codec and 256 bytes per CDN.
+  # every commit. Daily, one default and one ByteVC2 assertion; at most 256 bytes per CDN.
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
@@ -41,5 +41,5 @@ jobs:
       - name: Probe actual ByteVC2 rendition and CDN (256-byte bounded)
         env:
           LIVE_EPISODES: '1'
-          LIVE_CODEC: bytevc2
+          LIVE_REQUIRE_BYTEVC2: '1'
         run: bun scripts/live-worker-smoke.mjs
