@@ -135,17 +135,20 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     async read(start, bytes) {
       ensureOpen();
       if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(bytes) ||
-          bytes < 8 || bytes > MAX_METADATA || start + bytes > fileSize)
+          bytes < 8 || bytes > MAX_METADATA || start >= fileSize)
         throw fail('CENC_RANGE_INVALID');
-      onStage('range.request', { offset: start, bytes });
+      // The metadata probe requests 64 KiB even for files shorter than 64 KiB.
+      const wanted = Math.min(bytes, fileSize - start);
+      if (wanted < 8) throw fail('CENC_RANGE_INVALID');
+      onStage('range.request', { offset: start, bytes: wanted });
       let data;
-      if (start + bytes <= MAX_METADATA + HEADER_SIZE && reader) {
-        await readPrefixTo(start + bytes);
-        data = prefix.slice(start, start + bytes);
+      if (start + wanted <= MAX_METADATA + HEADER_SIZE && reader) {
+        await readPrefixTo(start + wanted);
+        data = prefix.slice(start, start + wanted);
       } else {
         await reader?.cancel().catch(() => {});
         reader = null; pending = null;
-        data = await boundedRead(start, bytes);
+        data = await boundedRead(start, wanted);
       }
       onStage('range.response', { status: 206 });
       onStage('range.complete', { bytes: data.length });
