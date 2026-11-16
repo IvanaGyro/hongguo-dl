@@ -34,3 +34,12 @@ jobs:
         env:
           LIVE_EPISODES: ${{ inputs.episodes || '1' }}
         run: bun scripts/live-worker-smoke.mjs
+      # This is a separate real upstream contract, not a synthetic codec proof.
+      # Refuse silent ByteVC2 disappearance at device_level=3, and validate
+      # that at least one of its real CDN URLs still serves bounded Range bytes.
+      # No network probes run on push or pull_request events.
+      - name: Probe actual ByteVC2 rendition and CDN (256-byte bounded)
+        env:
+          LIVE_EPISODES: '1'
+          LIVE_CODEC: bytevc2
+        run: bun scripts/live-worker-smoke.mjs
