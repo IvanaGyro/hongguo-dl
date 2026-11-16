@@ -127,12 +127,9 @@ try {
         assert.equal(mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-a.mp4`).length, 1,
           'Do not reopen the failed slow URL at handoff');
         const healthyRanges = mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-b.mp4`);
-        assert(healthyRanges.length >= 1, 'The selected replacement CDN must serve actual media bytes');
-        // Independent AVIO reads may request more than one range on the same
-        // healthy CDN (e.g. offsets 100658 and 65536). Duplicating an identical
-        // range would instead indicate a redundant retry or reopened transport.
-        assert.equal(new Set(healthyRanges.map(r => r.first)).size, healthyRanges.length,
-          'A healthy replacement CDN must not repeat an identical open-ended Range');
+        assert.equal(healthyRanges.length, 1,
+          'The replacement CDN must reuse one open-ended response for metadata and media');
+        assert.equal(healthyRanges[0].first, 0, 'The shared source starts at byte zero');
       }
       assert(!mediaRequests.some(r => r.path.includes('lower')), 'Stay at the original quality');
       assert.deepEqual(errors, []);
