@@ -100,7 +100,7 @@ test('a far-away moov uses one bounded seek rather than reading a large mdat', a
     url: 'https://example.test/moov-at-end.mp4',
     fetchImpl: async (_, opts) => {
       requests.push(opts.headers.Range);
-      const match = /^bytes=(\\d+)-(\\d*)$/.exec(opts.headers.Range);
+      const match = /^bytes=(\d+)-(\d*)$/.exec(opts.headers.Range);
       const start = Number(match[1]);
       const end = match[2] ? Number(match[2]) + 1 : total;
       const body = start === 0
