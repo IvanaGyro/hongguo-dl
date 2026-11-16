@@ -56,6 +56,37 @@ test('60 listed episodes cause only one source lookup and at most two 256-byte m
   assert.ok(!lines.join('\n').includes('PRIVATE'), 'Never print signed source URLs');
 });
 
+test('explicit ByteVC2 mode sends device_level=3 and reads the actual ByteVC2 CDN variant', async () => {
+  const mock = responder();
+  const result = await runLiveSmoke({
+    fetchImpl: mock.fetchImpl, codec: 'bytevc2', log: () => {}
+  });
+  assert.equal(result.checkedEpisodes, 1);
+  assert.equal(result.results[0].codec, 'bytevc2');
+  assert.equal(result.results[0].quality, '720p');
+  assert.equal(result.requestBudget, 4);
+  assert.deepEqual(mock.paths.map(x => x.path), ['/api/series', '/api/source', '/api/media']);
+  assert.equal(mock.paths[1].headers.Accept, 'application/json');
+});
+
+test('explicit ByteVC2 mode fails if the upstream response no longer advertises ByteVC2', async () => {
+  let requests = 0;
+  const response = responder();
+  const fetchImpl = async (url, options) => {
+    requests++;
+    const u = new URL(url);
+    if (u.pathname === '/api/source') {
+      assert.equal(u.searchParams.get('device_level'), '3');
+      return Response.json({ variants: variants.filter(v => v.codec !== 'bytevc2') },
+        { headers: cors });
+    }
+    return response.fetchImpl(url, options);
+  };
+  await assert.rejects(runLiveSmoke({ fetchImpl, codec: 'bytevc2', log: () => {} }),
+    /No bytevc2 source variant/);
+  assert.equal(requests, 2, 'Missing codec must fail before contacting any CDN');
+});
+
 test('explicit 2-episode mode has a seven-request maximum without testing 60 videos', async () => {
   const mock = responder({ firstMedia: 206 });
   const result = await runLiveSmoke({ fetchImpl: mock.fetchImpl, episodeCount: 2, log: () => {} });
