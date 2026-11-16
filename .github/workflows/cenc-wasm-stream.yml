@@ -30,7 +30,7 @@ on:
       - 'tests/cenc-wasm-bundle.test.mjs'
   workflow_dispatch:
 concurrency:
-  group: cenc-wasm-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: write
