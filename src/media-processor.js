@@ -63,10 +63,10 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
   const worker = acquire(bridge);
   let generation = 0;
   let closed = false, completed = false, failed = false, cacheInfo = {}, pendingRead = { pending: 0 };
-  const post = message => {
+  const post = (message, transfer = []) => {
     if (closed) return;
     if (message.type === 'seek') { generation = message.generation; completed = false; }
-    worker.postMessage(message);
+    worker.postMessage(message, transfer);
   };
   const staging = createStreamPreload({ enabled: preload, post, onStage });
   const processor = {
