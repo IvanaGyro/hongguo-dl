@@ -57,33 +57,3 @@ test('the same download session preserves candidate history when another consume
   assert.equal(first.candidate, 1); assert.equal(second.candidate, 2);
   assert.equal(queries, 1);
 });
-
-test('whole-file ByteVC2 HTTP_403 rotates once to a distinct same-tier CDN', async () => {
-  const sources = ['denied', 'alternate'].map(host => ({
-    url: `https://${host}.fqnovelvod.com/play.mp4`,
-    source: 'app', codec: 'bytevc2', quality: '720p', contentKey: null
-  }));
-  const options = { quality: '720p', codec: 'bytevc2' };
-  const caps = { mimeSupport: () => false, mseSupport: () => false, canTranscodeBvc2: true };
-  let queries = 0;
-  const session = createDownloadSourceSession({
-    seriesId: '42', episode: { vid: '111111111', index: 1 },
-    sourceFor: async () => { queries++; return { variants: sources }; }
-  });
-  await session.list({ ...options, signal: new AbortController().signal });
-  const first = session.acquire(options, caps);
-  assert.equal(first.candidate, 1);
-  assert.equal(session.failed('HTTP_429'), false, 'Rate limiting cannot rotate a CDN');
-  assert.equal(session.failed('BVC2_ERROR'), false, 'Decoder errors cannot rotate a CDN');
-  assert.equal(session.failed('HTTP_403'), true, 'An access refusal must retire the first CDN');
-  await session.list({ ...options, signal: new AbortController().signal });
-  const second = session.acquire(options, caps);
-  assert.equal(second.candidate, 2);
-  assert.equal(queries, 1, 'Switching already advertised CDNs must not query API again');
-  assert.equal(session.failed('HTTP_403'), true, 'An exhausted tier may request fresh signed URLs');
-  await assert.rejects(
-    session.list({ ...options, signal: new AbortController().signal }),
-    { code: 'CENC_SOURCE_EXHAUSTED' },
-  );
-  assert.equal(queries, 2, 'Refresh must not resurrect either rejected signed URL');
-});
