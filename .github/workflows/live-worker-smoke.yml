@@ -1,9 +1,9 @@
 name: Live Worker source smoke (rate limited)
 on:
   # No push/PR trigger: a shared GitHub runner IP must not issue requests on
-  # every commit. The weekly run checks one episode only.
+  # every commit. Daily, at most one episode per codec and 256 bytes per CDN.
   schedule:
-    - cron: '17 4 * * 1'
+    - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
       episodes:
