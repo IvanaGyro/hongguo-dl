@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Layer 1: one CDN response survives metadata probing and is handed to WASM.
 import { retryAfterMs } from './retry-after.js';
+import { withRangeDeadline, RANGE_TIMEOUT_MS } from './range-deadline.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_METADATA = 8 * 1024 * 1024;
@@ -27,9 +28,15 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     ensureOpen();
     let res;
     try {
-      res = await fetchImpl(url, { headers: { Range: 'bytes=' + start + '-' + (end ?? '') },
-        signal: controller.signal, cache: 'no-store' });
-    } catch {
+      res = await withRangeDeadline(localSignal =>
+        fetchImpl(url, { headers: { Range: 'bytes=' + start + '-' + (end ?? '') },
+          signal: AbortSignal.any([controller.signal, localSignal]), cache: 'no-store' }),
+      controller.signal, RANGE_TIMEOUT_MS);
+    } catch (error) {
+      if (error?.code === 'CENC_RANGE_TIMEOUT') {
+        controller.abort();
+        throw error;
+      }
       if (controller.signal.aborted) throw fail('CANCELED');
       throw fail('CENC_RANGE_HTTP');
     }
@@ -77,12 +84,22 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
         reader = opened.response.body.getReader();
       }
       let next;
-      try { next = pending ? { value: pending, done: false } : await reader.read(); }
-      catch { ensureOpen(); throw fail('CENC_RANGE_HTTP'); }
+      try {
+        next = pending ? { value: pending, done: false } :
+          await withRangeDeadline(() => reader.read(), controller.signal, RANGE_TIMEOUT_MS);
+      } catch (error) {
+        if (error?.code === 'CENC_RANGE_TIMEOUT') {
+          controller.abort();
+          throw error;
+        }
+        ensureOpen();
+        throw fail('CENC_RANGE_HTTP');
+      }
       pending = null;
       if (next.done || !(next.value instanceof Uint8Array) || !next.value.length)
         throw fail('CENC_RANGE_INVALID');
       const chunk = next.value;
+      if (position + chunk.length > streamEnd) throw fail('CENC_RANGE_INVALID');
       const used = Math.min(chunk.length, end - position);
       const copy = new Uint8Array(prefix.length + used);
       copy.set(prefix);
@@ -99,7 +116,8 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     let count = 0;
     try {
       while (count < opened.end - start) {
-        const { done, value } = await reader2.read();
+        const { done, value } = await withRangeDeadline(() => reader2.read(),
+          controller.signal, RANGE_TIMEOUT_MS);
         if (done || !(value instanceof Uint8Array) || !value.length || count + value.length > bytes)
           throw fail('CENC_RANGE_INVALID');
         count += value.length;
