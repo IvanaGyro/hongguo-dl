@@ -177,7 +177,7 @@ export async function probeCencKid(mediaUrl, signal, fetchImpl = fetch, metadata
   const read = async (start, bytes, part) => {
     const once = () => rangeFetch(mediaUrl, start, bytes, signal, fetchImpl,
       (stage, fields) => onProbe(stage, { part, ...fields }), timeoutMs);
-    const result = byteReader ? await byteReader.read(start, bytes) :
+    const result = byteReader ? await byteReader.read(start, bytes, part) :
       await (recovery ? recovery.read(once, signal) : once());
     initialRanges.push({ offset: start, data: result.data });
     return result;
