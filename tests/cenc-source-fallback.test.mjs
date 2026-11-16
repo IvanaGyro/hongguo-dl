@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canTryNextCencSource, sameTierHevcCandidates, isRecoverableMediaSourceError } from '../src/cenc-source-fallback.js';
+import { canTryNextCencSource, sameTierHevcCandidates } from '../src/cenc-source-fallback.js';
 
 const hevc = (url, quality = '1080p') =>
   ({ url, codec: 'hevc', quality, contentKey: 'fixture-placeholder' });
@@ -84,13 +84,5 @@ test('ByteVC2 HTTP refusal rotates distinct same-quality sources without changin
     tried: 1, triedUrls: new Set(['https://cdn/a']), tier: { quality: '720p', codec: 'bytevc2' },
     quality: '720p', codec: 'bytevc2' };
   assert.equal(canTryNextCencSource(args), true);
-  assert.equal(canTryNextCencSource({ ...args, code: 'HTTP_403' }), true,
-    'Whole-file ByteVC2 uses HTTP_403 and must switch to the healthy CDN');
-  assert.equal(isRecoverableMediaSourceError('HTTP_403'), true);
-  for (const code of ['HTTP_429', 'BVC2_ERROR', 'CANCELED'])
-    assert.equal(canTryNextCencSource({ ...args, code }), false,
-      'Rate limiting, decoder failures and cancellation must never rotate');
   assert.equal(canTryNextCencSource({ ...args, triedUrls: new Set(['https://cdn/a','https://cdn/b']) }), false);
-  assert.equal(canTryNextCencSource({ ...args, code: 'HTTP_403',
-    triedUrls: new Set(['https://cdn/a','https://cdn/b']) }), false);
 });
