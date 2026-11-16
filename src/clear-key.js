@@ -5,7 +5,7 @@ import { retryAfterMs } from './retry-after.js';
 import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 import { errorWith } from './logic.js';
 import { createMediaDownload } from './media-download.js';
-import { openCencProgressiveStream } from './cenc-remux.js';
+import { openCencProgressiveStream, cencRemuxAvailable } from './cenc-remux.js';
 import { openProgressiveMediaDownload } from './progressive-media-download.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
   movieDurationSeconds } from './mp4-track-formats.js';
@@ -405,6 +405,13 @@ export async function openClearKeyStream({
   if (!mime || !source?.contentKey ||
       (codec !== 'hevc' && !video.canPlayType(mime))) return null;
   aborted(signal);
+  // If neither incremental route is available, avoid a speculative metadata
+  // HTTP request: whole-file fallback can download the source in one request.
+  if (!preload && (typeof requestAccess !== 'function' ||
+      typeof video.setMediaKeys !== 'function')) {
+    const remuxAvailable = await cencRemuxAvailable().catch(() => false);
+    if (!remuxAvailable) return declined('no-eme-or-remux');
+  }
   const input = download || createMediaDownload({ fetchImpl, getWorkerOrigin: () => workerOrigin });
   const { transport, url } = input.open(source,
     (reason, fields) => onStage('media.transport.fallback', { reason, ...fields }), {

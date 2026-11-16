@@ -43,8 +43,8 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
     contentKey:'00112233445566778899aabbccddeeff', width:480, height:270
   }] }});
   assert.equal(url.pathname, '/api/media');
-  // With a front-loaded moov, one metadata probe and one full-file
-  // fallback request suffice. Neither should be classified by Range headers.
+  // Neither incremental player is available. A faststart MP4 needs only
+  // one media HTTP request to complete the full-file fallback.
   mediaRequests++;
   return route.fulfill({
     status: 206, contentType: 'video/mp4',
@@ -64,8 +64,8 @@ try {
     return v?.videoWidth===480 && v.currentTime>0.5 && !v.error;
   }, null, {timeout:90000});
   const statuses = await page.evaluate(() => window.__statusLog);
-  assert.equal(mediaRequests, 2,
-    'Expected one metadata probe and exactly one full-file fallback download');
+  assert.equal(mediaRequests, 1,
+    'Expected exactly one media HTTP request for the full-file fallback');
   assert(statuses.some(s => /下載｜(?:正在下載整集影片|下載整集 \d+%)/.test(s)),
     JSON.stringify(statuses));
   assert(!errors.length, errors.join('; '));
