@@ -24,9 +24,9 @@ const mdat = box('mdat', new Uint8Array(3072));
 function mockFetch(bytes) {
   const calls = [];
   const fetchImpl = async (_url, { headers }) => {
-    const match = /^bytes=(\d+)-(\d+)$/.exec(headers.Range);
+    const match = /^bytes=(\d+)-(\d*)$/.exec(headers.Range);
     assert(match);
-    const start = Number(match[1]), end = Math.min(Number(match[2]), bytes.length - 1);
+    const start = Number(match[1]), end = match[2] ? Math.min(Number(match[2]), bytes.length - 1) : bytes.length - 1;
     calls.push({ start, end });
     const data = bytes.subarray(start, end + 1);
     return new Response(data, { status: 206, headers: {
