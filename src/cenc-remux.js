@@ -99,7 +99,8 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
  */
 export async function openCencProgressiveStream({
   video, input = null, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
+  startSeconds = 0, durationSeconds = null, initialRanges = [], initialStream = null,
+  initialOffset = 0, initialEnd = 0, videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
 }) {
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
@@ -341,7 +342,8 @@ export async function openCencProgressiveStream({
   };
   try {
     processor.post({ type: 'start', input: input || { url, proxyUrl }, fileSize, key, startSeconds,
-      initialRanges, durationSeconds, bridge, deferProcessing: preload });
+      initialRanges, initialStream, initialOffset, initialEnd,
+      durationSeconds, bridge, deferProcessing: preload }, initialStream ? [initialStream] : []);
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.
