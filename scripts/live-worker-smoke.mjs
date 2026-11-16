@@ -26,9 +26,13 @@ async function readJson(response, context) {
   return response.json();
 }
 
-function variantsForProbe(variants) {
+function variantsForProbe(variants, codec = 'auto') {
   assert.ok(Array.isArray(variants) && variants.length, 'No source variants');
-  const primary = variants[0];
+  if (!['auto', 'bytevc2'].includes(codec)) throw new Error('Unsupported live codec filter');
+  // Explicit ByteVC2 monitoring detects upstream device capability and codec
+  // negotiation drift; auto mode retains the original smoke behavior.
+  const primary = codec === 'auto' ? variants[0] : variants.find(v => v.codec === codec);
+  assert.ok(primary, 'No ' + codec + ' source variant advertised by live Worker');
   assert.ok(primary.url && primary.codec && primary.quality,
     'First source lacks URL, codec or quality metadata');
   const seenHosts = new Set();
@@ -50,9 +54,11 @@ export async function runLiveSmoke({
   fetchImpl = fetch,
   workerOrigin = DEFAULT_WORKER,
   episodeCount = 1,
+  codec = 'auto',
   log = console.log
 } = {}) {
   checkEpisodeCount(episodeCount);
+  if (!['auto', 'bytevc2'].includes(codec)) throw new Error('Unsupported live codec filter');
   const origin = new URL(workerOrigin);
   assert.equal(origin.protocol, 'https:', 'Worker origin must use HTTPS');
   assert.equal(origin.pathname, '/', 'Worker origin must be a root URL');
@@ -90,14 +96,16 @@ export async function runLiveSmoke({
     ' episodes listed; inspecting only ' + sample.length + ' source(s)');
   const results = [];
   for (const episode of sample) {
+    // The v5 player supports 1/2/3; tier 3 is expected to expose ByteVC2.
+    // Older deployed Workers ignore device_level until the v5 rollout.
     const params = new URLSearchParams({
-      sid: SERIES_ID, vid: episode.vid
+      sid: SERIES_ID, vid: episode.vid, ...(codec === 'bytevc2' ? { device_level: '3' } : {})
     });
     const source = await readJson(
       await get('/api/source?' + params, { Accept: 'application/json' }),
       'source episode #' + episode.index);
     const variants = source.variants;
-    const choices = variantsForProbe(variants);
+    const choices = variantsForProbe(variants, codec);
     const codec = choices[0].codec;
     const quality = choices[0].quality;
     const probes = [];
@@ -168,15 +176,16 @@ const invokedDirectly = process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const episodeCount = Number(process.env.LIVE_EPISODES || '1');
+  const codec = process.env.LIVE_CODEC || 'auto';
   try {
-    const result = await runLiveSmoke({ episodeCount });
-    console.log('Live upstream smoke passed: ' + result.checkedEpisodes +
+    const result = await runLiveSmoke({ episodeCount, codec });
+    console.log('Live upstream smoke passed for ' + codec + ': ' + result.checkedEpisodes +
       ' episode(s), ' + result.requestCount + '/' + result.requestBudget +
       ' HTTP requests');
     if (process.env.GITHUB_STEP_SUMMARY) {
       const { appendFile } = await import('node:fs/promises');
       await appendFile(process.env.GITHUB_STEP_SUMMARY,
-        '### Live origin smoke\n\n- Episodes checked: ' + result.checkedEpisodes +
+        '### Live origin smoke (' + codec + ')\n\n- Episodes checked: ' + result.checkedEpisodes +
         ' / ' + result.totalEpisodes + '\n- HTTP requests: ' + result.requestCount +
         ' / ' + result.requestBudget +
         '\n- Media: 256-byte Range only, no complete videos\n');
