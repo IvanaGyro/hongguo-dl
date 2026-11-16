@@ -5,7 +5,7 @@ import { retryAfterMs } from './retry-after.js';
 import { withRangeDeadline, RANGE_TIMEOUT_MS, rangeTiming } from './range-deadline.js';
 import { errorWith } from './logic.js';
 import { createMediaDownload } from './media-download.js';
-import { openCencProgressiveStream } from './cenc-remux.js';
+import { openCencProgressiveStream, MAX_CENC_REMUX_FILE_BYTES } from './cenc-remux.js';
 import { openProgressiveMediaDownload } from './progressive-media-download.js';
 import { inspectMp4TrackFormats, hevcCodecStringFromMoov,
   movieDurationSeconds } from './mp4-track-formats.js';
@@ -447,7 +447,8 @@ export async function openClearKeyStream({
     return declined('stsd-declared-codec-mismatch');
   }
   const key = hexKey(source.contentKey);
-  if (!metadata.fragmented) {
+  // Metadata/native EME must accept files larger than the WASM remux budget.
+  if (!metadata.fragmented && metadata.fileSize <= MAX_CENC_REMUX_FILE_BYTES) {
     try {
       onStage('remux-check');
       const shared = progressive.handoff();
@@ -457,7 +458,8 @@ export async function openClearKeyStream({
       const remux = await openCencProgressiveStream({
         video, input: input.input(source, transport),
         fileSize: metadata.fileSize, initialRanges, initialStream: shared.initialStream,
-        initialOffset: shared.initialOffset, initialEnd: shared.initialEnd, onStage,
+        initialOffset: shared.initialOffset, initialEnd: shared.initialEnd,
+        initialEtag: shared.initialEtag, onStage,
         codec, hasAac: metadata.hasAac,
         videoCodecString: metadata.hevcCodecString,
         key: source.contentKey, signal, preload, remainingMediaAttempts,

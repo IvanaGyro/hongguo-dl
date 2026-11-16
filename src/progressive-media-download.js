@@ -6,11 +6,10 @@ import { withRangeDeadline, RANGE_TIMEOUT_MS } from './range-deadline.js';
 const HEADER_SIZE = 64 * 1024;
 const MAX_METADATA = 8 * 1024 * 1024;
 const MAX_SEQUENTIAL_SKIP = 256 * 1024;
-const MAX_MEDIA_FILE = 260 * 1024 * 1024;
 const fail = (code, status = 0) => Object.assign(new Error(code), { code, status });
 const stopped = signal => { if (signal?.aborted) throw fail('CANCELED'); };
 
-export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, signal, onStage = () => {} }) {
+export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, signal, onStage = () => {}, timeoutMs = RANGE_TIMEOUT_MS }) {
   stopped(signal);
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -18,6 +17,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
   if (signal?.aborted) controller.abort();
   let reader = null, closed = false, handedOff = false, position = 0;
   let pending = null, prefix = new Uint8Array(0), streamEnd = 0, fileSize = 0;
+  let validator = null;
   const close = () => {
     if (closed) return;
     closed = true; controller.abort();
@@ -25,14 +25,15 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     signal?.removeEventListener('abort', abort);
   };
   const ensureOpen = () => { stopped(signal); if (closed) throw fail('CANCELED'); };
-  const request = async (start, end = null) => {
+  const request = async (start, end = null, deadline = Infinity) => {
     ensureOpen();
+    if (Date.now() >= deadline) throw fail('CENC_RANGE_TIMEOUT');
     let res;
     try {
       res = await withRangeDeadline(localSignal =>
         fetchImpl(url, { headers: { Range: 'bytes=' + start + '-' + (end ?? '') },
           signal: AbortSignal.any([controller.signal, localSignal]), cache: 'no-store' }),
-      controller.signal, RANGE_TIMEOUT_MS);
+      controller.signal, Math.min(timeoutMs, Math.max(0, deadline - Date.now())));
     } catch (error) {
       if (error?.code === 'CENC_RANGE_TIMEOUT') {
         controller.abort();
@@ -56,7 +57,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     const last = status === 200 ? total - 1 : Number(match?.[2]);
     const startReturned = status === 200 ? 0 : Number(match?.[1]);
     const len = Number(res.headers.get('content-length'));
-    if (!res.body || !Number.isSafeInteger(total) || total < 8 || total > MAX_MEDIA_FILE ||
+    if (!res.body || !Number.isSafeInteger(total) || total < 8 ||
         startReturned !== start || !Number.isSafeInteger(last) || last < start || last >= total ||
         (end !== null && last > end) || (res.headers.has('content-length') &&
           (!Number.isSafeInteger(len) || len !== last - start + 1)) ||
@@ -64,6 +65,12 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       await res.body?.cancel().catch(() => {});
       throw fail('CENC_RANGE_INVALID');
     }
+    const tag = res.headers.get('etag');
+    if (validator && tag && validator !== tag) {
+      await res.body?.cancel().catch(() => {});
+      throw fail('CENC_RANGE_INVALID');
+    }
+    if (tag) validator = tag;
     fileSize = total;
     return { response: res, end: last + 1 };
   };
@@ -77,19 +84,20 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
 
   // A contiguous metadata prefix remains bounded to 8 MiB + a header.
   // Seeking across a large mdat uses a separate bounded request.
-  const readPrefixTo = async end => {
+  const readPrefixTo = async (end, deadline) => {
     while (position < end) {
       ensureOpen();
       if (position >= streamEnd) {
         await reader.cancel().catch(() => {});
-        const opened = await request(position);
+        const opened = await request(position, null, deadline);
         streamEnd = opened.end;
         reader = opened.response.body.getReader();
       }
       let next;
       try {
         next = pending ? { value: pending, done: false } :
-          await withRangeDeadline(() => reader.read(), controller.signal, RANGE_TIMEOUT_MS);
+          await withRangeDeadline(() => reader.read(), controller.signal,
+            Math.min(timeoutMs, Math.max(0, deadline - Date.now())));
       } catch (error) {
         if (error?.code === 'CENC_RANGE_TIMEOUT') {
           controller.abort();
@@ -112,20 +120,28 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       onStage('range.progress', { receivedBytes: position, bytes: end });
     }
   };
-  const boundedRead = async (start, bytes) => {
-    const opened = await request(start, start + bytes - 1);
+  const boundedRead = async (start, bytes, deadline) => {
+    const opened = await request(start, start + bytes - 1, deadline);
     const reader2 = opened.response.body.getReader();
     const chunks = [];
     let count = 0;
     try {
       while (count < opened.end - start) {
-        const { done, value } = await withRangeDeadline(() => reader2.read(),
-          controller.signal, RANGE_TIMEOUT_MS);
+        const { done, value } = await withRangeDeadline(() => reader2.read(), controller.signal,
+          Math.min(timeoutMs, Math.max(0, deadline - Date.now())));
         if (done || !(value instanceof Uint8Array) || !value.length || count + value.length > bytes)
           throw fail('CENC_RANGE_INVALID');
         count += value.length;
         chunks.push(value);
       }
+    } catch (error) {
+      if (error?.code === 'CENC_RANGE_TIMEOUT') {
+        controller.abort();
+        throw error;
+      }
+      ensureOpen();
+      if (error?.code === 'CANCELED' || error?.code?.startsWith('CENC_RANGE_')) throw error;
+      throw fail('CENC_RANGE_HTTP');
     } finally { await reader2.cancel().catch(() => {}); }
     if (count !== bytes) throw fail('CENC_RANGE_INVALID');
     const result = new Uint8Array(bytes);
@@ -144,6 +160,9 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       const wanted = Math.min(bytes, fileSize - start);
       if (wanted < 8) throw fail('CENC_RANGE_INVALID');
       if (start !== 0) onStage('range.request', { part, offset: start, bytes: wanted });
+      // Each logical metadata read has a hard 3x timeout, independent of
+      // how often the CDN yields tiny chunks. Keep the per-chunk idle timeout.
+      const deadline = Date.now() + timeoutMs * 3;
       let data;
       // Only scan through nearby holes. A moov box near EOF should not
       // force a whole-episode download before the first decoded frame.
@@ -151,10 +170,10 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       // the worker will continue reading that same response afterwards.
       if (reader && start >= 0 && start <= position + MAX_SEQUENTIAL_SKIP &&
           start + wanted <= MAX_METADATA + HEADER_SIZE) {
-        await readPrefixTo(start + wanted);
+        await readPrefixTo(start + wanted, deadline);
         data = prefix.slice(start, start + wanted);
       } else {
-        data = await boundedRead(start, wanted);
+        data = await boundedRead(start, wanted, deadline);
       }
       onStage('range.complete', { part, bytes: data.length });
       return { data, fileSize };
@@ -165,7 +184,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       handedOff = true;
       const initialRanges = prefix.length ? [{ offset: 0, data: prefix }] : [];
       const offset = position, end = streamEnd;
-      if (!reader) return { initialRanges, initialStream: null, initialOffset: offset, initialEnd: end };
+      if (!reader) return { initialRanges, initialStream: null, initialOffset: offset, initialEnd: end, initialEtag: validator };
       const sourceReader = reader, firstChunk = pending;
       pending = null;
       let first = true;
@@ -179,7 +198,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
         },
         cancel(reason) { return sourceReader.cancel(reason).catch(() => {}); }
       });
-      return { initialRanges, initialStream, initialOffset: offset, initialEnd: end };
+      return { initialRanges, initialStream, initialOffset: offset, initialEnd: end, initialEtag: validator };
     },
     close
   };

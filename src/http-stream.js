@@ -8,11 +8,13 @@ const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
   recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onRequest = () => {}, onChunk = () => {}, externalCache = null,
   maxPacketBytes = 4 * 1024 * 1024, durationSeconds = 0, onSlow = () => {},
-  initialStream = null, initialOffset = 0, initialEnd = 0 }) {
+  initialStream = null, initialOffset = 0, initialEnd = 0, initialEtag = null }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
   const bytes = externalCache ? null : new Uint8Array(8 * 1024 * 1024);
   let networkOffset = 0;
-  let requests = 0, receivedBytes = 0, validator = null;
+  let requests = 0, receivedBytes = 0;
+  // Preserve the original response validator when adopting its body.
+  let validator = initialStream && typeof initialEtag === 'string' ? initialEtag : null;
   const requiredRate = durationSeconds > 0 ? fileSize / durationSeconds : 0;
   let sampleBytes = 0, activeMs = 0, bytesPerSecond = 0;
   if (initialStream) {
