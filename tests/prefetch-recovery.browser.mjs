@@ -123,7 +123,7 @@ try {
             'Replace an init-only slow preload before episode handoff');
           assert.match(log, /prefetch.handoff episode=25 media=true ready=true/);
           assert.match(log, /prefetch.stage episode=25 phase=cdn.selected candidate=2.*attempt=2/);
-          assert.match(log, /prefetch.stage episode=25 phase=media.request candidate=2.*attempt=2/);
+          assert.match(log, /prefetch.stage episode=25 phase=range.request candidate=2.*offset=0.*attempt=2/);
           assert(!/cenc.stage phase=cdn.selected candidate=2.*attempt=1/.test(log), 'Handoff must not reset the prefetch CDN attempt');
         }
         assert.equal(mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-a.mp4`).length, 1,
