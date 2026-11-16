@@ -5,6 +5,7 @@ import { withRangeDeadline, RANGE_TIMEOUT_MS } from './range-deadline.js';
 
 const HEADER_SIZE = 64 * 1024;
 const MAX_METADATA = 8 * 1024 * 1024;
+const MAX_SEQUENTIAL_SKIP = 256 * 1024;
 const MAX_MEDIA_FILE = 260 * 1024 * 1024;
 const fail = (code, status = 0) => Object.assign(new Error(code), { code, status });
 const stopped = signal => { if (signal?.aborted) throw fail('CANCELED'); };
@@ -144,12 +145,15 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       if (wanted < 8) throw fail('CENC_RANGE_INVALID');
       if (start !== 0) onStage('range.request', { part, offset: start, bytes: wanted });
       let data;
-      if (start + wanted <= MAX_METADATA + HEADER_SIZE && reader) {
+      // Only scan through nearby holes. A moov box near EOF should not
+      // force a whole-episode download before the first decoded frame.
+      // Keep the original 0- stream alive while fetching distant metadata;
+      // the worker will continue reading that same response afterwards.
+      if (reader && start >= 0 && start <= position + MAX_SEQUENTIAL_SKIP &&
+          start + wanted <= MAX_METADATA + HEADER_SIZE) {
         await readPrefixTo(start + wanted);
         data = prefix.slice(start, start + wanted);
       } else {
-        await reader?.cancel().catch(() => {});
-        reader = null; pending = null;
         data = await boundedRead(start, wanted);
       }
       onStage('range.complete', { part, bytes: data.length });
