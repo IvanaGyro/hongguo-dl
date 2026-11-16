@@ -743,11 +743,7 @@ function assertOk(response) {
 }
 async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
   if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
-  // A concrete HTTP 403 belongs to the selected CDN candidate; the source
-  // session should rotate candidates rather than re-request the same signed
-  // URL once directly and then again through the proxy.
-  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(),
-    fetch, undefined, userAgent, { retryRejectedDirect: false });
+  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(), fetch, undefined, userAgent);
   const res = await transport.fetch(url, { signal,
     ...(profile === 'app' && !isHlsUrl(url) ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
