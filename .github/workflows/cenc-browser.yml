@@ -66,14 +66,9 @@ on:
       - 'tests/playback-fallback.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
-# Keep an existing acceptance run alive when main advances. Fast first-frame/
-# RAP seek tests and 120s pause/1800s playback now run as independent jobs,
-# so a long timed check cannot delay the fast verdict or mask its failure.
-# PRs run only the fast suite and cancel obsolete runs on new commits.
-# GitHub bounds concurrency to one running and one pending workflow run.
 concurrency:
-  group: cenc-browser-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
