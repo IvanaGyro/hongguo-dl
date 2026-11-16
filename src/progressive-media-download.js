@@ -34,11 +34,13 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       throw fail('CENC_RANGE_HTTP');
     }
     const status = res.status;
-    if (status !== 206 && !(status === 200 && start === 0 && end === null)) {
+    if (status !== 206) {
       await res.body?.cancel().catch(() => {});
-      throw Object.assign(fail(status === 403 ? 'CENC_SOURCE_FORBIDDEN' :
-        status === 429 ? 'CENC_RATE_LIMITED' : 'CENC_RANGE_HTTP', status),
-        { retryAfterMs: retryAfterMs(res.headers.get('retry-after')) });
+      throw Object.assign(fail(status === 200 ? 'CENC_RANGE_UNSUPPORTED' :
+        status === 403 ? 'CENC_SOURCE_FORBIDDEN' :
+        status === 429 ? 'CENC_RATE_LIMITED' :
+        status === 416 ? 'CENC_RANGE_INVALID' : 'CENC_RANGE_HTTP', status),
+        { retryAfterMs: retryAfterMs(res.headers?.get?.('retry-after')) });
     }
     const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range') || '');
     const total = status === 200 ? Number(res.headers.get('content-length')) : Number(match?.[3]);
@@ -74,10 +76,12 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
         streamEnd = opened.end;
         reader = opened.response.body.getReader();
       }
-      const next = pending ? { value: pending, done: false } : await reader.read();
+      let next;
+      try { next = pending ? { value: pending, done: false } : await reader.read(); }
+      catch { ensureOpen(); throw fail('CENC_RANGE_HTTP'); }
       pending = null;
       if (next.done || !(next.value instanceof Uint8Array) || !next.value.length)
-        throw fail('CENC_RANGE_HTTP');
+        throw fail('CENC_RANGE_INVALID');
       const chunk = next.value;
       const used = Math.min(chunk.length, end - position);
       const copy = new Uint8Array(prefix.length + used);
