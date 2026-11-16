@@ -117,7 +117,9 @@ test('a far-away moov uses one bounded seek rather than reading a large mdat', a
     const far = 12 * 1024 * 1024;
     assert.equal((await download.read(far, 1024)).data.length, 1024);
     const shared = download.handoff();
-    assert.equal(shared.initialStream, null);
+    assert(shared.initialStream instanceof ReadableStream,
+      'Distant moov reads must not close the original CDN response');
+    assert.equal(shared.initialOffset, 65536);
     assert.deepEqual(requests, ['bytes=0-', `bytes=${far}-${far + 1023}`]);
   } finally { download.close(); }
 });
