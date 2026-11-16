@@ -7,7 +7,7 @@ on:
       - '.github/workflows/live-cenc-layout.yml'
   workflow_dispatch:
 concurrency:
-  group: cenc-live-layout-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: read
