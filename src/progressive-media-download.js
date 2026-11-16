@@ -41,6 +41,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       throw fail('CENC_RANGE_HTTP');
     }
     const status = res.status;
+    onStage('range.response', { status });
     if (status !== 206) {
       await res.body?.cancel().catch(() => {});
       throw Object.assign(fail(status === 200 ? 'CENC_RANGE_UNSUPPORTED' :
@@ -66,7 +67,8 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
     return { response: res, end: last + 1 };
   };
   try {
-    // Begin at zero, but consume only the bytes requested by the parser.
+    // Stage the metadata request before HTTP headers, including failed CDNs.
+    onStage('range.request', { part: 'header', offset: 0, bytes: HEADER_SIZE });
     const opened = await request(0);
     streamEnd = opened.end;
     reader = opened.response.body.getReader();
@@ -132,7 +134,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
   };
   return {
     get fileSize() { return fileSize; },
-    async read(start, bytes) {
+    async read(start, bytes, part = 'header') {
       ensureOpen();
       if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(bytes) ||
           bytes < 8 || bytes > MAX_METADATA || start >= fileSize)
@@ -140,7 +142,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
       // The metadata probe requests 64 KiB even for files shorter than 64 KiB.
       const wanted = Math.min(bytes, fileSize - start);
       if (wanted < 8) throw fail('CENC_RANGE_INVALID');
-      onStage('range.request', { offset: start, bytes: wanted });
+      if (start !== 0) onStage('range.request', { part, offset: start, bytes: wanted });
       let data;
       if (start + wanted <= MAX_METADATA + HEADER_SIZE && reader) {
         await readPrefixTo(start + wanted);
@@ -150,8 +152,7 @@ export async function openProgressiveMediaDownload({ url, fetchImpl = fetch, sig
         reader = null; pending = null;
         data = await boundedRead(start, wanted);
       }
-      onStage('range.response', { status: 206 });
-      onStage('range.complete', { bytes: data.length });
+      onStage('range.complete', { part, bytes: data.length });
       return { data, fileSize };
     },
     handoff() {
