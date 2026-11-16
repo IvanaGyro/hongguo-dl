@@ -68,7 +68,7 @@ test('a short MP4 requires no second request when the 64 KiB probe exceeds its s
   } finally { download.close(); }
 });
 
-test('a distant moov can be fetched with a bounded seek instead of reading intervening media', async () => {
+test('metadata beyond 64 KiB continues on the same HTTP body without a second Range', async () => {
   const calls = [];
   const download = await openProgressiveMediaDownload({
     url: 'https://example.test/tail.mp4',
@@ -84,8 +84,37 @@ test('a distant moov can be fetched with a bounded seek instead of reading inter
     await download.read(0, 65536);
     assert.deepEqual((await download.read(150000, 100)).data, data.subarray(150000, 150100));
     const shared = download.handoff();
+    assert.equal(shared.initialOffset, 150100);
+    assert(shared.initialStream instanceof ReadableStream);
+    assert.deepEqual(calls, ['bytes=0-']);
+  } finally { download.close(); }
+});
+
+
+test('a far-away moov uses one bounded seek rather than reading a large mdat', async () => {
+  const total = 20 * 1024 * 1024;
+  const requests = [];
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/moov-at-end.mp4',
+    fetchImpl: async (_, opts) => {
+      requests.push(opts.headers.Range);
+      const match = /^bytes=(\\d+)-(\\d*)$/.exec(opts.headers.Range);
+      const start = Number(match[1]);
+      const end = match[2] ? Number(match[2]) + 1 : total;
+      const sent = start === 0 ? new Uint8Array(65536) : new Uint8Array(end - start);
+      return new Response(sent, { status: 206, headers: {
+        'Content-Range': `bytes ${start}-${end - 1}/${total}`,
+        'Content-Length': String(end - start)
+      } });
+    }
+  });
+  try {
+    await download.read(0, 65536);
+    const far = 12 * 1024 * 1024;
+    assert.equal((await download.read(far, 1024)).data.length, 1024);
+    const shared = download.handoff();
     assert.equal(shared.initialStream, null);
-    assert.deepEqual(calls, ['bytes=0-', 'bytes=150000-150099']);
+    assert.deepEqual(requests, ['bytes=0-', `bytes=${far}-${far + 1023}`]);
   } finally { download.close(); }
 });
 
