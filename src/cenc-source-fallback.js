@@ -6,11 +6,7 @@
 import { candidateRenditions, codecId, qualityId } from './source-options.js';
 
 export function isRecoverableMediaSourceError(code) {
-  // Whole-file ByteVC2 transport errors are normalized to HTTP_403 by
-  // playbackFailureMessage(), unlike streaming CENC's MEDIA_SOURCE_FORBIDDEN.
-  // Rotate this exact refusal across already advertised same-tier CDN URLs.
-  // Do not rotate HTTP_429, codec errors, or cancelled requests.
-  return ['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'HTTP_403', 'CENC_RANGE_HTTP',
+  return ['CENC_SOURCE_FORBIDDEN', 'MEDIA_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP',
     'CENC_RANGE_TIMEOUT', 'CENC_SOURCE_SLOW', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'MEDIA_HTTP'].includes(code);
 }
 
