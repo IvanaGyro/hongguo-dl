@@ -34,9 +34,11 @@ test('one open-ended CDN request serves metadata and the transferable decoder st
     assert.deepEqual(shared.initialRanges[0].data, metadata.data);
     assert.equal(shared.initialOffset, 65536);
     assert.equal(shared.initialEnd, data.length);
-    const transferred = structuredClone(shared.initialStream, {
-      transfer: [shared.initialStream]
-    });
+    // Bun's structuredClone does not implement transferable streams; browser
+    // acceptance tests exercise real Worker.postMessage transfer.
+    const transferred = typeof Bun === 'undefined'
+      ? structuredClone(shared.initialStream, { transfer: [shared.initialStream] })
+      : shared.initialStream;
     const reader = transferred.getReader();
     const parts = [];
     for (;;) {
@@ -101,10 +103,12 @@ test('a far-away moov uses one bounded seek rather than reading a large mdat', a
       const match = /^bytes=(\\d+)-(\\d*)$/.exec(opts.headers.Range);
       const start = Number(match[1]);
       const end = match[2] ? Number(match[2]) + 1 : total;
-      const sent = start === 0 ? new Uint8Array(65536) : new Uint8Array(end - start);
-      return new Response(sent, { status: 206, headers: {
+      const body = start === 0
+        ? new ReadableStream({ start(c) { c.enqueue(new Uint8Array(65536)); } })
+        : new Uint8Array(end - start);
+      return new Response(body, { status: 206, headers: {
         'Content-Range': `bytes ${start}-${end - 1}/${total}`,
-        'Content-Length': String(end - start)
+        ...(start ? { 'Content-Length': String(end - start) } : {})
       } });
     }
   });
