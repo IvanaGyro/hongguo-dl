@@ -25,6 +25,10 @@ function responder({ firstMedia = 403, secondMedia = 206 } = {}) {
     }
     if (path === '/api/source') {
       assert.equal(url.searchParams.get('sid'), sid);
+      assert.equal(url.searchParams.has('codec'), false,
+        'Server must return all codec variants without codec query filtering');
+      assert.equal(url.searchParams.has('quality'), false,
+        'Server must return all quality variants without quality query filtering');
       return Response.json({ variants }, { headers: cors });
     }
     assert.equal(path, '/api/media');
