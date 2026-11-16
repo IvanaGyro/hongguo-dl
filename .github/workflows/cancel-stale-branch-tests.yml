@@ -20,7 +20,7 @@ permissions:
 # Do NOT share this concurrency group with test workflows: separate tests
 # for the *same* commit must continue running in parallel.
 concurrency:
-  group: stale-tests-${{ github.event.pull_request.head.repo.id || github.repository_id }}-${{ github.event.pull_request.head.ref || github.ref }}
+  group: stale-tests-${{ github.event.pull_request.head.repo.id || github.repository_id }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
