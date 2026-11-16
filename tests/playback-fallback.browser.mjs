@@ -43,8 +43,11 @@ await page.route(url => url.pathname.startsWith('/api/'), async route => {
     contentKey:'00112233445566778899aabbccddeeff', width:480, height:270
   }] }});
   assert.equal(url.pathname, '/api/media');
-  // Neither incremental player is available. A faststart MP4 needs only
-  // one media HTTP request to complete the full-file fallback.
+  // Current #17 behavior: one HTTP request probes MP4 metadata, then the
+  // unavailable incremental path closes that response; whole-file fallback
+  // opens one more request. Reusing the existing response/session is deferred
+  // to #19 (worker-owned media downloads and demand-driven handoff).
+  // Count media HTTP requests, not completed full-file downloads.
   mediaRequests++;
   return route.fulfill({
     status: 206, contentType: 'video/mp4',
@@ -64,10 +67,10 @@ try {
     return v?.videoWidth===480 && v.currentTime>0.5 && !v.error;
   }, null, {timeout:90000});
   const statuses = await page.evaluate(() => window.__statusLog);
-  assert.equal(mediaRequests, 1,
-    'Expected exactly one media HTTP request for the full-file fallback');
+  assert.equal(mediaRequests, 2,
+    'Expected one metadata probe request and one full-file fallback request; sharing awaits #19');
   assert(statuses.some(s => /下載｜(?:正在下載整集影片|下載整集 \d+%)/.test(s)),
     JSON.stringify(statuses));
   assert(!errors.length, errors.join('; '));
-  console.log('PASS '+name+' full-file fallback downloads once, shows download UI and plays');
+  console.log('PASS '+name+' full-file fallback uses two requests, shows download UI and plays');
 } finally { await browser.close(); }
