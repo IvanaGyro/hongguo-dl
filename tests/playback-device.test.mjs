@@ -113,13 +113,21 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.equal(url.searchParams.has('clientId'), false);
       assert.equal(url.searchParams.has('registeredAt'), false);
       assert.equal(url.searchParams.get('version_name'), '7.4.5.32');
-      for (const key of ['version_code', 'update_version_code', 'manifest_version_code', 'pv_player']) assert.equal(url.searchParams.get(key), '74532');
+      for (const key of ['version_code', 'update_version_code']) assert.equal(url.searchParams.get(key), '74532');
+      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+      assert.equal(url.searchParams.has('ts'), false);
+      assert.equal(url.searchParams.has('video_id'), false);
+      assert.equal(new URLSearchParams(url.search).has('_rticket'), true);
+      assert.ok(options.headers['x-medusa']);
+      assert.ok(options.headers['x-helios']);
+      assert.equal(options.headers['x-argus'], undefined);
+      assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);
       assert.match(options.headers['User-Agent'], /^com\.phoenix\.read\/74532 /);
       return new Response('');
     };
     await assert.rejects(fetchAppPlayUrl('123', { identity: installation, session: {} }), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 3 });
-    assert.equal(calls.length, 3);
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 2 });
+    assert.equal(calls.length, 2);
     assert.ok(calls.every(url => url.pathname.includes('multi_video_model')));
     const response = await worker.fetch(new Request('https://example.workers.dev/api/source?sid=1&vid=123&channel=app', {
       headers: { 'X-Playback-Device': JSON.stringify(installation) }
@@ -127,7 +135,7 @@ test('source empty-200 retries retain the same IDs and never register another de
     assert.equal(response.status, 502);
     assert.deepEqual(await response.json().then(data => ({ code: data.error.code,
       upstreamStatus: data.error.upstreamStatus, count: data.error.emptyResponseCount })), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 3 });
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 2 });
   } finally { globalThis.fetch = original; }
 });
 
@@ -214,8 +222,8 @@ test('source requests run concurrently without pacing or propagating another req
   const original = globalThis.fetch, installation = registered(seed()), session = {};
   let release; const calls = [];
   try {
-    globalThis.fetch = async raw => {
-      const vid = new URL(raw).searchParams.get('video_id'); calls.push(vid);
+    globalThis.fetch = async (_raw, options) => {
+      const vid = JSON.parse(gunzipSync(options.body)).mixed_video_id_map['1004'][0]; calls.push(vid);
       if (vid === '101') await new Promise(resolve => { release = resolve; });
       return new Response('denied', { status: vid === '101' ? 403 : 429 });
     };
@@ -242,4 +250,50 @@ test('scheduled registration can stall while normal source callers immediately r
   const third = await browser.ensure('https://other-worker.test', PROFILE);
   assert.equal(second.device_id, first.device_id); assert.equal(third.device_id, first.device_id);
   assert.equal(typeof release, 'function'); release();
+});
+
+
+test('Worker forwards each device level into the signed v5 gzip model body', async () => {
+  const oldFetch = globalThis.fetch, installation = registered(seed());
+  const levels = [];
+  try {
+    globalThis.fetch = async (raw, options) => {
+      const url = new URL(raw);
+      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+      assert.equal(url.searchParams.get('device_id'), installation.device_id);
+      assert.ok(options.headers['x-medusa']);
+      levels.push(JSON.parse(gunzipSync(options.body)).biz_param.device_level);
+      return new Response('rate limited', { status: 429 });
+    };
+    for (const level of ['1', '2', '3']) {
+      const response = await worker.fetch(new Request(
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
+          headers: { 'X-Playback-Device': JSON.stringify(installation) }
+        }), {});
+      assert.equal(response.status, 429);
+    }
+    assert.deepEqual(levels, [1, 2, 3]);
+    for (const level of ['0', '4', '1.0', 'NaN']) {
+      const response = await worker.fetch(new Request(
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
+          headers: { 'X-Playback-Device': JSON.stringify(installation) }
+        }), {});
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.code, 'INVALID_DEVICE_LEVEL');
+    }
+    assert.deepEqual(levels, [1, 2, 3], 'invalid tiers never contact upstream');
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('v5 nested data.1004 response resolves only the requested episode', async () => {
+  const oldFetch = globalThis.fetch, installation = registered(seed());
+  try {
+    globalThis.fetch = async () => Response.json({ code: 0, data: { '1004': {
+      '123': { video_model: { video_id: 'fixture', video_duration: 4,
+        video_list: { main: { main_url: 'https://cdn.fqnovelvod.com/fixture.mp4',
+          codec_type: 'h264', definition: '720p', vwidth: 1280, vheight: 720, encrypt: 0 } } } }
+    } } });
+    const source = await fetchAppPlayUrl('123', { identity: installation, deviceLevel: 2 });
+    assert.ok(source.variants?.length || source.url, 'nested model must resolve a video');
+  } finally { globalThis.fetch = oldFetch; }
 });

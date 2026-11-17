@@ -163,7 +163,9 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, channel = 'auto', installation = null) {
+async function loadSource(sid, vid, channel = 'auto', installation = null, deviceLevel = '3') {
+  if (!['1', '2', '3'].includes(String(deviceLevel)))
+    throw httpError(400, 'INVALID_DEVICE_LEVEL', '裝置等級只支援 1、2、3');
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
   if (!['auto', 'web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
@@ -183,7 +185,7 @@ async function loadSource(sid, vid, channel = 'auto', installation = null) {
     // selection policy, not a Worker concern.
     const session = installation ? installationSession(installation) : null;
     if (session && !session.identity.device_id) throw httpError(409, 'DEVICE_REQUIRED', '請先初始化播放裝置');
-    const result = await fetchAppPlayUrl(vid, session ? { identity: session.identity, session } : {});
+    const result = await fetchAppPlayUrl(vid, { ...(session ? { identity: session.identity, session } : {}), deviceLevel: Number(deviceLevel) });
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
@@ -359,7 +361,7 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
-          url.searchParams.get('channel') || 'auto', parseDeviceHeader(request)));
+          url.searchParams.get('channel') || 'auto', parseDeviceHeader(request), url.searchParams.get('device_level') || '3'));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request, mediaTiming);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');
