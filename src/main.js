@@ -50,6 +50,12 @@ const $ = id => {
 };
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
+const DEVICE_LEVEL_STORE = 'hongguo-dl-device-level-v1';
+let deviceLevel = '3';
+try {
+  const saved = localStorage.getItem(DEVICE_LEVEL_STORE);
+  if (['1', '2', '3'].includes(saved)) deviceLevel = saved;
+} catch { /* Optional browser persistence. */ }
 const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
 // A deployment URL in .env must not bypass Vite's local /api proxy in dev.
 // Explicit per-browser overrides remain available through the API settings.
@@ -432,7 +438,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
   };
   updateWait('health', 'worker-capabilities');
   const started = performance.now();
-  trace('source.api.request', {});
+  trace('source.api.request', { deviceLevel });
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
@@ -441,7 +447,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
     });
   }, 2000);
   const endpoint = '/api/source?sid=' + encodeURIComponent(seriesId) +
-    '&vid=' + encodeURIComponent(vid);
+    '&vid=' + encodeURIComponent(vid) + '&device_level=' + deviceLevel;
   const requestChannel = async channel => {
     const begin = performance.now();
     trace('source.channel.request', { channel });
@@ -991,6 +997,17 @@ $('codec-diag-copy').addEventListener('click', async () => {
 $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
+$('device-level').value = deviceLevel;
+$('device-level').addEventListener('change', () => {
+  const selected = $('device-level').value;
+  if (!['1', '2', '3'].includes(selected) || selected === deviceLevel) return;
+  deviceLevel = selected;
+  try { localStorage.setItem(DEVICE_LEVEL_STORE, selected); } catch { /* Memory-only choice. */ }
+  // Signed source metadata depends on this tier; never serve cached rows from another tier.
+  sourceStore.abortAll();
+  playbackDiagnostics.log('device.level.changed', { deviceLevel: selected });
+  if (series?.kind === 'series') void loadDownloadQualitySample(series);
+});
 void supportsIndependentSourceChannels().catch(() => {});
 // The player follows the source aspect ratio rather than forcing portrait dramas into 16:9.
 const playbackVideo = $('player-video');

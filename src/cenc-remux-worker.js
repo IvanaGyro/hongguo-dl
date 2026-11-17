@@ -28,6 +28,7 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
 
 async function run({ input = null, url, proxyUrl = null, key, fileSize, startSeconds = 0,
   initialRanges = [], initialStream = null, initialOffset = 0, initialEnd = 0,
+  initialEtag = null,
   durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
   ({ url, proxyUrl = null } = input || { url, proxyUrl });
   if (started) throw new Error('Streaming worker already started');
@@ -66,7 +67,7 @@ async function run({ input = null, url, proxyUrl = null, key, fileSize, startSec
     self.postMessage({ type: 'stage', stage: 'bvc2.config', indexNormalized: true });
   }
   stream = createCachedMediaReader({ fetchImpl: transport.fetch,
-    initialRanges, initialStream, initialOffset, initialEnd,
+    initialRanges, initialStream, initialOffset, initialEnd, initialEtag,
     durationSeconds, budget: cacheBudget,
     onStage: (stage, fields) => {
       self.postMessage({ type: 'stage', stage, ...fields });

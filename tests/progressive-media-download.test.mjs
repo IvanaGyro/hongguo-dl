@@ -132,3 +132,128 @@ test('malformed byte-zero response is rejected without reading the video body', 
     })
   }), { code: 'CENC_RANGE_INVALID' });
 });
+
+
+test('metadata probe accepts media larger than the WASM remux file limit', async () => {
+  const fileSize = 261 * 1024 * 1024, prefix = new Uint8Array(65536);
+  let requests = 0;
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/large-native.mp4',
+    fetchImpl: async () => {
+      requests++;
+      return new Response(new ReadableStream({
+        start(controller) { controller.enqueue(prefix); controller.close(); }
+      }), { status: 206, headers: {
+        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
+        'ETag': '"large-version"'
+      } });
+    }
+  });
+  try {
+    assert.equal((await download.read(0, 65536)).fileSize, fileSize);
+    const shared = download.handoff();
+    assert.equal(shared.initialEtag, '"large-version"');
+    assert.equal(requests, 1);
+  } finally { download.close(); }
+});
+
+test('a continually trickling metadata prefix hits its total deadline', async () => {
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/slow.mp4', timeoutMs: 20,
+    fetchImpl: async () => new Response(new ReadableStream({
+      async pull(controller) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        controller.enqueue(new Uint8Array(16));
+      }
+    }), { status: 206, headers: { 'Content-Range': 'bytes 0-65535/65536' } })
+  });
+  try {
+    await assert.rejects(download.read(0, 65536), { code: 'CENC_RANGE_TIMEOUT' });
+  } finally { download.close(); }
+});
+
+test('a distant metadata body failure is a recoverable, redacted range error', async () => {
+  const fileSize = 20 * 1024 * 1024;
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/far-moov.mp4',
+    fetchImpl: async (_, opts) => {
+      if (opts.headers.Range === 'bytes=0-') {
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(new Uint8Array(65536)); }
+        }), { status: 206, headers: {
+          'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`
+        } });
+      }
+      assert.equal(opts.headers.Range, 'bytes=12582912-12583935');
+      return {
+        status: 206,
+        headers: new Headers({
+          'Content-Range': `bytes 12582912-12583935/${fileSize}`,
+          'Content-Length': '1024'
+        }),
+        body: { getReader: () => ({
+          read: async () => { throw new TypeError('PRIVATE_URL key=secret'); },
+          cancel: async () => {}
+        }) }
+      };
+    }
+  });
+  try {
+    await download.read(0, 65536);
+    await assert.rejects(download.read(12 * 1024 * 1024, 1024), error =>
+      error.code === 'CENC_RANGE_HTTP' && !/PRIVATE|secret/.test(error.message));
+  } finally { download.close(); }
+});
+
+test('a bounded distant metadata body also retains its overall timeout', async () => {
+  const fileSize = 20 * 1024 * 1024;
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/slow-moov.mp4', timeoutMs: 20,
+    fetchImpl: async (_, opts) => {
+      if (opts.headers.Range === 'bytes=0-')
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(new Uint8Array(65536)); }
+        }), { status: 206, headers: {
+          'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`
+        } });
+      return new Response(new ReadableStream({
+        async pull(controller) {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          controller.enqueue(new Uint8Array(8));
+        }
+      }), { status: 206, headers: {
+        'Content-Range': `bytes 12582912-12583935/${fileSize}`
+      } });
+    }
+  });
+  try {
+    await download.read(0, 65536);
+    await assert.rejects(download.read(12 * 1024 * 1024, 1024),
+      { code: 'CENC_RANGE_TIMEOUT' });
+  } finally { download.close(); }
+});
+
+test('changing ETag during a distant metadata request is rejected', async () => {
+  const fileSize = 20 * 1024 * 1024;
+  const download = await openProgressiveMediaDownload({
+    url: 'https://example.test/changed-index.mp4',
+    fetchImpl: async (_, opts) => {
+      if (opts.headers.Range === 'bytes=0-')
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(new Uint8Array(65536)); }
+        }), { status: 206, headers: {
+          'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
+          ETag: '"v1"'
+        } });
+      return new Response(new Uint8Array(1024), { status: 206, headers: {
+        'Content-Range': `bytes 12582912-12583935/${fileSize}`,
+        ETag: '"v2"'
+      } });
+    }
+  });
+  try {
+    await download.read(0, 65536);
+    await assert.rejects(download.read(12 * 1024 * 1024, 1024),
+      { code: 'CENC_RANGE_INVALID' });
+  } finally { download.close(); }
+});
