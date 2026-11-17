@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { probeCencKid } from '../src/clear-key.js';
 import { execFileSync } from 'node:child_process';
 const input = new Uint8Array(await readFile(process.argv[2]));
 const bvc2 = process.env.PROOF_BRIDGE === 'bvc2';
@@ -27,40 +26,46 @@ globalThis.self = {
       if (data.stage === 'media.cache' && data.complete) downloadedResolve();
     }
     if (data.type === 'error') return reject(new Error(JSON.stringify(data)));
+    if (data.type === 'capability-request') return queueMicrotask(() => self.onmessage({ data: {
+      type: 'capabilities', capabilities: { types: Object.fromEntries(data.types.map(type => [type, true])) } } }));
     if (data.type === 'init' || data.type === 'media') {
       packets.push(data);
       if (data.type === 'media') {
         const count = (generationCounts.get(data.generation) || 0) + 1;
         generationCounts.set(data.generation, count);
-        if (data.generation === 0 && count === 2 && !seekSent) {
+        if (data.generation === 1 && count === 2 && !seekSent) {
           seekSent = true;
-          self.onmessage({ data: { type: 'seek', seconds: 20, generation: 1 } });
+          need({ revision: 3, processing: true, positionSeconds: 20 });
           return;
         }
       }
       if (shortProof && data.type === 'media' && (generationCounts.get(data.generation) || 0) >= 3) {
-        if (data.generation === 1) self.onmessage({ data: { type: 'seek', seconds: 5, generation: 2 } });
-        if (data.generation === 2) { finishedResolve(); return; }
+        if (data.generation === 3) need({ revision: 4, processing: true, positionSeconds: 5 });
+        if (data.generation === 4) { finishedResolve(); return; }
       } else queueMicrotask(() => self.onmessage({ data: { type: 'ack', id: data.id } }));
     }
     if (data.type === 'done') {
-      if (data.generation === 1) self.onmessage({ data: { type: 'seek', seconds: 5, generation: 2 } });
-      if (data.generation === 2) finishedResolve();
+      if (data.generation === 3) need({ revision: 4, processing: true, positionSeconds: 5 });
+      if (data.generation === 4) finishedResolve();
     }
   }
 };
+const need = fields => self.onmessage({ data: { type: 'need', demand: {
+  id: 'proof', output: 'playable-media', codec: 'h264', priority: 'speculative',
+  source: { url: 'https://fixture.test/api/media', bridge: bvc2 ? 'bvc2' : 'cenc', key }, ...fields } } });
 globalThis.fetch = async (url, options = {}) => {
   if (String(url).startsWith('file:')) return new Response(await readFile(new URL(url)));
-  const start = Number(/^bytes=(\d+)-$/.exec(options.headers.Range)[1]);
-  requests.push(start);
+  const [, a, b] = /^bytes=(\d+)-(\d*)$/.exec(options.headers.Range);
+  const start = Number(a), last = b ? Math.min(Number(b), input.length - 1) : input.length - 1;
+  requests.push(options.headers.Range);
   let position = start;
   return new Response(new ReadableStream({ pull(c) {
-    if (position === input.length) return c.close();
-    const end = Math.min(position + 32768, input.length);
+    if (position > last) return c.close();
+    const end = Math.min(position + 32768, last + 1);
     c.enqueue(input.slice(position, end)); position = end;
   } }), { status: 206, headers: {
-    'Content-Range': `bytes ${start}-${input.length - 1}/${input.length}`,
-    'Content-Length': String(input.length - start)
+    'Content-Range': `bytes ${start}-${last}/${input.length}`,
+    'Content-Length': String(last - start + 1)
   } });
 };
 try {
@@ -69,29 +74,23 @@ try {
     format: 'esm', platform: 'node', outfile: bundle,
     define: { 'import.meta.env.BASE_URL': JSON.stringify(pathToFileURL(resolve('public') + '/').href) } });
   await import(pathToFileURL(bundle));
-  const metadata = {};
-  if (bvc2) await probeCencKid('https://fixture.test/api/media', null,
-    async (_, options) => {
-      const [, a, b] = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);
-      const start = Number(a), end = Math.min(Number(b), input.length - 1);
-      return new Response(input.slice(start, end + 1), { status: 206, headers: {
-        'Content-Range': `bytes ${start}-${end}/${input.length}`, 'Content-Length': String(end - start + 1) } });
-    }, metadata);
-  self.onmessage({ data: { type: 'start', url: 'https://fixture.test/api/media',
-    key, fileSize: input.length, retrySameSource: true,
-    bridge: bvc2 ? 'bvc2' : 'cenc', deferProcessing: true, initialRanges: metadata.initialRanges || [] } });
+  // One speculative demand: the Worker opens the source, probes metadata and
+  // downloads, but CPU work waits until processing capacity is granted.
+  self.onmessage({ data: { type: 'capabilities', capabilities: { processing: { [bvc2 ? 'bvc2' : 'cenc']: true } } } });
+  need({ revision: 1, processing: false });
   await Promise.race([downloaded, finished]);
   assert(stages.some(s => s.stage === 'media.cache' && s.complete), 'Raw download must finish while processing is deferred');
   assert(!stages.some(s => s.stage === 'wasm-start'), 'Next episode must not run WASM before CPU handoff');
   assert.equal(packets.length, 0);
-  self.onmessage({ data: { type: 'process' } });
+  need({ revision: 2, processing: true });
   await finished;
   assert.equal(stages.filter(s => s.stage === 'wasm-start').length, 1);
-  assert.deepEqual(stages.filter(s => s.stage === 'seek.run').map(s => s.generation), [0, 1, 2]);
-  assert(generationCounts.get(1) > 0 && generationCounts.get(2) > 0);
+  assert.deepEqual(stages.filter(s => s.stage === 'seek.run').map(s => s.generation), [1, 3, 4]);
+  assert(generationCounts.get(3) > 0 && generationCounts.get(4) > 0);
+  assert.equal(requests[0], 'bytes=0-', 'Metadata and WASM share the first response');
   assert.equal(packets.filter(p => p.type === 'init').length, 3);
   assert(stages.some(s => s.stage === 'media.cache' && s.cacheHits > 0));
-  for (const generation of [1, 2]) {
+  for (const generation of [3, 4]) {
     const clear = join(temporary, `generation-${generation}.mp4`);
     await writeFile(clear, Buffer.concat(packets.filter(p => p.generation === generation)
       .map(p => Buffer.from(p.bytes))));
@@ -102,5 +101,6 @@ try {
     JSON.stringify({ requests, generations: [...generationCounts] }));
 } finally {
   self.onmessage?.({ data: { type: 'cancel' } });
+  console.log('requests', JSON.stringify(requests));
   clearTimeout(timer); await rm(temporary, { recursive: true, force: true });
 }

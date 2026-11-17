@@ -6,14 +6,12 @@ import { episodeCacheKey } from './media-cache.js';
 import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
 import { renditionOptions, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, reconcileRendition, playableVariants } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
-import { probeCencKid, openClearKeyStream } from './clear-key.js';
+import { openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
-import { clampStreamSeek } from './cenc-seek.js';
 import { createDownloadSourceSession } from './download-source-session.js';
 import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaDownload } from './media-download.js';
-import { openProgressiveMediaDownload } from './progressive-media-download.js';
 import { clearMediaProcessors } from './media-processor.js';
 
 export function createMediaSession({
@@ -225,43 +223,20 @@ export function createMediaSession({
           winnerVariants: list.winnerVariants || variants.slice() };
         if (bvc2Mode === 'stream') {
           if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
-          const { transport, url } = download.open(source);
-          const metadata = {};
+          const { transport } = download.open(source);
           log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
-          onStage('metadata');
-          const progressive = await openProgressiveMediaDownload({
-            url, fetchImpl: transport.fetch, signal, onStage
+          // The media Worker opens the source, probes its index and chooses
+          // the route; this layer only states the playable-media demand.
+          const native = await openCencProgressiveStream({
+            video, input: download.input(source, transport), onStage,
+            codec: 'h264', key: source.contentKey || '', signal, bridge: 'bvc2',
+            remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
+            durationSeconds: source.duration || null,
+            startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0
           });
-          try {
-            await probeCencKid(url, signal, transport.fetch, metadata,
-              (phase, fields) => onStage(phase, fields), undefined, null, progressive);
-            if (!metadata.fileSize || metadata.fragmented)
-              throw errorWith('BVC2_ERROR', 'ByteVC2 串流需要可讀取索引的 MP4 來源');
-            const shared = progressive.handoff();
-            const initialRanges = [...shared.initialRanges, ...metadata.initialRanges.filter(r =>
-              !shared.initialRanges.some(prefix => r.offset >= prefix.offset &&
-                r.offset + r.data.length <= prefix.offset + prefix.data.length))];
-            const native = await openCencProgressiveStream({
-              video, input: download.input(source, transport),
-              fileSize: metadata.fileSize, initialRanges,
-              initialStream: shared.initialStream, initialOffset: shared.initialOffset,
-              initialEnd: shared.initialEnd, onStage,
-              codec: 'h264', hasAac: metadata.hasAac,
-              key: source.contentKey || '', signal, bridge: 'bvc2',
-              remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
-              durationSeconds: metadata.movieDurationSeconds || source.duration || null,
-              startSeconds: clampStreamSeek(quiet ? 0 : savedResumeSeconds(episode, seriesId),
-                metadata.movieDurationSeconds || source.duration || null) || 0
-            });
-            if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
-            const oldClose = native.close;
-            native.close = async (...args) => { progressive.close(); return oldClose(...args); };
-            return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
-              fallbackNotice, variants: quiet ? variants : null };
-          } catch (error) {
-            progressive.close();
-            throw error;
-          }
+          if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
+          return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
+            fallbackNotice, variants: quiet ? variants : null };
         }
         const reportBvc2 = (message, layer = 2) => report(message, layer);
         log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2' });

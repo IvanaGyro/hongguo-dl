@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Encrypted progressive MP4 -> clear fMP4 over MSE.
-// Uses pinned Librempeg WASM with bounded raw-byte and MSE caches.
+// Playback layer: MSE presentation of the media Worker's clear fMP4 output.
+// The Worker (download + processing layers) owns HTTP, metadata and WASM.
 import { createMediaProcessor } from './media-processor.js';
 import { bvc2BridgeAvailable } from './bvc2.js';
 import { errorWith } from './logic.js';
@@ -10,9 +10,11 @@ import { assertHevcInitCodecMatches } from './cenc-init-codec.js';
 import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 
+import { MAX_REMUX_FILE_BYTES } from './media-route.js';
+
 const MAX_CORE = 24 * 1024 * 1024;
-// The remux Worker enforces this same limit; metadata and native EME do not.
-export const MAX_CENC_REMUX_FILE_BYTES = 260 * 1024 * 1024;
+// The Worker's route decision enforces this; metadata and native EME do not.
+export const MAX_CENC_REMUX_FILE_BYTES = MAX_REMUX_FILE_BYTES;
 const checkCencCore = retryableAvailability(async () => {
   const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm',
     location.href);
@@ -94,47 +96,111 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
   });
 }
 
+const SOURCE_MESSAGES = {
+  CENC_RANGE_UNSUPPORTED: '來源不支援有限的 HTTP Range（HTTP 200）',
+  CENC_SOURCE_FORBIDDEN: 'CDN 拒絕存取影片（HTTP 403）',
+  CENC_RANGE_INVALID: '來源回傳不符合要求的影片範圍',
+  CENC_RATE_LIMITED: '來源限制請求頻率（HTTP 429）',
+  CENC_RANGE_TIMEOUT: 'HTTP Range 讀取逾時',
+  CENC_RANGE_HTTP: '來源 HTTP Range 請求失敗',
+  CENC_SOURCE_SLOW: '來源下載速度不足以播放',
+  CENC_METADATA_LIMIT: 'MP4 索引超過 8 MiB 有界串流安全限制，不能改用整檔下載',
+  BVC2_ERROR: 'ByteVC2 串流需要可讀取索引的 MP4 來源'
+};
+// Worker events carry only fixed codes and numeric statuses, never URLs/keys.
+function workerError(fields) {
+  const code = typeof fields?.code === 'string' && /^[A-Z0-9_]{2,48}$/.test(fields.code)
+    ? fields.code : 'CENC_UNAVAILABLE';
+  const status = Number.isInteger(fields?.status) ? fields.status : 0;
+  return Object.assign(errorWith(code, SOURCE_MESSAGES[code] ||
+    (status ? '媒體來源讀取失敗（HTTP ' + status + '）' : '媒體來源讀取失敗')),
+  { status, ...(Number.isFinite(fields?.retryAfterMs) ? { retryAfterMs: fields.retryAfterMs } : {}) });
+}
+
 /**
- * @returns {{url:string,kind:string,close:()=>Promise<void>}|null}
- * Returns immediately with an object URL. The caller must assign video.src
- * before MSE opens; Worker output waits for sourceopen/SourceBuffer ACKs.
+ * Declare a playable-media demand to the media Worker and present its clear
+ * fMP4 output through MSE. The Worker opens the source, inspects metadata
+ * and chooses the route; this function never probes or downloads by itself.
+ * Resolves to null when the Worker reports no MSE route; `onMetadata`
+ * receives the Worker's metadata and route for a browser-native fallback.
+ * @returns {Promise<{url:string,kind:string,close:()=>Promise<void>}|null>}
  */
 export async function openCencProgressiveStream({
-  video, input = null, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], initialStream = null,
-  initialOffset = 0, initialEnd = 0, initialEtag = null,
-  videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
+  video, input, onStage = () => {}, codec, key, signal, startSeconds = 0,
+  durationSeconds: durationHint = null, bridge = 'cenc', preload = false,
+  remainingMediaAttempts = 20, onMetadata = () => {}, fetchImpl
 }) {
-  if (fileSize > MAX_CENC_REMUX_FILE_BYTES) return null;
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
   if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > 24 * 3600)
     throw errorWith('CENC_UNAVAILABLE', '不合法的影片跳轉時間');
-  const videoCodec = codec === 'hevc' ?
-    (/^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/.test(
-      videoCodecString || '') ? videoCodecString : null) :
-    codec === 'h264' ? (bridge === 'bvc2' ? 'avc1.42C01F' : 'avc1.42E01E') : null;
-  if (!videoCodec) return null;
+  if (!input?.url) return null;
+  if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+  // Capability report: whether this browser can host the WASM/MSE route.
+  const processing = typeof MediaSource !== 'undefined' &&
+    await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable());
+  if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+  const outputCodec = bridge === 'bvc2' ? 'h264' : codec;
+  // Step budgets are enforced synchronously before any source is declared,
+  // so an exhausted budget never reaches the network.
+  onStage('metadata');
+  let processor;
+  try {
+    processor = createMediaProcessor({ bridge, preload, onStage, fetchImpl,
+      // HEVC: a precise MSE codec string must not be vetoed by canPlayType('hvc1').
+      supportsType: mime => typeof MediaSource !== 'undefined' &&
+        Boolean(MediaSource.isTypeSupported?.(mime)) &&
+        (outputCodec === 'hevc' || Boolean(video.canPlayType?.(mime))) });
+  } catch {
+    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
+  }
+  let metadata = null, routeWaiter;
+  const routed = new Promise((resolve, reject) => { routeWaiter = { resolve, reject }; });
+  processor.onmetadata = value => { metadata = value; };
+  let routeDecided = false;
+  processor.onroute = value => { routeDecided = true; routeWaiter.resolve(value); };
+  // A refused step budget during source opening stops this startup, exactly
+  // as when the metadata probe still ran on the main thread.
+  processor.onstageerror = error => {
+    if (routeDecided) throw error;
+    routeWaiter.reject(error);
+  };
+  processor.onerror = fields => routeWaiter.reject(fields?.workerError
+    ? errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法執行') : workerError(fields));
+  const abortEarly = () => routeWaiter.reject(errorWith('CANCELED', '已切換影片'));
+  signal?.addEventListener('abort', abortEarly, { once: true });
+  try {
+    processor.reportCapabilities({ processing: { [bridge]: Boolean(processing) } });
+    processor.need({
+      source: { url: input.url, proxyUrl: input.proxyUrl || null, bridge, key: key || '' },
+      output: 'playable-media', codec: outputCodec, positionSeconds: startSeconds,
+      durationHint: Number.isFinite(durationHint) && durationHint > 0 && durationHint <= 24 * 3600 ? durationHint : null,
+      playback: { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 },
+      priority: preload ? 'speculative' : 'active', processing: !preload
+    });
+  } catch {
+    // A synchronous structured-clone/terminated-worker failure must not
+    // strand the Worker before the stream reaches its caller.
+    signal?.removeEventListener('abort', abortEarly);
+    processor.close({ discard: true });
+    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法啟動');
+  }
+  let route;
+  try { route = await routed; }
+  catch (error) { processor.close({ discard: true }); throw error; }
+  finally { signal?.removeEventListener('abort', abortEarly); }
+  onMetadata(metadata, route);
+  if (route.kind !== 'mse') {
+    processor.close();
+    return null;
+  }
+  if (signal?.aborted) { processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
+  const { fileSize, hasAac, videoCodec, durationSeconds } = route;
+  startSeconds = route.startSeconds;
   const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
     (hasAac ? ', mp4a.40.2' : '') + '"';
-  let mime = toMime(videoCodec);
-  // At this point the encrypted source's hvcC is known, but the Librempeg
-  // MOV muxer has not emitted its clear hvc1/hev1 sample entry yet. Permit
-  // either preflight declaration, and require the *actual* init MIME at append.
-  const alternateMime = codec === 'hevc' ? toMime('hev1' + videoCodec.slice(4)) : null;
-  const primarySupported = typeof MediaSource !== 'undefined' &&
-    Boolean(MediaSource.isTypeSupported?.(mime));
-  const alternateSupported = typeof MediaSource !== 'undefined' &&
-    Boolean(alternateMime && MediaSource.isTypeSupported?.(alternateMime));
-  onStage('mse.codec-check', { codec, codecString: videoCodec, hasAac,
-    primarySupported, alternateSupported });
-  if (typeof MediaSource === 'undefined' ||
-      !(primarySupported || alternateSupported) ||
-      (codec !== 'hevc' && !video.canPlayType(mime)) ||
-      !await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable())) return null;
-  if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
-
+  let mime = route.mime;
   const policy = streamBufferPolicy({ fileSize, durationSeconds,
     saveData: Boolean(navigator.connection?.saveData), deviceMemory: navigator.deviceMemory });
   onStage('buffer.policy', policy);
@@ -146,21 +212,25 @@ export async function openCencProgressiveStream({
     objectUrlRevoked = true;
     URL.revokeObjectURL(objectUrl);
   };
-  let processor;
-  try {
-    processor = createMediaProcessor({ bridge, preload, onStage });
-  } catch {
-    revokeObjectUrl();
-    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
-  }
   const internal = new AbortController();
   let closed = false, failed = false, buffer = null, queued = Promise.resolve();
   let finished = false, initialStartChecked = false;
-  let generation = 0, outputController = new AbortController(), seekPending = null;
+  let generation = processor.generation, outputController = new AbortController(), seekPending = null;
   let streamHandle;
+  // Playback state is demand state: pausing keeps the demand, and the
+  // Worker reads ahead until the reported buffer target is satisfied.
   const setPrefetch = () => {
-    if (!closed) processor.post({ type: 'prefetch',
-      active: processor.preloading || !video.paused });
+    if (closed || failed) return;
+    let ahead = 0;
+    try { ahead = bufferedAround(video.buffered, video.currentTime).bufferedAhead; } catch { ahead = 0; }
+    const playback = { paused: video.paused !== false,
+      bufferedAheadSeconds: Math.min(24 * 3600, Math.max(0, Math.round(ahead))),
+      bufferTargetSeconds: Math.round(policy.refill) };
+    const previous = processor.demand?.playback;
+    if (previous && previous.paused === playback.paused &&
+        previous.bufferedAheadSeconds === playback.bufferedAheadSeconds &&
+        previous.bufferTargetSeconds === playback.bufferTargetSeconds) return;
+    processor.need({ playback });
   };
   for (const event of ['playing', 'pause', 'ended']) video.addEventListener?.(event, setPrefetch);
   let mediaFragments = 0, mediaBytes = 0;
@@ -171,7 +241,7 @@ export async function openCencProgressiveStream({
   // Only adjust a fresh zero-start HEVC stream, never indexed seeks or user
   // resume positions. Defer until metadata and media ranges are available.
   const alignFirstBuffer = () => {
-    if (processor.preloading || closed || failed || initialStartChecked || codec !== 'hevc' ||
+    if (processor.preloading || closed || failed || initialStartChecked || outputCodec !== 'hevc' ||
         startSeconds > 0.01 || video.readyState < 1 ||
         !video.buffered?.length) return;
     try {
@@ -264,18 +334,16 @@ export async function openCencProgressiveStream({
       await waitBufferUpdate(buffer, () => buffer.appendBuffer(bytes), internal.signal);
     }
   };
-  processor.onerror = () => fail('worker-error');
-  processor.onunit = data => {
+  processor.onerror = fields => fields?.workerError ? fail('worker-error')
+    : fail('wasm-remux', { code: fields?.code, status: fields?.status });
+  processor.consume(data => {
     if (closed || failed || !data) return;
     if (data.generation !== undefined && data.generation !== generation) return;
-    if (data.type === 'error') return fail('wasm-remux', {
-      code: data.code, status: data.status
-    });
     if (data.type === 'done') {
       finished = true;
       onStage('mse.done', { fragments: mediaFragments, bytes: mediaBytes });
       void queued.then(() => {
-        if (!closed && !failed && (data.generation ?? 0) === generation && ms.readyState === 'open' && !buffer?.updating)
+        if (!closed && !failed && data.generation === generation && ms.readyState === 'open' && !buffer?.updating)
           ms.endOfStream();
       }).catch(() => fail('finish'));
       return;
@@ -289,7 +357,7 @@ export async function openCencProgressiveStream({
       if (closed || failed) return;
       if (data.type === 'init') {
         // Each generation emits a fresh init for the same track configuration.
-        if (codec === 'hevc') {
+        if (outputCodec === 'hevc') {
           const actualCodec = assertHevcInitCodecMatches(
             new Uint8Array(data.bytes), videoCodec);
           mime = toMime(actualCodec);
@@ -324,6 +392,7 @@ export async function openCencProgressiveStream({
           });
         }
         alignFirstBuffer();
+        if (video.paused) setPrefetch();
         if (seekPending && bufferedIntervals(video.buffered).some(([a, b]) =>
             a <= seekPending.target + 0.15 && b > seekPending.target + 0.1)) {
           const pending = seekPending; seekPending = null;
@@ -343,36 +412,19 @@ export async function openCencProgressiveStream({
       ? 'hevc-init-mismatch' : error?.code === 'HEVC_INIT_UNSUPPORTED'
         ? 'hevc-init-unsupported' : 'source-buffer');
     });
-  };
-  try {
-    processor.post({ type: 'start', input: input || { url, proxyUrl }, fileSize, key, startSeconds,
-      initialRanges, initialStream, initialOffset, initialEnd, initialEtag,
-      durationSeconds, bridge, deferProcessing: preload }, initialStream ? [initialStream] : []);
-  } catch {
-    // A synchronous structured-clone/terminated-worker failure must not
-    // strand the object URL or worker before the stream reaches its caller.
-    await close();
-    throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法啟動');
-  }
+  });
+  // A seek is a demand update: the same Worker, engine and byte cache serve
+  // the new position, and output for the previous position is discarded.
   const seekTo = async seconds => {
-    if (closed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
-    if (bridge === 'cenc' || bridge === 'bvc2') {
-      if (seekPending) seekPending.reject(errorWith('CANCELED', '已更新跳轉位置'));
-      const ready = new Promise((resolve, reject) => { seekPending = { target: seconds, resolve, reject }; });
-      generation++; finished = false;
-      outputController.abort(); outputController = new AbortController();
-      onStage('seek.request', { target: seconds, generation, workerReused: true,
-        bufferedRanges: bufferedIntervals(video.buffered) });
-      processor.post({ type: 'seek', seconds, generation });
-      return ready;
-    }
-    await close();
-    const replacement = await openCencProgressiveStream({
-      video, input, url, proxyUrl, fileSize, codec, hasAac, key, signal, onStage,
-      startSeconds: seconds, durationSeconds, videoCodecString, bridge, remainingMediaAttempts
-    });
-    if (!replacement) throw errorWith('CENC_UNAVAILABLE', '無法建立跳轉串流');
-    return replacement;
+    if (closed || failed || signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+    if (seekPending) seekPending.reject(errorWith('CANCELED', '已更新跳轉位置'));
+    const ready = new Promise((resolve, reject) => { seekPending = { target: seconds, resolve, reject }; });
+    finished = false;
+    outputController.abort(); outputController = new AbortController();
+    generation = processor.need({ positionSeconds: seconds });
+    onStage('seek.request', { target: seconds, generation, workerReused: true,
+      bufferedRanges: bufferedIntervals(video.buffered) });
+    return ready;
   };
   streamHandle = { url: objectUrl, inPlaceSeek: true, kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
     close, seekTo, startProcessing: () => processor.startProcessing(),
