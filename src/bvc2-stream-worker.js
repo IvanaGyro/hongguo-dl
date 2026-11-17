@@ -1,9 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Share transport, bounded raw cache, cancellation and error classification
-// with CENC playback; only the verified codec runtime/entry point differ.
+// Separate Worker URL for ByteVC2 demands, so a pooled engine is never lent
+// across bridges. The demand itself names the bridge and its WASM runtime.
 import './cenc-remux-worker.js';
-const handle = self.onmessage;
-self.onmessage = event => {
-  if (event.data?.type === 'start') event.data.bridge = 'bvc2';
-  handle(event);
-};
