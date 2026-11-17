@@ -113,13 +113,21 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.equal(url.searchParams.has('clientId'), false);
       assert.equal(url.searchParams.has('registeredAt'), false);
       assert.equal(url.searchParams.get('version_name'), '7.4.5.32');
-      for (const key of ['version_code', 'update_version_code', 'manifest_version_code', 'pv_player']) assert.equal(url.searchParams.get(key), '74532');
+      for (const key of ['version_code', 'update_version_code']) assert.equal(url.searchParams.get(key), '74532');
+      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+      assert.equal(url.searchParams.has('ts'), false);
+      assert.equal(url.searchParams.has('video_id'), false);
+      assert.equal(new URLSearchParams(url.search).has('_rticket'), true);
+      assert.ok(options.headers['x-medusa']);
+      assert.ok(options.headers['x-helios']);
+      assert.equal(options.headers['x-argus'], undefined);
+      assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);
       assert.match(options.headers['User-Agent'], /^com\.phoenix\.read\/74532 /);
       return new Response('');
     };
     await assert.rejects(fetchAppPlayUrl('123', { identity: installation, session: {} }), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 3 });
-    assert.equal(calls.length, 3);
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 2 });
+    assert.equal(calls.length, 2);
     assert.ok(calls.every(url => url.pathname.includes('multi_video_model')));
     const response = await worker.fetch(new Request('https://example.workers.dev/api/source?sid=1&vid=123&channel=app', {
       headers: { 'X-Playback-Device': JSON.stringify(installation) }
@@ -127,7 +135,7 @@ test('source empty-200 retries retain the same IDs and never register another de
     assert.equal(response.status, 502);
     assert.deepEqual(await response.json().then(data => ({ code: data.error.code,
       upstreamStatus: data.error.upstreamStatus, count: data.error.emptyResponseCount })), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 3 });
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 2 });
   } finally { globalThis.fetch = original; }
 });
 
@@ -214,8 +222,8 @@ test('source requests run concurrently without pacing or propagating another req
   const original = globalThis.fetch, installation = registered(seed()), session = {};
   let release; const calls = [];
   try {
-    globalThis.fetch = async raw => {
-      const vid = new URL(raw).searchParams.get('video_id'); calls.push(vid);
+    globalThis.fetch = async (_raw, options) => {
+      const vid = JSON.parse(gunzipSync(options.body)).mixed_video_id_map['1004'][0]; calls.push(vid);
       if (vid === '101') await new Promise(resolve => { release = resolve; });
       return new Response('denied', { status: vid === '101' ? 403 : 429 });
     };
