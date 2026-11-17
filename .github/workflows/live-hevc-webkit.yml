@@ -17,7 +17,7 @@ on:
       - 'src/mse-start-gap.js'
   workflow_dispatch:
 concurrency:
-  group: real-hevc-webkit-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: read

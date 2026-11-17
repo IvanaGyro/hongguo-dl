@@ -7,13 +7,28 @@ const fail = (code, status = 0) => Object.assign(new Error(code), { code, status
 const KEEP = 2 * 1024 * 1024;
 export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
   recovery, timeoutMs = RANGE_TIMEOUT_MS, onResponse = () => {}, onRequest = () => {}, onChunk = () => {}, externalCache = null,
-  maxPacketBytes = 4 * 1024 * 1024, durationSeconds = 0, onSlow = () => {} }) {
+  maxPacketBytes = 4 * 1024 * 1024, durationSeconds = 0, onSlow = () => {},
+  initialStream = null, initialOffset = 0, initialEnd = 0, initialEtag = null }) {
   let session = null, base = 0, length = 0, head = 0, closed = false;
   const bytes = externalCache ? null : new Uint8Array(8 * 1024 * 1024);
   let networkOffset = 0;
-  let requests = 0, receivedBytes = 0, validator = null;
+  let requests = 0, receivedBytes = 0;
+  // Preserve the original response validator when adopting its body.
+  let validator = initialStream && typeof initialEtag === 'string' ? initialEtag : null;
   const requiredRate = durationSeconds > 0 ? fileSize / durationSeconds : 0;
   let sampleBytes = 0, activeMs = 0, bytesPerSecond = 0;
+  if (initialStream) {
+    if (!(initialStream instanceof ReadableStream) ||
+        !Number.isSafeInteger(initialOffset) || initialOffset < 0 ||
+        !Number.isSafeInteger(initialEnd) || initialOffset > initialEnd ||
+        initialEnd > fileSize)
+      throw fail('CENC_RANGE_INVALID');
+    // A layer-one response has already supplied the metadata prefix. The
+    // transferred body resumes at initialOffset, with no new HTTP fetch.
+    session = { controller: { abort() {} }, reader: initialStream.getReader(), end: initialEnd };
+    networkOffset = initialOffset;
+    requests = 1;
+  }
   const measure = (bytesRead, elapsed) => {
     sampleBytes += bytesRead; activeMs += elapsed;
     bytesPerSecond = sampleBytes * 1000 / Math.max(1, activeMs);
@@ -128,7 +143,12 @@ export function createHttpStreamReader({ fetchImpl, url, fileSize, signal,
     let result = externalCache.read(start, end - start);
     while (!result) {
       const missing = externalCache.firstMissing(start, end);
-      if (!session || networkOffset !== missing || networkOffset === session.end) await open(missing, readSignal);
+      // An AVIO read can jump a little beyond the metadata prefix (e.g.
+      // 100658 after 65536). Consume the existing body instead of reopening
+      // a second, overlapping Range. Distant seeks still open a new Range.
+      if (!session || networkOffset > missing || networkOffset === session.end ||
+          missing - networkOffset > 256 * 1024)
+        await open(missing, readSignal);
       const started = performance.now();
       const { done, value } = await io(() => session.reader.read(), readSignal);
       check(readSignal);

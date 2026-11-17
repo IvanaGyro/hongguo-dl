@@ -85,7 +85,7 @@ test('a source failure before CENC setup does not disable incremental playback o
     return { variants: [source('a')] };
   }, async (_url, options) => {
     mediaCalls++;
-    assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
+    assert.match(options.headers.Range, /^bytes=\d+-\d*$/);
     return new Response('', { status: 416 });
   });
   assert.equal(calls, 2);
@@ -108,7 +108,7 @@ test('API failures do not skip CDN candidates or revive failed URLs after an uns
     if (calls === 3) throw failure('EMPTY_RESPONSE');
     return { variants: [source('c')] };
   }, async (url, options) => {
-    assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
+    assert.match(options.headers.Range, /^bytes=\d+-\d*$/);
     const media = new URL(url, 'https://worker.example').searchParams.get('url');
     requested.push(media);
     return new Response('', { status: media === source('c').url ? 416 : 520 });
@@ -142,7 +142,7 @@ test('unsupported HEVC stays out of the player menu and makes no media request',
   let requests = 0;
   const fetchImpl = async (_url, options) => {
     requests++;
-    assert.match(options.headers.Range, /^bytes=\d+-\d+$/);
+    assert.match(options.headers.Range, /^bytes=\d+-\d*$/);
     return new Response('', { status: 416 });
   };
   const standard = await runScenario(sourceFor, fetchImpl, { canPlayType: () => '' });

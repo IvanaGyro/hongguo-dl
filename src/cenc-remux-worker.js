@@ -26,7 +26,10 @@ const sendUnit = (type, data) => new Promise((resolve, reject) => {
   self.postMessage({ type, id, generation, bytes: data.buffer }, [data.buffer]);
 });
 
-async function run({ input = null, url, proxyUrl = null, key, fileSize, startSeconds = 0, initialRanges = [], durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
+async function run({ input = null, url, proxyUrl = null, key, fileSize, startSeconds = 0,
+  initialRanges = [], initialStream = null, initialOffset = 0, initialEnd = 0,
+  initialEtag = null,
+  durationSeconds = 0, cacheBudget, bridge = 'cenc', deferProcessing = false }) {
   ({ url, proxyUrl = null } = input || { url, proxyUrl });
   if (started) throw new Error('Streaming worker already started');
   started = true;
@@ -64,7 +67,8 @@ async function run({ input = null, url, proxyUrl = null, key, fileSize, startSec
     self.postMessage({ type: 'stage', stage: 'bvc2.config', indexNormalized: true });
   }
   stream = createCachedMediaReader({ fetchImpl: transport.fetch,
-    initialRanges, durationSeconds, budget: cacheBudget,
+    initialRanges, initialStream, initialOffset, initialEnd, initialEtag,
+    durationSeconds, budget: cacheBudget,
     onStage: (stage, fields) => {
       self.postMessage({ type: 'stage', stage, ...fields });
       // A failed background pump invalidates this candidate immediately,

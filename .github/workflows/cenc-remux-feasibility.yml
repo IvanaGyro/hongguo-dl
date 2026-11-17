@@ -5,7 +5,15 @@ on:
     paths:
       - 'scripts/probe-cenc-remux.py'
       - '.github/workflows/cenc-remux-feasibility.yml'
+  pull_request:
+    paths:
+      - 'scripts/probe-cenc-remux.py'
+      - '.github/workflows/cenc-remux-feasibility.yml'
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:

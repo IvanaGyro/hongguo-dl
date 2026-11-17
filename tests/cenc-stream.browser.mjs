@@ -408,12 +408,16 @@ try {
     const frame = await page.evaluate(() => window.__cencFrame);
     assert(frame.lastByte < input.length - 1,
       'First presented frame occurred after HTTP EOF: ' + JSON.stringify(frame));
-    assert(frame.requests >= 2 && !mediaRequests.some(req => req.unbounded),
-      'Metadata and fragment HTTP ranges must both be used');
+    assert(frame.requests >= 1 && !mediaRequests.some(req => req.unbounded),
+      'Incremental playback must use an explicit HTTP Range');
+    if (!cdnRetry && !rangeRetry && process.env.CENC_TEST_SEEK !== '1') {
+      assert.equal(frame.requests, 1,
+        'Metadata and first decoded frame should share the initial 0- CDN response');
+    }
     assert.equal(frame.mediaKeys, false, 'Clear output should not need EME');
     if (cdnRetry) {
       assert.equal(deniedCdnRequests, 1, 'First CDN should fail once, then rotate');
-      assert(alternateCdnRequests >= 2, 'Alternate must serve metadata and media Ranges');
+      assert(alternateCdnRequests >= 1, 'Alternate must stream both metadata and media bytes');
       const statuses = await page.evaluate(() => window.__playbackStatusLog);
       assert(statuses.some(s => /HTTP 403.*CDN #1/.test(s)), JSON.stringify(statuses));
       assert(statuses.some(s => /讀取 MP4.*CDN #2.*第 2\/20 次/.test(s)), JSON.stringify(statuses));

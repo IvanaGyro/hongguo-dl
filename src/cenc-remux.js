@@ -11,6 +11,8 @@ import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
+// The remux Worker enforces this same limit; metadata and native EME do not.
+export const MAX_CENC_REMUX_FILE_BYTES = 260 * 1024 * 1024;
 const checkCencCore = retryableAvailability(async () => {
   const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm',
     location.href);
@@ -99,8 +101,11 @@ function waitBufferHeadroom(video, sourceBuffer, signal, policy) {
  */
 export async function openCencProgressiveStream({
   video, input = null, url, proxyUrl = null, fileSize, onStage = () => {}, codec, hasAac, key, signal,
-  startSeconds = 0, durationSeconds = null, initialRanges = [], videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
+  startSeconds = 0, durationSeconds = null, initialRanges = [], initialStream = null,
+  initialOffset = 0, initialEnd = 0, initialEtag = null,
+  videoCodecString = null, bridge = 'cenc', preload = false, remainingMediaAttempts = 20
 }) {
+  if (fileSize > MAX_CENC_REMUX_FILE_BYTES) return null;
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
   if ((key || bridge !== 'bvc2') && !/^[a-f0-9]{32}$/i.test(key || '')) return null;
@@ -341,7 +346,8 @@ export async function openCencProgressiveStream({
   };
   try {
     processor.post({ type: 'start', input: input || { url, proxyUrl }, fileSize, key, startSeconds,
-      initialRanges, durationSeconds, bridge, deferProcessing: preload });
+      initialRanges, initialStream, initialOffset, initialEnd, initialEtag,
+      durationSeconds, bridge, deferProcessing: preload }, initialStream ? [initialStream] : []);
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
     // strand the object URL or worker before the stream reaches its caller.

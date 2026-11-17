@@ -7,7 +7,7 @@ on:
       - '.github/workflows/live-cenc-wasm-proof.yml'
   workflow_dispatch:
 concurrency:
-  group: live-cenc-wasm-proof-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: read

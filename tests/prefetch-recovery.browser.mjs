@@ -47,8 +47,10 @@ try {
       response.writeHead(206, { ...cors, 'Content-Type': 'video/mp4', 'Content-Length': String(last - first + 1),
         'Content-Range': `bytes ${first}-${last}/${bytes.length}` });
       if (!openEnded || !failing) return response.end(bytes.subarray(first, last + 1));
-      // Enough for a picture in the active case; only init in the preload case.
-      let offset = Math.min(last + 1, first + (mode.startsWith('active-slow') ? 262144 : 1024));
+      // Shared 0- responses must complete the 64 KiB metadata prefix first.
+      // Then a slow preload should stall media bytes rather than the parser.
+      let offset = Math.min(last + 1, first +
+        (mode.startsWith('active-slow') ? 262144 : 65536 + 1024));
       response.write(bytes.subarray(first, offset));
       const timer = setInterval(() => {
         if (offset > last) { clearInterval(timer); timers.delete(timer); response.end(); }
@@ -121,12 +123,15 @@ try {
             'Replace an init-only slow preload before episode handoff');
           assert.match(log, /prefetch.handoff episode=25 media=true ready=true/);
           assert.match(log, /prefetch.stage episode=25 phase=cdn.selected candidate=2.*attempt=2/);
-          assert.match(log, /prefetch.stage episode=25 phase=media.request candidate=2.*attempt=2/);
+          assert.match(log, /prefetch.stage episode=25 phase=range.request candidate=2.*offset=0.*attempt=2/);
           assert(!/cenc.stage phase=cdn.selected candidate=2.*attempt=1/.test(log), 'Handoff must not reset the prefetch CDN attempt');
         }
         assert.equal(mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-a.mp4`).length, 1,
           'Do not reopen the failed slow URL at handoff');
-        assert.equal(mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-b.mp4`).length, 1);
+        const healthyRanges = mediaRequests.filter(r => r.openEnded && r.path === `/${episode}-b.mp4`);
+        assert.equal(healthyRanges.length, 1,
+          'The replacement CDN must reuse one open-ended response for metadata and media');
+        assert.equal(healthyRanges[0].first, 0, 'The shared source starts at byte zero');
       }
       assert(!mediaRequests.some(r => r.path.includes('lower')), 'Stay at the original quality');
       assert.deepEqual(errors, []);

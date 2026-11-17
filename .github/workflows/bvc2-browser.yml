@@ -23,11 +23,33 @@ on:
       - 'scripts/generate-bvc2-fixtures.mjs'
       - 'scripts/synthetic-bvc2.mjs'
       - '.github/workflows/bvc2-browser.yml'
+  pull_request:
+    paths:
+      - 'src/player.js'
+      - 'src/main.js'
+      - 'src/download-source-session.js'
+      - 'src/media-download.js'
+      - 'src/media-session.js'
+      - 'src/source-options.js'
+      - 'src/cenc-source-fallback.js'
+      - 'src/bvc2*.js'
+      - 'src/cenc-remux*.js'
+      - 'src/stream-preload.js'
+      - 'src/player-prefetch.js'
+      - 'tests/cenc-preload.browser.mjs'
+      - 'src/cached-media-reader.js'
+      - 'src/media-body.js'
+      - 'src/playback-policy.js'
+      - 'tests/bvc2*'
+      - 'tests/cenc-worker-reuse.node.mjs'
+      - 'scripts/generate-bvc2-fixtures.mjs'
+      - 'scripts/synthetic-bvc2.mjs'
+      - '.github/workflows/bvc2-browser.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: bvc2-browser-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   playback:

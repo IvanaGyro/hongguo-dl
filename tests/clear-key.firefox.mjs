@@ -55,7 +55,7 @@ const serveApi = async route => {
       last = m[2] ? Math.min(last, Number(m[2])) : last;
       status = 206;
     }
-    mediaRequests.push({ status, first, last });
+    mediaRequests.push({ status, first, last, range });
     if (first > last || first >= videoBytes.length)
       return route.fulfill({ status: 416, body: '' });
     const body = videoBytes.subarray(first, last + 1);
@@ -127,8 +127,8 @@ try {
       }));
     assert.equal(result.videoWidth, 480);
     assert(mediaRequests.length > 0);
-    assert(mediaRequests.some(r => r.status === 206 && r.first === 0 && r.last <= 65535),
-      'Metadata preflight must be a bounded Range request');
+    assert(mediaRequests.some(r => r.status === 206 && r.range === 'bytes=0-'),
+      'Metadata must come from the initial persistent 0- response');
     assert(!pageErrors.length, pageErrors.join('; '));
     const nativeMs = Math.round(performance.now() - started);
     console.log('PASS real H.264 CENC Clear Key browser stream', JSON.stringify({

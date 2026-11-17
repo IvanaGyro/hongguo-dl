@@ -22,7 +22,9 @@ export function createCachedMediaReader({ fileSize, budget,
   const cache = createMediaByteCache({ fileSize, budget });
   for (const { offset, data } of initialRanges) cache.write(offset, data, true);
   let closed = false, enabled = false, focus = 0, pumping = false, packet = null;
-  let speculationFailed = false, failure = null, downloadedBytes = 0, requests = 0, lastLog = 0, reportedComplete = false;
+  // Account for the original CDN request established during metadata probing.
+  let speculationFailed = false, failure = null, downloadedBytes = options.initialOffset || 0,
+    requests = options.initialStream ? 1 : 0, lastLog = 0, reportedComplete = false;
   const catchupMs = Math.min(1000, options.timeoutMs || 10000);
   const reads = new Set();
   const notify = force => {

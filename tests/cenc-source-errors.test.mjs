@@ -20,7 +20,7 @@ for (const [status, code, nonRetryable] of [
   test('CENC metadata HTTP ' + status + ' is distinguished from codec failure', async () => {
     let ranged = 0, canceled = 0, eme = 0;
     const fetchImpl = async (_url, { headers }) => {
-      assert.equal(headers.Range, 'bytes=0-65535');
+      assert(['bytes=0-', 'bytes=0-65535'].includes(headers.Range));
       ranged++;
       return { status, body: { cancel: async () => { canceled++; } } };
     };
@@ -71,7 +71,7 @@ test('truncated or malformed 206 metadata never falls back to whole encrypted MP
       source, codec: 'hevc', workerOrigin: 'https://worker.example',
       fetchImpl: async (_url, { headers }) => {
         requests++;
-        assert.equal(headers.Range, 'bytes=0-65535');
+        assert.equal(headers.Range, 'bytes=0-');
         return new Response(new Uint8Array(scenario.bytes), {
           status: 206, headers: {
             'Content-Range': scenario.range,
@@ -91,7 +91,7 @@ test('CENC metadata fetch and read errors stay bounded, retryable and redacted',
     let calls = 0, canceled = 0;
     const fetchImpl = async (_url, { headers }) => {
       calls++;
-      assert.equal(headers.Range, 'bytes=0-65535');
+      assert.equal(headers.Range, 'bytes=0-');
       if (phase === 'fetch') throw new Error('private signed URL and key=secrets');
       const reader = {
         read: async () => { throw new Error('private signed URL and key=secrets'); },

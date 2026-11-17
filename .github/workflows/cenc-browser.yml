@@ -33,14 +33,42 @@ on:
       - 'tests/playback-cancel.browser.mjs'
       - 'tests/playback-fallback.browser.mjs'
       - 'public/cenc/**'
+  pull_request:
+    paths:
+      - '.github/workflows/cenc-browser.yml'
+      - 'src/cenc-remux.js'
+      - 'src/stream-preload.js'
+      - 'src/player-prefetch.js'
+      - 'tests/cenc-preload.browser.mjs'
+      - 'src/cenc-remux-worker.js'
+      - 'src/fmp4-assembler.js'
+      - 'src/clear-key.js'
+      - 'src/player.js'
+      - 'src/media-session.js'
+      - 'src/download-source-session.js'
+      - 'src/media-download.js'
+      - 'src/cenc-source-fallback.js'
+      - 'src/media-transport.js'
+      - 'tests/prefetch-recovery.browser.mjs'
+      - 'src/codec-diagnostics.js'
+      - 'src/main.js'
+      - 'src/cenc-seek.js'
+      - 'src/http-range.js'
+      - 'src/http-stream.js'
+      - 'src/cached-media-reader.js'
+      - 'src/media-byte-cache.js'
+      - 'src/stream-buffer-policy.js'
+      - 'tests/cenc-seek-cache.browser.mjs'
+      - 'tests/cenc-worker-reuse.node.mjs'
+      - 'src/retry.js'
+      - 'tests/cenc-stream.browser.mjs'
+      - 'tests/playback-cancel.browser.mjs'
+      - 'tests/playback-fallback.browser.mjs'
+      - 'public/cenc/**'
   workflow_dispatch:
-# Keep an existing acceptance run alive when main advances. Fast first-frame/
-# RAP seek tests and 120s pause/1800s playback now run as independent jobs,
-# so a long timed check cannot delay the fast verdict or mask its failure.
-# GitHub bounds concurrency to one running and one pending workflow run.
 concurrency:
-  group: cenc-browser-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -50,7 +78,7 @@ jobs:
       fail-fast: false
       matrix:
         # Focused CENC fixes run real Chromium/Firefox acceptance; main retains both suites.
-        suite: ${{ github.ref != 'refs/heads/main' && github.event_name == 'push' && fromJSON('["fast"]') || fromJSON('["fast","long"]') }}
+        suite: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["fast","long"]') || fromJSON('["fast"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
