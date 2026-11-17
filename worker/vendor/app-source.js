@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 const { gzipSync } = require('node:zlib');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { getPlaybackDevice } = require('./playback-device');
-const { signPlayer, Ladon } = require('./playback-signature');
+const { Ladon } = require('./playback-signature');
 const { abortError, throwIfAborted, boundedSignal, networkFailure, retryAfterMs } = require('./request-signal');
 const sm3 = require('./sm3');
 const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
@@ -24,8 +24,9 @@ function getProcessIdentity() {
         started: Date.now(),
     });
 }
-const VIDEO_API = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/';
-const VIDEO_TAB_API = 'https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/video_tab/multi_video_model/v1/';
+// GPL-3.0-only: Android v5 player transport, ported from N3urda/hongguoTV
+// kotlin-tv/core/src/main/kotlin/com/hongguotv/core/{MobilePlayback,Signer,AesV3,V5Constants}.kt.
+const VIDEO_API = 'https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
 const { DEVICE_QUERY: DEVICE, APP_UA: VIDEO_UA } = require('./device-profile');
 const SEARCH_UA = VIDEO_UA;
@@ -94,17 +95,18 @@ function setRustHashF13Backend(backend) {
     if (typeof backend !== 'function') throw new TypeError('Medusa F13 backend must be callable');
     rustHashF13 = backend;
 }
-function hashF13(querySm3, bodyMd5, tsBytes, khronos) {
-    if (rustHashF13) return rustHashF13(Buffer.from(querySm3), Buffer.from(bodyMd5), Buffer.from(tsBytes), khronos);
+function hashF13(querySm3, bodyMd5, tsBytes, khronos, v5 = false) {
+    if (!v5 && rustHashF13) return rustHashF13(Buffer.from(querySm3), Buffer.from(bodyMd5), Buffer.from(tsBytes), khronos);
     const iv = getIv(getIv(getIv(0x20230928, querySm3), bodyMd5), tsBytes); const low = iv & 15; const ivV0 = (low * 171) >> 9; const branch = low - ivV0 * 3;
-    if (branch === 2) return branch2F13(iv, querySm3, bodyMd5, tsBytes, khronos);
-    if (branch !== 0) return Buffer.concat([querySm3.subarray(0, 16), bodyMd5, le32(sumMd5(Buffer.concat([querySm3, bodyMd5]))) ]);
-    const ivV1List = [0xc4a78580, 0xb3c0fd39, 0xc58c5686, 0xc9aa3ba7, 0xf5a7adf2, 0x963c2ed1]; const ivV1 = ivV1List[ivV0]; const countV1 = (ivV1 + khronos + 1) & 255; const countV2 = u32(ivV1 + khronos);
+    if (v5 && low !== 12) throw new Error('Unsupported v5 F13 branch');
+    if (!v5 && branch === 2) return branch2F13(iv, querySm3, bodyMd5, tsBytes, khronos);
+    if (!v5 && branch !== 0) return Buffer.concat([querySm3.subarray(0, 16), bodyMd5, le32(sumMd5(Buffer.concat([querySm3, bodyMd5]))) ]);
+    const ivV1List = [0xc4a78580, 0xb3c0fd39, 0xc58c5686, 0xc9aa3ba7, 0xf5a7adf2, 0x963c2ed1]; const ivV1 = v5 ? 0x9d4a97c2 : ivV1List[ivV0]; const countV1 = (ivV1 + khronos + 1) & 255; const countV2 = u32(ivV1 + khronos);
     const tt02 = [0xebb64faf,0x7aadcc2,0xcf3187bf,0xe01138ff,0x6d0bfcff,0x5a30a3be,0xb41ad638,0x34180eb8,0xf233eb6f,0xb1a584cc,0xccc30dc7,0x47d1db51,0xd55653de,0x70a84fa1,0x57473c12,0xf76f0288,0x2c077f0a,0xda0dcad0,0xfbb86f6c,0xfdc4cf00,0x688a020d,0xe676c6a6,0x8cd6338b,0x1a3c8d0e,0xcce8b06b,0x6ad0ed0b,0xa0522717,0xdc71ac83,0x2285db71,0xd5b4dda6,0x736f8650,0x6560306c,0x617ce2a6,0xe423417e,0xa40e143,0x544e4032,0x88dffb2a,0x716c1ae0,0x4c467a88,0x5b23bb3,0xe1d0b866,0xbaa3dcb8,0xae3374d3,0xc3381a50,0x1702f75b,0xfe6da368,0xf0b4cf48,0x4e0ffbb8,0x72aad10d,0x26c53a3d,0xf2bce0f6,0xb4557581,0x4a257fdd,0x8c3182a2,0xab0b3b86,0x3d5dfb14,0x4f103634,0xd37b52d7,0x444eff16,0xeb0a33d1,0x6ca86f6e,0x284ba7,0x8387cfa,0x5fb37586];
     const tt = tt02.map((value) => ror32(value, countV1)); const n0 = (countV2 + 2) & 7; const seed = [0xfa,0x45,0x61,0xd7]; const pad = Buffer.from(seed.map((value) => ((value | (value << 8)) >> n0) & 255));
     const data = Buffer.concat([querySm3, bodyMd5, tsBytes, pad, Buffer.from('00000000000001a0','hex')]); const di = []; for (let i = 0; i < data.length; i += 4) di.push(data.readUInt32BE(i)); let di0 = di[0]; for (let i = 0; i < 112; i += 1) { const di1 = di[i + 1]; const di14 = di[i + 14]; const r1 = rol32(di1, 14) ^ rol32(di1, 25) ^ (di1 >>> 3); const r2 = rol32(di14, 13) ^ rol32(di14, 15) ^ (di14 >>> 10); di.push(u32(di0 + di[i + 9] + r1 + r2)); di0 = di1; }
-    const init = [0x7aba4fc8,0x67166507,0x6403fa00,0x340f512f,984304912,3005047866,2874125293,2152413264].map((v) => ror32(v, countV2 & 31)); const chosen = [[101,5,7,6,3,2,1,0,5,4,3],[96,0,6,7,5,3,2,1,5,4,4],[96,7,6,2,1,4,0,5,4,3,5],[99,3,6,2,4,5,1,0,0,7,6],[96,0,5,6,7,3,1,2,5,4,4],[100,2,0,3,5,4,6,7,2,1,5]][ivV0]; let d = init.slice(); for (let i = 0; i < chosen[0]; i += 1) { const base = ivV1 + i; const n0v = di[base & 127]; const n1 = ((d[chosen[3]] ^ d[chosen[4]]) & d[chosen[1]]) ^ d[chosen[3]]; const n2 = rol32(d[chosen[1]],26)^rol32(d[chosen[1]],21)^rol32(d[chosen[1]],7); const n4 = u32(n0v+n1+n2+tt[base&63]+d[chosen[5]]); const n5=rol32(d[chosen[2]],30)^rol32(d[chosen[2]],19)^rol32(d[chosen[2]],10); const n6=(d[chosen[2]]&d[chosen[6]])|((d[chosen[2]]|d[chosen[6]])&d[chosen[7]]); const n7=u32(n5+n6); const old=d[chosen[9]]; d.unshift(d.pop()); d[chosen[10]]=u32(n7+n4); d[chosen[8]]=u32(old+n4); }
-    const ret = Buffer.alloc(32); for (let i = 0; i < 8; i += 1) ret.writeUInt32BE(u32(d[i]+init[i]), i*4); const folded = bxor(ret.subarray(0,16), ret.subarray(16)); folded.copy(ret,0); return Buffer.concat([ret.subarray(0,16), le32(sumMd5(ret.subarray(0,16)))]);
+    const init = [0x7aba4fc8,0x67166507,0x6403fa00,0x340f512f,984304912,3005047866,2874125293,2152413264].map((v) => ror32(v, countV2 & 31)); const chosen = v5 ? [96,1,3,4,0,6,5,2,0,7,7] : [[101,5,7,6,3,2,1,0,5,4,3],[96,0,6,7,5,3,2,1,5,4,4],[96,7,6,2,1,4,0,5,4,3,5],[99,3,6,2,4,5,1,0,0,7,6],[96,0,5,6,7,3,1,2,5,4,4],[100,2,0,3,5,4,6,7,2,1,5]][ivV0]; let d = init.slice(); for (let i = 0; i < chosen[0]; i += 1) { const base = ivV1 + i; const n0v = di[base & 127]; const n1 = ((d[chosen[3]] ^ d[chosen[4]]) & d[chosen[1]]) ^ d[chosen[3]]; const n2 = rol32(d[chosen[1]],26)^rol32(d[chosen[1]],21)^rol32(d[chosen[1]],7); const n4 = u32(n0v+n1+n2+tt[base&63]+d[chosen[5]]); const n5=rol32(d[chosen[2]],30)^rol32(d[chosen[2]],19)^rol32(d[chosen[2]],10); const n6=(d[chosen[2]]&d[chosen[6]])|((d[chosen[2]]|d[chosen[6]])&d[chosen[7]]); const n7=u32(n5+n6); const old=d[chosen[9]]; d.unshift(d.pop()); d[chosen[10]]=u32(n7+n4); d[chosen[8]]=u32(old+n4); }
+    const ret = Buffer.alloc(32); for (let i = 0; i < 8; i += 1) ret.writeUInt32BE(u32(d[i]+init[i]), i*4); const folded = bxor(ret.subarray(0,16), ret.subarray(16)); folded.copy(ret,0); return Buffer.concat([ret.subarray(0,16), le32(u32(sumMd5(ret.subarray(0,16)) | (v5 ? 0x20 : 0)))]);
 }
 function reverseBits(value) { let result = 0; for (let i = 0; i < 8; i += 1) result = (result << 1) | ((value >> i) & 1); return result; }
 function rc4Gorgon(data, key) {
@@ -143,15 +145,38 @@ function xorBytes(a, b) { const out = Buffer.from(a); for (let i = 0; i < out.le
 function matrix(bytes) { return Array.from({ length: 4 }, (_v, i) => Array.from(bytes.subarray(i * 4, i * 4 + 4))); }
 function flat(rows) { return Buffer.from(rows.flat()); }
 function aesMix(rows) { for (let i = 0; i < 4; i += 1) { const t=rows[0][i]^rows[1][i]^rows[2][i]^rows[3][i]; const u=rows[0][i]; const xt=(x)=>((x<<1)^((x&128)?0x1b:0))&255; rows[0][i]^=t^xt(rows[0][i]^rows[1][i]); rows[1][i]^=t^xt(rows[1][i]^rows[2][i]); rows[2][i]^=t^xt(rows[2][i]^rows[3][i]); rows[3][i]^=t^xt(rows[3][i]^u); } }
+// Protocol constants are not an end-user credential.
+const V5_MAGIC = Buffer.from('2d4b4fca49750d433fb5ae2c226dcc56', 'hex');
+const V5_SIGN_KEY = Buffer.from('b23c2a470a20d105dc3f8c4438f8272ed46d6c89ffdcdedd5108698d26e9489d', 'hex');
+const V5_SBOX = Buffer.from('53290fe9e51f316f90f74a7e034d367784ab49237cd0135cdc632c322fd3be0e2624a417ecd9151a7ff64f60730a87f9445ec6ada2f865d22b696c4188f24c0df37b75510b939f6bc2fe6883e68bc8c722181ba0bdb08c9871b50c9a16b46eea8eed20ba4b8a14e0fcf1468dbbef05a93e5a9d7dcf06898635c1fd99f5de287a80c594daaab19b6279fbd75070cb52eb2555c456e39e7839853874e2f0013ac0b64742d8ca10e4b79c955de8b843ce4ed464a6a72ed508091c92e7b3eedd1e1dd12afac321618fa3d65f9167c982f43d66a53c6a1997585b346dbf9672ff37cdbc073b2dae11453304df00815476b2a13fccdb30b957a8acafe127400248591238922563e36406d37a24100b7902a028044e218453c2a399199c9d13dc40c55ba67e502273850ebdc1a2e2188b8f2d9e3cb909b8c46a2a9f4a6dd93007eafa65b7b3a881aa908cc74f0ad76bbbb58617c37012ca05a469fd44e62eecf1e4272ce860c0ae5eadf99b20d8f0234174006f3f110d7657d01645d4eff8f71471cbfe1cb2f52648727bf3c9de55153e031b4d61757db63dbf7782eeafe9018a8891362fb14759ac32bab03b349aeb5a377c5156be4c8dfbe13a684bda39cf836697c894545fe0f2491acea9fc6252f4ff1e0fe72bd2df6e67a7f635e5bcc6d1a5dd951d89960887a18eb40c785cdb1f80ed42299333ab98cdd67f316cd54346585dccd759fb722789b08807cc0fda293f7e5e1819bb0353517020b31d3d00374952bea2c421e862040a9ec892a05b266b7a0d0cc316f483b81af39715657ffe32ad8de0c13077646035236ee5363e5f900e9a7cf850a81cd9960b6df73317226f99eaa6fff15cec34acb98246639b918ab2851466a7cdfc4ad1b52c2ae95a58d3734e47ddd5b7560193f644ef9c408b7dee39b4d6aabf4de761e3252d4c7ba3843187745d55e6a5db05d42b45caed43c0c5d0b64bfa9d94a4a9d8f2f0e1a108dcfd288fd2bc1fc7bd675412138169cb09249875ba3b68cfb11180afae104fc9789571c6dfce02413886796ae21e3c488cc21b9f423a066c2eabf98e2fdeeb5776e4f5d09a515ba58cbbab3e37b09fd4f6d9244df80512e84cd7956be301cf64f1429d58577cc241f3a2c655144f81aaf95a4e108da894b38970561ae9002619fbbac91fa922ed202bfc62cb08e0de2a7f3631435f8b47c8a3c563b4db4071ce74c46da6fa696a9e282d1e825d663b93bfd56c48dce1884bb10fccea063929f746443fd830a4232e53da21a1f2d1bdfebc3a02c10a1b8ad31d04fd616590d272ac737e98eb33af60528716bee78ec0ee8699031177277d9cff32542c67caf5f44591681335ae0e178f3409a7803db83892dde5b9b7f0c750e24aef077badd678a09b850b84ec1597e4963cb5e675df1c0d6fb618496ecd76c35c798325590c2fb27a5e', 'hex');
+const V5_LICENSE = '646637794';
 class AesV3 {
-    constructor(key, khronos) { this.wordSize=khronos&3; this.box=SBOX.subarray(this.wordSize*256,(this.wordSize+1)*256); this.con=[[1,0,2,3],[1,3,0,2],[0,1,3,2],[1,0,2,3]][this.wordSize]; this.con2=[[1,0,2,3],[2,0,3,1],[0,1,3,2],[1,0,2,3]][this.wordSize]; this.order=[[0,9,14,11,4,13,2,7,8,1,6,15,12,5,10,3],[0,9,14,15,4,13,2,7,8,1,6,3,12,5,10,11],[0,9,14,7,4,13,2,11,8,1,6,3,12,5,10,15],[0,9,14,11,4,13,2,7,8,1,6,15,12,5,10,3]][this.wordSize]; const init=[0xca025ddc,0x823dc546,0xc9420583,0xc298225f][this.wordSize]; const initial=Buffer.alloc(16); for(let i=0;i<4;i+=1)initial.writeUInt32LE(init,i*4); const mk=xorBytes(initial,key); const expanded=Buffer.concat([mk,Buffer.alloc(32)]); let rounds=8; for(let i=4;i<12;i+=1){let at=4*(i-1);let a=expanded[at],b=expanded[at+1],c=expanded[at+2],d=expanded[at+3];if((i&3)===0){const t=(u32(init>>((rounds&24)))^this.box[b])&255;b=this.box[c];c=this.box[d];d=this.box[a];a=t;}rounds+=2;expanded[at+4]=a^expanded[at-12];expanded[at+5]=b^expanded[at-11];expanded[at+6]=c^expanded[at-10];expanded[at+7]=d^expanded[at-9];} this.keys=Array.from({length:12},(_v,i)=>Array.from(expanded.subarray(i*4,i*4+4))); }
+    constructor(key, khronos, v5 = false) { this.v5 = v5; this.wordSize=khronos&3; this.box=(v5 ? V5_SBOX : SBOX).subarray(this.wordSize*256,(this.wordSize+1)*256); this.con=[[1,0,2,3],[1,3,0,2],[0,1,3,2],[1,0,2,3]][this.wordSize]; this.con2=(v5 ? [[2,0,3,1],[1,3,2,0],[3,2,1,0],[2,3,1,0]] : [[1,0,2,3],[2,0,3,1],[0,1,3,2],[1,0,2,3]])[this.wordSize]; this.order=(v5 ? [[0,9,14,15,4,13,2,7,8,1,6,3,12,5,10,11],[0,9,14,11,4,13,2,3,8,1,6,15,12,5,10,7],[0,9,14,3,4,13,2,15,8,1,6,11,12,5,10,7],[0,9,14,15,4,13,2,3,8,1,6,11,12,5,10,7]] : [[0,9,14,11,4,13,2,7,8,1,6,15,12,5,10,3],[0,9,14,15,4,13,2,7,8,1,6,3,12,5,10,11],[0,9,14,7,4,13,2,11,8,1,6,3,12,5,10,15],[0,9,14,11,4,13,2,7,8,1,6,15,12,5,10,3]])[this.wordSize]; const init=(v5 ? [0xbbb5de72,0xd4638d5b,0x92a5f73b,0x89f8a1c9] : [0xca025ddc,0x823dc546,0xc9420583,0xc298225f])[this.wordSize]; const initial=Buffer.alloc(16); for(let i=0;i<4;i+=1)initial.writeUInt32LE(init,i*4); const mk=xorBytes(initial,key); const expanded=Buffer.concat([mk,Buffer.alloc(32)]); let rounds=8; for(let i=4;i<12;i+=1){let at=4*(i-1);let a=expanded[at],b=expanded[at+1],c=expanded[at+2],d=expanded[at+3];if((i&3)===0){const t=(u32(init>>((rounds&24)))^this.box[b])&255;b=this.box[c];c=this.box[d];d=this.box[a];a=t;}rounds+=2;expanded[at+4]=a^expanded[at-12];expanded[at+5]=b^expanded[at-11];expanded[at+6]=c^expanded[at-10];expanded[at+7]=d^expanded[at-9];} this.keys=Array.from({length:12},(_v,i)=>Array.from(expanded.subarray(i*4,i*4+4))); }
     add(rows,key) { for(let i=0;i<4;i+=1) for(let j=0;j<4;j+=1) rows[i][j]^=key[i][j]; }
     addCon(rows, keys) { for(let i=0;i<4;i+=1) for(let j=0;j<4;j+=1) rows[i][j]^=keys[i][this.con2[j]]; }
     sub(rows) { for(let i=0;i<4;i+=1) for(let j=0;j<4;j+=1) rows[i][j]=this.box[rows[i][j]]; const old=rows.map((x)=>x.slice()); for(let i=0;i<4;i+=1) rows[i]=old[this.con2[i]]; }
     shift(rows) { const b=flat(rows); for(let i=0;i<16;i+=1) rows[Math.floor(i/4)][i%4]=b[this.order[i]]; }
     shiftCon(rows) { const old=rows.map((x)=>x.slice()); for(let i=0;i<4;i+=1) rows[i]=this.con2.map((x)=>old[i][x]); }
     block(value) { const rows=matrix(value); this.addCon(rows,this.keys.slice(0,4)); for(let i=1;i<3;i+=1){this.sub(rows);this.shift(rows);if(i===1){this.shiftCon(rows);aesMix(rows);}this.addCon(rows,this.keys.slice(i*4));}this.add(rows,this.keys.slice(4));return flat(rows); }
-    encrypt(data, iv) { const source=Buffer.from(data); const plaintext=Buffer.alloc(32); for(let i=0;i<31;i+=1){const at=i*8;const n0=(source[at]>>4)&2;const n1=n0|(source[at+1]&64);const n2=n1|((source[at+2]>>2)&1);const n3=n2|((source[at+3]<<3)&128);const n4=n3|((source[at+4]>>1)&4);const n5=n4|((source[at+5]<<3)&16);const n6=n5|((source[at+6]<<5)&32);plaintext[i]=n6|((source[at+7]>>4)&8);} plaintext[31]=1; const blocks=[]; let previous=Buffer.from(iv); for(let i=0;i<plaintext.length;i+=16){const value=this.block(xorBytes(plaintext.subarray(i,i+16),previous));blocks.push(value);previous=value;} const key=Buffer.concat(blocks); const out=Buffer.from(source); for(let i=0;i<31;i+=1){const at=i*8; const k=key[i]; out[at]&=0xdf;out[at]|=(k<<4)&32;out[at+1]&=0xbf;out[at+1]|=k&64;out[at+2]&=0xfb;out[at+2]|=(k<<2)&4;out[at+3]&=0xef;out[at+3]|=(k>>3)&16;out[at+4]&=0xf7;out[at+4]|=(k+k)&8;out[at+5]&=0xfd;out[at+5]|=(k>>3)&2;out[at+6]&=0xfe;out[at+6]|=(k>>5)&1;out[at+7]&=0x7f;out[at+7]|=(k<<4)&128;} return Buffer.concat([key.subarray(-1),out]); }
+    encrypt(data, iv) { if (this.v5) return this.encryptV5(data, iv); const source=Buffer.from(data); const plaintext=Buffer.alloc(32); for(let i=0;i<31;i+=1){const at=i*8;const n0=(source[at]>>4)&2;const n1=n0|(source[at+1]&64);const n2=n1|((source[at+2]>>2)&1);const n3=n2|((source[at+3]<<3)&128);const n4=n3|((source[at+4]>>1)&4);const n5=n4|((source[at+5]<<3)&16);const n6=n5|((source[at+6]<<5)&32);plaintext[i]=n6|((source[at+7]>>4)&8);} plaintext[31]=1; const blocks=[]; let previous=Buffer.from(iv); for(let i=0;i<plaintext.length;i+=16){const value=this.block(xorBytes(plaintext.subarray(i,i+16),previous));blocks.push(value);previous=value;} const key=Buffer.concat(blocks); const out=Buffer.from(source); for(let i=0;i<31;i+=1){const at=i*8; const k=key[i]; out[at]&=0xdf;out[at]|=(k<<4)&32;out[at+1]&=0xbf;out[at+1]|=k&64;out[at+2]&=0xfb;out[at+2]|=(k<<2)&4;out[at+3]&=0xef;out[at+3]|=(k>>3)&16;out[at+4]&=0xf7;out[at+4]|=(k+k)&8;out[at+5]&=0xfd;out[at+5]|=(k>>3)&2;out[at+6]&=0xfe;out[at+6]|=(k>>5)&1;out[at+7]&=0x7f;out[at+7]|=(k<<4)&128;} return Buffer.concat([key.subarray(-1),out]); }
+    encryptV5(data, iv) {
+        const source = Buffer.from(data);
+        if (source.length < 248) throw new RangeError('v5 Medusa carrier too short');
+        const wire = [6, 5, 3, 4, 2, 7, 1, 0], compact = [1, 7, 3, 6, 2, 0, 4, 5];
+        const bits = Buffer.alloc(32);
+        for (let i = 0; i < 31; i++) for (let j = 0; j < 8; j++)
+            bits[i] |= ((source[i * 8 + j] >>> wire[j]) & 1) << compact[j];
+        bits[31] = 1;
+        const first = this.block(xorBytes(bits.subarray(0, 16), iv));
+        const key = Buffer.concat([first, this.block(xorBytes(bits.subarray(16), first))]);
+        const output = Buffer.from(source);
+        for (let i = 0; i < 31; i++) for (let j = 0; j < 8; j++) {
+            const index = i * 8 + j;
+            output[index] = (output[index] & ~(1 << wire[j])) |
+                (((key[i] >>> compact[j]) & 1) << wire[j]);
+        }
+        return Buffer.concat([key.subarray(31, 32), output]);
+    }
 }
 // Medusa AES-V3 is a proprietary transform; the JS implementation stays as a
 // protocol oracle, while production passes the selected S-box to Rust/WASM.
@@ -191,29 +216,77 @@ function helios(khronos) {
 }
 
 function branchOf(url, body, khronos) { const bodyMd5 = body ? crypto.createHash('md5').update(body).digest() : Buffer.alloc(16); const q = sm3(url.split('?')[1]); const iv = getIv(getIv(getIv(0x20230928, q), bodyMd5), le32(khronos)); const low = iv & 15; return low - (((low * 171) >> 9) * 3); }
-function playbackRequest(payload, identity, videoId = '') {
-    // Sign the final query and actual gzip body; other API families retain their original signer.
-    const body = videoId ? null : gzipSync(Buffer.from(payload));
-    const requestTicket = Date.now(), khronos = Math.floor(requestTicket / 1000);
-    const device = { ...DEVICE, device_id: identity.device_id, iid: identity.iid, cdid: identity.cdid };
-    const values = videoId ? { video_id: videoId, video_id_type: '0', device_level: '1',
-        need_all_video_definition: '1', need_mp4_align: '0', use_os_player: '0',
-        video_platform: '1024', source: '0', from_video_id: '' } : {};
-    const query = pythonUrlEncode({ ...device, ...values, ts: String(khronos), _rticket: String(requestTicket) });
-    const url = `${videoId ? VIDEO_TAB_API : VIDEO_API}?${query}`;
-    const signature = signPlayer({ query, body, ts: khronos });
-    const headers = {
-        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
-        'x-ss-req-ticket': signature['x-ss-req-ticket'], 'sdk-version': '2', 'x-xs-from-web': '0',
-        'passport-sdk-version': videoId ? '50561' : '5051452', 'x-ss-dp': String(device.aid),
-        'x-khronos': signature['x-khronos'],
-        'x-ladon': signature['x-ladon'], 'x-argus': signature['x-argus'], 'x-tt-dt': '',
-        'x-tt-store-region': 'cn', 'x-tt-store-region-src': 'did',
+
+function v5Branch(query, body, khronos) {
+    const q = sm3(Buffer.from(query));
+    const bodyHash = crypto.createHash('md5').update(body).digest();
+    return getIv(getIv(getIv(0x20230928, q), bodyHash), le32(khronos)) & 15;
+}
+function random32() { return crypto.randomBytes(4).readUInt32LE(0); }
+function buildMedusaV5(url, body, ts, who) {
+    const query = sm3(Buffer.from(url.split('?')[1]));
+    const f13 = hashF13(query, crypto.createHash('md5').update(body).digest(), le32(ts), ts, true);
+    const flags = Buffer.alloc(8);
+    const version = who.version_name;
+    const process = getProcessIdentity();
+    const deviceInfo = proto([
+        [1, 1, 'sint'], [2, 2, 'sint'], [3, '8662'], [4, who.device_id],
+        [5, process.nonce], [6, '!noperm!'], [12, 'Asia/Shanghai,8'], [13, 'zh_CN'],
+        [22, who.os_version], [25, process.started, 'sint'],
+        [30, who.device_type], [31, 'HONOR'], [32, who.device_type], [34, 'HONOR'],
+    ]);
+    const env = proto([[6, 'v04.10.03.04-bugfix'], [8, who.channel], [12, deviceInfo, 'message'], [14, version]]);
+    const message = proto([
+        [1, V5_MAGIC, 'bytes'], [2, 5, 'sint'], [3, random32(), 'sint'],
+        [4, '8662'], [5, who.device_id], [6, V5_LICENSE],
+        [7, version], [8, 'v04.10.03-ml-android'], [9, 0x040a0300, 'sint'],
+        [10, flags, 'bytes'], [12, ts, 'sint'], [13, f13, 'bytes'], [14, query.subarray(0, 6), 'bytes'],
+        [15, proto([[1,1,'sint'],[2,1,'sint'],[3,1,'sint'],[5,1,'sint']]), 'message'],
+        [17, ts, 'sint'], [20, 'none'], [21, 377, 'sint'], [23, env, 'message'],
+        [24, '{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}'],
+    ]);
+    const nonce = random32();
+    const [hash, seed] = keyHash(V5_SIGN_KEY, nonce);
+    const transformed = Buffer.concat([flags, xmxor(message, hash)]).reverse();
+    for (let i = 0; i < transformed.length; i++) transformed[i] ^= seed[(~i) & 3];
+    const check = 0x18000001 | ((query[0] & 63) << 14) | ((f13[0] & 63) << 8);
+    const packed = Buffer.concat([Buffer.from([0xca]), le32(random32()), le32(check), transformed,
+        Buffer.from([(nonce >>> 16) & 255, nonce >>> 24])]);
+    const key1 = crypto.createHash('md5').update(V5_SIGN_KEY.subarray(0, 16)).digest();
+    const key2 = crypto.createHash('md5').update(V5_SIGN_KEY.subarray(16, 32)).digest();
+    const encrypted = new AesV3(key1, ts, true).encrypt(packed, key2);
+    const prefix = Buffer.concat([le32(5), V5_MAGIC]);
+    const timestamp = le32(ts);
+    for (let i = 0; i < prefix.length; i++) prefix[i] ^= timestamp[i & 3];
+    return Buffer.concat([prefix, Buffer.from([nonce & 255, (nonce >>> 8) & 255, 0, 1]), encrypted]).toString('base64');
+}
+// Unlike the old API, the v5 player uses one POST endpoint and only the
+// Khronos/Helios/Medusa signing headers. Search, catalogue and account signers
+// above are kept intact.
+function playbackRequest(payload, identity) {
+    const body = gzipSync(Buffer.from(payload, 'utf8'));
+    const now = Date.now(), khronos = Math.floor(now / 1000);
+    const device = {
+        aid: String(DEVICE.aid), app_name: DEVICE.app_name,
+        version_code: DEVICE.version_code, version_name: DEVICE.version_name,
+        channel: DEVICE.channel, device_platform: DEVICE.device_platform,
+        device_type: DEVICE.device_type, os_version: DEVICE.os_version,
+        update_version_code: DEVICE.update_version_code,
+        iid: identity.iid, cdid: identity.cdid, device_id: identity.device_id,
     };
-    if (body) Object.assign(headers, { 'Content-Type': 'application/json; charset=UTF-8',
-        'Content-Encoding': 'gzip', 'x-ss-stub': signature['x-ss-stub'] });
-    else headers['x-tt-request-tag'] = 't=0;n=0';
-    return { url, body, headers, method: videoId ? 'GET' : 'POST' };
+    for (let offset = 0; offset < 1024; offset++) {
+        const query = pythonUrlEncode({ ...device, _rticket: String(now + offset) });
+        if (v5Branch(query, body, khronos) !== 12) continue;
+        const url = `${VIDEO_API}?${query}`;
+        return { url, body, method: 'POST', headers: {
+            'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+            'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
+            'x-ss-stub': md5(body), 'x-khronos': String(khronos),
+            'x-helios': Ladon.encrypt(khronos, Number(V5_LICENSE), 8662, le32(random32())),
+            'x-medusa': buildMedusaV5(url, body, khronos, device),
+        }};
+    }
+    throw Object.assign(new Error('無法產生 v5 播放簽章'), { code: 'SIGNING_FAILED' });
 }
 
 function parseSearchInteger(value) {
@@ -437,9 +510,14 @@ async function fetchAppPlayUrl(vid, options = {}) {
 }
 
 async function fetchAppPlayUrlFresh(vid, options) {
+    const deviceLevel = Number(options.deviceLevel ?? 3);
+    if (![1, 2, 3].includes(deviceLevel)) throw Object.assign(new Error('裝置等級必須為 1、2 或 3'), { code: 'INVALID_DEVICE_LEVEL' });
     const payload = JSON.stringify({
-        biz_param: { detail_page_version: 0, device_level: 3, disable_digg_stat: false, need_all_video_definition: true, need_mp4_align: false, use_os_player: false, use_server_dns: false, video_platform: 1024 },
+        biz_param: { detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
+            disable_video_relate_book: false, need_all_video_definition: true, need_mp4_align: false,
+            use_os_player: false, use_server_dns: false, video_platform: 1024 },
         mixed_video_id_map: { '1004': [vid] },
+        dr_scene: 'player',
     });
     // Browser installations supply their persisted identity; legacy clients reuse the isolate cache.
     const identity = options.identity || await getPlaybackDevice(requestJson);
@@ -449,23 +527,17 @@ async function fetchAppPlayUrlFresh(vid, options) {
     const request = boundedSignal(options.signal, 12000);
     const { signal } = request;
     try {
-        // An upstream 200 with an empty body is transient in practice.
-        // Retry the current signed endpoint once, then the legacy endpoint,
-        // within one 12-second model budget. Never retry 403/429/explicit refusal.
-        const response = await retryEmptyResponse(async attempt => {
+        // Retry only the v5 endpoint once for transient empty HTTP 200 responses.
+        // Old v3/Argus playback endpoints are deliberately not retained as fallbacks.
+        const response = await retryEmptyResponse(() => {
             throwIfAborted(signal);
-            const legacy = attempt === 2;
-            const signed = playbackRequest(payload, identity, legacy ? '' : vid);
-            if (legacy) signed.headers.Connection = 'close';
+            const signed = playbackRequest(payload, identity);
             return requestJson(signed.url, {
-                method: signed.method, headers: signed.headers, data: signed.body
+                method: signed.method, headers: signed.headers, data: signed.body,
             }, deadline, signal);
-        }, {
-            deadline, signal, attempts: 3,
-
-        });
+        }, { deadline, signal, attempts: 2 });
         if (Number(response.Code || response.code || 0) !== 0) throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });
-        const entries = response.data?.video_model_data ?? response.data;
+        const entries = response.data?.video_model_data ?? response.data?.['1004'] ?? response.data;
         const entry = entries?.[vid];
         const model = typeof entry?.video_model === 'string' ? jsonBody(entry.video_model) : entry?.video_model;
         if (!model || typeof model !== 'object' || Array.isArray(model)) throw Object.assign(new Error('App 接口未返回所选分集，已停止取址'), { code: entry?.video_model ? 'INVALID_RESPONSE' : 'MISSING_MODEL' });
@@ -590,4 +662,4 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
         });
 }
 
-module.exports = { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
+module.exports = { v5Branch, playbackRequest, hashF13, AesV3, V5_SBOX, fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
