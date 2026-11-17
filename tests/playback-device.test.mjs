@@ -251,3 +251,49 @@ test('scheduled registration can stall while normal source callers immediately r
   assert.equal(second.device_id, first.device_id); assert.equal(third.device_id, first.device_id);
   assert.equal(typeof release, 'function'); release();
 });
+
+
+test('Worker forwards each device level into the signed v5 gzip model body', async () => {
+  const oldFetch = globalThis.fetch, installation = registered(seed());
+  const levels = [];
+  try {
+    globalThis.fetch = async (raw, options) => {
+      const url = new URL(raw);
+      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+      assert.equal(url.searchParams.get('device_id'), installation.device_id);
+      assert.ok(options.headers['x-medusa']);
+      levels.push(JSON.parse(gunzipSync(options.body)).biz_param.device_level);
+      return new Response('rate limited', { status: 429 });
+    };
+    for (const level of ['1', '2', '3']) {
+      const response = await worker.fetch(new Request(
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
+          headers: { 'X-Playback-Device': JSON.stringify(installation) }
+        }), {});
+      assert.equal(response.status, 429);
+    }
+    assert.deepEqual(levels, [1, 2, 3]);
+    for (const level of ['0', '4', '1.0', 'NaN']) {
+      const response = await worker.fetch(new Request(
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
+          headers: { 'X-Playback-Device': JSON.stringify(installation) }
+        }), {});
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.code, 'INVALID_DEVICE_LEVEL');
+    }
+    assert.deepEqual(levels, [1, 2, 3], 'invalid tiers never contact upstream');
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('v5 nested data.1004 response resolves only the requested episode', async () => {
+  const oldFetch = globalThis.fetch, installation = registered(seed());
+  try {
+    globalThis.fetch = async () => Response.json({ code: 0, data: { '1004': {
+      '123': { video_model: { video_id: 'fixture', video_duration: 4,
+        video_list: { main: { main_url: 'https://cdn.fqnovelvod.com/fixture.mp4',
+          codec_type: 'h264', definition: '720p', vwidth: 1280, vheight: 720, encrypt: 0 } } } }
+    } } });
+    const source = await fetchAppPlayUrl('123', { identity: installation, deviceLevel: 2 });
+    assert.ok(source.variants?.length || source.url, 'nested model must resolve a video');
+  } finally { globalThis.fetch = oldFetch; }
+});
