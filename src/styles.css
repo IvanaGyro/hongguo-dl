@@ -556,6 +556,13 @@ media-status-announcer {
 .api-settings label { display: block; margin-bottom: 8px; font-size: .875rem; font-weight: 700; }
 .api-settings form .input-row { flex-wrap: wrap; max-width: 880px; }
 .api-settings form input { flex: 1 1 310px; }
+.device-level-control {
+  min-height: 44px; padding: 9px 12px; max-width: min(100%, 440px);
+  border: 1.5px solid var(--line); border-radius: var(--r-sm);
+  color: var(--fg); background: var(--surface); font: inherit;
+}
+.device-level-control:focus-visible { outline: 2px solid var(--brand-orange); outline-offset: 3px; }
+
 .tools .actions { margin: 16px 0; }
 #playback-log, .codec-diag-results {
   border: 1.5px solid var(--line); border-radius: var(--r-sm);
