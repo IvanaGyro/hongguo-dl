@@ -108,7 +108,7 @@ try {
   assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, 'Selecting the healthy current episode must preserve its CDN');
   assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
   assert.match(await page.locator('#playback-log').inputValue(),
-    whole ? /bvc2\.prepare\.begin mode=whole-file reason=stream-unavailable/ : /bvc2\.prepare\.begin mode=stream/);
+    whole ? /bvc2\.prepare\.begin mode=whole-file[^\n]*reason=stream-unavailable/ : /bvc2\.prepare\.begin mode=stream/);
   if (!whole) {
   // The first real decoded browser picture must appear before the whole
   // long source is delivered, not merely before its last requested offset.
