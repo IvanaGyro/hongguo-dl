@@ -113,6 +113,10 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
      */
     keepSourceOnly() {
       waiting.length = 0; consumer = null;
+      // Stop CPU work and read-ahead until a new owner states its demand;
+      // the source, its HTTP response and byte cache stay open.
+      if (demand) need({ processing: false,
+        playback: { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 } });
     },
     dontNeed() { send({ type: 'dont-need', id }); },
     consume(handler) {

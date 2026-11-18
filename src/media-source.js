@@ -40,10 +40,18 @@ export function createMediaSource({ source, origin, fetchImpl, onStage = () => {
       url: mediaUrl, fetchImpl: transport.fetch, signal: controller.signal, onStage, timeoutMs
     });
     const info = {};
-    const kid = await probeCencKid(mediaUrl, controller.signal, transport.fetch, info,
-      onStage, timeoutMs, null, progressive);
+    let kid = null, probeError = null;
+    try {
+      kid = await probeCencKid(mediaUrl, controller.signal, transport.fetch, info,
+        onStage, timeoutMs, null, progressive);
+    } catch (error) {
+      // An oversized moov rules out streaming but not a whole-file read of
+      // the same response; playable consumers still receive this error.
+      if (error?.code !== 'CENC_METADATA_LIMIT') throw error;
+      probeError = error.code;
+    }
     probeRanges = info.initialRanges || [];
-    metadata = Object.freeze({
+    metadata = Object.freeze({ probeError,
       fileSize: info.fileSize || progressive.fileSize,
       indexed: Boolean(info.fileSize), fragmented: Boolean(info.fragmented),
       hasAac: Boolean(info.hasAac), videoCodec: info.videoCodec || null,

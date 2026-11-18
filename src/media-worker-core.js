@@ -220,6 +220,12 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
       const entry = sources.get(demand.sourceKey) || openSource(demand);
       if (entry.failure) { sendError(demand, { ...entry.failure, phase: 'source' }); continue; }
       if (!entry.media.metadata) continue;
+      // Only a whole-file read can use a source whose index exceeded the
+      // bounded metadata probe; every other consumer gets that error.
+      if (entry.media.metadata.probeError && demand.output !== 'whole-file') {
+        sendError(demand, { code: entry.media.metadata.probeError, status: 0, phase: 'source' });
+        continue;
+      }
       serveMetadata(demand, entry);
       if (demand.output === 'playable-media') servePlayable(demand, entry);
       else if (demand.output === 'whole-file') serveWholeFile(demand, entry);

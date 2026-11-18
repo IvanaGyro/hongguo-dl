@@ -237,3 +237,30 @@ test('retained sources hold one Worker per source and close what is not taken', 
   retained.clear();
   assert.deepEqual(closed.at(-1), ['third', { discard: true }]);
 });
+
+test('a moov over the probe limit still allows a whole-file read; streaming gets the error', async () => {
+  // moov box header announcing 9 MiB, over the 8 MiB bounded probe.
+  const big = concat(ftyp, Uint8Array.of(0, 0x90, 0, 0), Uint8Array.from('moov', c => c.charCodeAt(0)),
+    new Uint8Array(9 * 1024 * 1024 - 8));
+  const h = harness({ bytes: big });
+  h.need({ id: 'play', revision: 1, output: 'playable-media', codec: 'h264' });
+  h.need({ id: 'file', revision: 1, output: 'whole-file' });
+  await h.until(() => h.wholeFile() && h.events.some(e => e.type === 'error'), 'whole-file and error');
+  const error = h.events.find(e => e.type === 'error');
+  assert.equal(error.demand, 'play');
+  assert.equal(error.code, 'CENC_METADATA_LIMIT');
+  assert.equal(new Uint8Array(h.wholeFile().bytes).length, big.length);
+  assert.equal(h.network.ranges[0], 'bytes=0-');
+  h.worker.terminate();
+});
+
+test('a retained Worker stops processing and read-ahead until its next owner', () => {
+  const processor = createMediaProcessor({ bridge: 'cenc', fetchImpl: cdn(faststart).fetchImpl });
+  processor.need({ source: { url: URL_A, bridge: 'cenc', key: KEY }, output: 'playable-media',
+    codec: 'h264', processing: true, playback: { paused: false, bufferedAheadSeconds: 4, bufferTargetSeconds: 30 } });
+  processor.keepSourceOnly();
+  assert.equal(processor.demand.output, 'playable-media', 'The demand, and so the source and cache, are kept');
+  assert.equal(processor.demand.processing, false);
+  assert.deepEqual(processor.demand.playback, { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 });
+  processor.close({ discard: true });
+});
