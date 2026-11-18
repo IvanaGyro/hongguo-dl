@@ -52,10 +52,14 @@ export function normalizeDemand(input) {
   const codec = input.codec ?? null;
   if (codec !== null && !['h264', 'hevc'].includes(codec)) throw invalid('codec');
   if (output === 'playable-media' && bridge === 'cenc' && !key) throw invalid('key');
+  // Whether native EME passthrough may serve fragmented CENC. Changing it
+  // re-decides the route on the same source and cache.
+  const eme = input.eme ?? false;
+  if (typeof eme !== 'boolean') throw invalid('eme');
   const maxBytes = input.maxBytes ?? MAX_WHOLE_FILE_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_WHOLE_FILE_BYTES) throw invalid('maxBytes');
   return {
-    id, revision, output, codec, positionSeconds, durationHint, priority, processing, maxBytes,
+    id, revision, output, codec, positionSeconds, durationHint, priority, processing, maxBytes, eme,
     source: { url: source.url, proxyUrl: source.proxyUrl || null, bridge, key },
     playback: { paused, bufferedAheadSeconds, bufferTargetSeconds }
   };
@@ -86,7 +90,8 @@ export function createDemandTable({ maxDemands = MAX_DEMANDS } = {}) {
       if (previous && next.revision < previous.revision) return { status: 'stale', demand: previous };
       if (previous && next.revision === previous.revision) return { status: 'unchanged', demand: previous };
       const sourceChanged = !previous || sourceKeyOf(previous.source) !== sourceKeyOf(next.source) ||
-        previous.source.key !== next.source.key || previous.output !== next.output;
+        previous.source.key !== next.source.key || previous.output !== next.output ||
+        previous.eme !== next.eme;
       if (next.output === 'playable-media' && [...demands.values()].some(other =>
           other.id !== next.id && other.output === 'playable-media'))
         throw Object.assign(new Error('Media Worker already serves a playable demand'),

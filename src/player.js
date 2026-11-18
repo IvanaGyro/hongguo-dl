@@ -154,12 +154,10 @@ export function createPlayer({
     const stream = nativeStream;
     if (!stream) return;
     nativeStream = null;
-    // The media element is unloaded before clearing MediaKeys. New loads must
-    // await this cleanup, otherwise two episodes could race over one CDM.
-    keyCleanup = keyCleanup.catch(() => {}).then(async () => {
-      await stream.close();
-      await video.setMediaKeys(null);
-    }).catch(() => {});
+    // Closing the stream closes its key session. MediaKeys stay attached to
+    // the element (clear media keeps playing with them), so no route change
+    // calls setMediaKeys(null). New loads await this cleanup.
+    keyCleanup = keyCleanup.catch(() => {}).then(() => stream.close()).catch(() => {});
   }
   function disposeSource() {
     directNativeProxyFallback = null;
@@ -310,8 +308,7 @@ export function createPlayer({
     if (resolved.native) sourceInfo.textContent +=
       resolved.native.kind === 'bvc2-transcode' ? ' · ByteVC2 → H.264 增量轉碼（MSE，實驗性）'
       : resolved.native.kind === 'cenc-remux' ? ' · 增量解密轉封裝（MSE）'
-      : resolved.native.kind === 'mse' ? ' · 原生串流解密（MSE）'
-      : ' · 原生串流解密（MP4）';
+      : ' · 原生 EME 串流解密（MSE）';
     const containerCodec = resolved.source?.outputCodec || codecId(resolved.source?.codec);
     const decoder = containerCodec === 'hevc'
       ? 'video/mp4; codecs="hvc1"' : containerCodec === 'bytevc2'

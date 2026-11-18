@@ -91,7 +91,11 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
     if (closed) return generation;
     const next = { ...demand, ...changes, playback: { ...demand?.playback, ...changes.playback },
       id, revision: ++revision };
-    if (!demand || next.positionSeconds !== demand.positionSeconds) {
+    // The Worker starts a new output generation when the position, source,
+    // output or route preference changes (media-demand.js upsert).
+    if (!demand || next.positionSeconds !== demand.positionSeconds || next.output !== demand.output ||
+        next.eme !== demand.eme || next.source?.url !== demand.source?.url ||
+        next.source?.key !== demand.source?.key || next.source?.bridge !== demand.source?.bridge) {
       generation = revision; completed = false;
     }
     demand = next;

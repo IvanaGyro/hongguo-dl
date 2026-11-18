@@ -68,4 +68,6 @@
 
 - **整檔讀取與備援順序（#23）**：播放備援與下載佇列的整檔讀取改由媒體 Worker 的同一個來源／位元組快取組出（`whole-file` 需求），不再由主執行緒另開下載。備援順序固定為原生 EME → WASM 串流 → 整檔處理，只有處理失敗才往下；CDN 403／429／Range 等來源失敗交由候選輪替。串流不可用或播放中處理失敗時，媒體 Worker 交給整檔備援繼續使用，同一 HTTP 回應與快取不重複下載。本機 Chromium 驗證：串流不可用與播放中 SourceBuffer 失敗兩種備援都只用 1 個媒體請求；Firefox 與真實 CDN 仍待 CI／實測。
 
+- **原生 EME 改走 MSE（#24）**：移除把加密網址交給 `<video src>` 的 `eme-progressive` 路線。已分段 CENC 由媒體 Worker 從快取直通原始加密片段給 MSE，瀏覽器 Clear Key 解密；分段索引支援 `sidx`／`mfra`，沒有索引改走 WASM 串流。MediaKeys 掛上後不再拆除，每集一個 session；金鑰系統失敗時同一個 Worker 改走 WASM 串流。本機 Chromium（GPAC 產生的 H.264/AAC 加密 fMP4）驗證：sidx／mfra／無索引三種起播、未緩衝 seek、下一集 EME 預載交接（1 個請求）、EME 後清晰直播與 WASM 轉封裝在 MediaKeys 已掛上時照常播放、金鑰系統拒絕時改走 WASM。Firefox、HEVC 與真實紅果已分段來源仍待 CI／實測。
+
 - **使用者工作慣例（2026-11-16）**：每次完成程式修改與適當驗證後，自動 commit 並 push 到 main，無須再詢問；commit 訊息包含修改原因及實作方式。僅提交本次工作，保留使用者原有未提交修改。

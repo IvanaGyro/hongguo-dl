@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mp4Boxes, cencKidFromMoov, probeCencKid, clearKeyLicense,
-  mimeForCodec, openClearKeyStream, commonCencPssh } from '../src/clear-key.js';
+  mimeForCodec, openClearKeyStream, commonCencPssh, ensureMediaKeys, openKeySession } from '../src/clear-key.js';
 
 const box = (name, payload) => {
   const ret = new Uint8Array(8 + payload.length);
@@ -163,37 +163,51 @@ test('standard Common SystemID PSSH includes only the supplied KID', () => {
   assert.throws(() => commonCencPssh(new Uint8Array(15)), /16 bytes/);
 });
 
-test('prefers browser native EME and prepares license before fetching media', async () => {
-  const f = mockFetch(concat(ftyp, moov, mdat));
-  let keys = null, updated = null, generated = null, sessionClosed = false;
-  const listeners = new Map();
-  const session = {
-    addEventListener: (name, cb) => listeners.set(name, cb),
-    generateRequest: async (type, data) => {
-      generated = [type, new TextDecoder().decode(data)];
-      queueMicrotask(() => listeners.get('message')({
-        message: new TextEncoder().encode(JSON.stringify({
-          kids: ['AQIDBAUGBwgJCgsMDQ4PEA'], type: 'temporary'
-        }))
-      }));
-    },
-    update: async bytes => { updated = JSON.parse(new TextDecoder().decode(bytes)); },
-    close: async () => { sessionClosed = true; }
+// Browsers decrypt CENC only through MSE (diagnostics/CENC-FINDINGS.md):
+// a progressive encrypted MP4 is never handed to the media element.
+function fakeKeySystem({ statuses = ['usable'] } = {}) {
+  const calls = { access: 0, setMediaKeys: 0, sessions: 0, closed: 0, generated: [] };
+  const access = {
+    getConfiguration: () => ({ initDataTypes: ['keyids'] }),
+    createMediaKeys: async () => ({
+      createSession: () => {
+        calls.sessions++;
+        const listeners = new Map();
+        return {
+          addEventListener: (name, cb) => listeners.set(name, cb),
+          keyStatuses: new Map(statuses.map((status, i) => [i, status])),
+          generateRequest: async (type, data) => {
+            calls.generated.push([type, new TextDecoder().decode(data)]);
+            queueMicrotask(() => listeners.get('message')({
+              message: new TextEncoder().encode(JSON.stringify({ kids: ['AQIDBAUGBwgJCgsMDQ4PEA'] }))
+            }));
+          },
+          update: async () => {},
+          close: async () => { calls.closed++; }
+        };
+      }
+    })
   };
-  const video = { canPlayType: () => 'probably', setMediaKeys: async x => { keys = x; } };
-  const access = { createMediaKeys: async () => ({ createSession: () => session }) };
+  const requestAccess = async () => { calls.access++; return access; };
+  return { calls, requestAccess, access };
+}
+
+test('progressive CENC never uses EME or an encrypted URL; without WASM it declines', async () => {
+  const f = mockFetch(concat(ftyp, moov, mdat));
+  const keySystem = fakeKeySystem();
+  const video = { canPlayType: () => 'probably',
+    setMediaKeys: async () => { keySystem.calls.setMediaKeys++; } };
   const result = await openClearKeyStream({
-    video, source: { url: 'https://cdn.example/mp4', codec: 'h264',
+    video, source: { url: 'https://cdn.fqnovelvod.com/mp4', codec: 'h264',
       contentKey: '00112233445566778899aabbccddeeff', source: 'app' },
     codec: 'h264', workerOrigin: 'https://worker.example',
-    fetchImpl: f.fetchImpl, requestAccess: async () => access
+    fetchImpl: f.fetchImpl, requestAccess: keySystem.requestAccess
   });
-  assert.ok(result?.url.includes('/api/media?'));
-  assert.equal(generated[0], 'keyids');
-  assert.equal(updated.keys.length, 1);
-  assert.ok(keys);
-  await result.close();
-  assert.equal(sessionClosed, true);
+  // Node has no MSE, so no WASM route: the caller's whole-file fallback applies.
+  assert.equal(result, null);
+  assert.equal(keySystem.calls.access, 0, 'A progressive MP4 must not request a key system');
+  assert.equal(keySystem.calls.setMediaKeys, 0);
+  assert.equal(f.calls.length, 1, 'Only the metadata probe reads the source');
 });
 
 test('aborting stalled CENC KID metadata Range cancels reader and stops probing', async () => {
@@ -254,26 +268,16 @@ test('late metadata headers leave a fresh body idle budget, while progress ident
 });
 
 
-test('a CENC source above the WASM limit remains eligible for native EME', async () => {
+test('a progressive CENC source above the WASM limit is not handed to native EME', async () => {
   const fileSize = 261 * 1024 * 1024;
   const prefix = new Uint8Array(65536);
   prefix.set(concat(ftyp, moov, mdat));
-  const listeners = new Map();
-  const session = {
-    addEventListener: (name, cb) => listeners.set(name, cb),
-    generateRequest: async () => queueMicrotask(() => listeners.get('message')({
-      message: new TextEncoder().encode(JSON.stringify({
-        kids: ['AQIDBAUGBwgJCgsMDQ4PEA'], type: 'temporary'
-      }))
-    })),
-    update: async () => {},
-    close: async () => {}
-  };
+  const keySystem = fakeKeySystem();
   let calls = 0;
   const result = await openClearKeyStream({
     video: { canPlayType: () => 'probably', setMediaKeys: async () => {} },
     source: {
-      url: 'https://cdn.example/large.mp4', codec: 'h264', source: 'app',
+      url: 'https://cdn.fqnovelvod.com/large.mp4', codec: 'h264', source: 'app',
       contentKey: '00112233445566778899aabbccddeeff'
     },
     codec: 'h264', workerOrigin: 'https://worker.example',
@@ -286,12 +290,36 @@ test('a CENC source above the WASM limit remains eligible for native EME', async
         'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`
       } });
     },
-    requestAccess: async () => ({
-      createMediaKeys: async () => ({ createSession: () => session })
-    })
+    requestAccess: keySystem.requestAccess
   });
-  try {
-    assert.equal(result.kind, 'progressive');
-    assert.equal(calls, 1);
-  } finally { await result?.close(); }
+  assert.equal(result, null);
+  assert.equal(keySystem.calls.access, 0);
+  assert.equal(calls, 1);
+});
+
+test('MediaKeys attach once per element and stay attached; each episode gets its own session', async () => {
+  const keySystem = fakeKeySystem();
+  const attached = [];
+  const video = { setMediaKeys: async keys => { attached.push(keys); } };
+  const first = await ensureMediaKeys(video, keySystem.requestAccess);
+  const second = await ensureMediaKeys(video, keySystem.requestAccess);
+  assert.equal(first, second);
+  assert.equal(keySystem.calls.access, 1);
+  assert.equal(attached.length, 1, 'setMediaKeys is called once and never with null');
+  const a = await openKeySession({ ...first, kid: KID, key: new Uint8Array(16) });
+  const b = await openKeySession({ ...first, kid: KID, key: new Uint8Array(16) });
+  assert.notEqual(a, b);
+  assert.equal(keySystem.calls.sessions, 2);
+  assert.deepEqual(keySystem.calls.generated[0], ['keyids', JSON.stringify({ kids: ['AQIDBAUGBwgJCgsMDQ4PEA'] })]);
+  await a.close();
+  assert.equal(keySystem.calls.closed, 1);
+  assert.equal(attached.length, 1);
+});
+
+test('an unusable key status is an EME failure, not a source failure', async () => {
+  const keySystem = fakeKeySystem({ statuses: ['internal-error'] });
+  const { access, keys } = await ensureMediaKeys({ setMediaKeys: async () => {} }, keySystem.requestAccess);
+  await assert.rejects(openKeySession({ access, keys, kid: KID, key: new Uint8Array(16) }),
+    { code: 'EME_UNAVAILABLE' });
+  assert.equal(keySystem.calls.closed, 1);
 });
