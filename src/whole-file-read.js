@@ -75,8 +75,9 @@ export function readWholeFile({ input, bridge = 'cenc', key = '', maxBytes, sign
 
 /**
  * Holds media Workers whose streaming route failed or was unavailable, keyed
- * by source URL, so the episode's whole-file fallback reuses their cache.
- * At most one Worker is retained; anything not taken is terminated.
+ * by the download layer's opaque source handle (compared by identity), so
+ * the episode's whole-file fallback reuses their cache. At most one Worker
+ * is retained; anything not taken is terminated.
  */
 export function createRetainedSources() {
   let retained = null;
@@ -86,14 +87,14 @@ export function createRetainedSources() {
     previous?.processor.close({ discard: true });
   };
   return {
-    keep(url, processor) {
-      if (!url || !processor) return false;
+    keep(source, processor) {
+      if (!source || !processor) return false;
       if (retained?.processor !== processor) drop();
-      retained = { url, processor };
+      retained = { source, processor };
       return true;
     },
-    take(url) {
-      if (!retained || retained.url !== url) return null;
+    take(source) {
+      if (!retained || retained.source !== source) return null;
       const { processor } = retained;
       retained = null;
       return processor;

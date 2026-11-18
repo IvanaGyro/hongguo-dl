@@ -21,7 +21,7 @@ import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
 import '@fontsource-variable/chiron-goround-tc/wght.css';
 import './styles.css';
-import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, assertSupportedMediaUrl, displayStatus } from './logic.js';
+import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, assertSupportedMediaUrl, displayStatus } from './logic.js';
 import { convertBytes } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
@@ -590,7 +590,7 @@ async function lookup(event) {
   $('lookup-button').textContent = '查詢分集列表…';
   try {
     // A pasted HLS playlist is rejected before any API or media request.
-    if (isHlsUrl(input)) assertSupportedMediaUrl(input);
+    assertSupportedMediaUrl(input);
     const response = await apiJson('/api/series?input=' + encodeURIComponent(input));
     if (response.kind === 'series') currentMode = 'play';
     showSeries(response);
