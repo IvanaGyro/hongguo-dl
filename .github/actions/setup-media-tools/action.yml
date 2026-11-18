@@ -1,0 +1,45 @@
+name: Set up media test tools
+description: >
+  Puts a pinned static FFmpeg/ffprobe on PATH without apt, and makes later
+  apt-get calls (Playwright --with-deps, extra packages) fail fast instead of
+  hanging when the Ubuntu mirror stalls.
+runs:
+  using: composite
+  steps:
+    - name: Bound apt network waits
+      shell: bash
+      run: |
+        # A stalled mirror connection times out and is retried instead of
+        # holding the job until timeout-minutes cancels it.
+        printf '%s\n' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' \
+          'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+    - name: Restore static FFmpeg
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ffmpeg-static
+        key: ffmpeg-6.0.1-amd64-static-28268bf402f1
+    - name: Download static FFmpeg 6.0.1 (pinned, verified)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.cache/ffmpeg-static
+        archive=/tmp/ffmpeg-static.tar.xz
+        if curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 300 \
+            -o "$archive" https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-6.0.1-amd64-static.tar.xz &&
+           echo "28268bf402f1083833ea269331587f60a242848880073be8016501d864bd07a5  $archive" | sha256sum --check --status; then
+          tar -xJf "$archive" -C ~/.cache/ffmpeg-static --strip-components=1 \
+            ffmpeg-6.0.1-amd64-static/ffmpeg ffmpeg-6.0.1-amd64-static/ffprobe
+        else
+          echo '::warning::Static FFmpeg download failed; falling back to apt with a time limit'
+          timeout 600 sudo apt-get update -qq
+          timeout 600 sudo apt-get install -y ffmpeg >/dev/null
+          ln -sf "$(command -v ffmpeg)" ~/.cache/ffmpeg-static/ffmpeg
+          ln -sf "$(command -v ffprobe)" ~/.cache/ffmpeg-static/ffprobe
+        fi
+    - name: Put FFmpeg on PATH
+      shell: bash
+      run: |
+        echo "$HOME/.cache/ffmpeg-static" >> "$GITHUB_PATH"
+        "$HOME/.cache/ffmpeg-static/ffmpeg" -hide_banner -version | head -1
