@@ -32,7 +32,7 @@ export function createPlayer({
   video, status, label, prevButton, nextButton, qualitySelect,
   speedSelect, settingsToggle, settingsMenu,
   settingsClose, sourceInfo,
-  getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache, storage, onProgress,
+  getSeries, sourceFor, getWorkerOrigin, cache, storage, onProgress,
   diagnostics = () => {}
 }) {
   let current = null, currentStartSeconds = null;
@@ -63,7 +63,7 @@ export function createPlayer({
   const mseSupport = mime => typeof MediaSource !== 'undefined' &&
     Boolean(MediaSource.isTypeSupported?.(mime));
   const media = createMediaSession({
-    video, getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache,
+    video, getSeries, sourceFor, getWorkerOrigin, cache,
     selection: () => selection(),
     context: () => ({ episode: current, ready: readyForHistory, stream: nativeStream,
       startupSeconds: lastStartupSeconds, duration: video.duration,

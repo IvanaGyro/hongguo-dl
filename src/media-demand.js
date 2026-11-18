@@ -4,7 +4,10 @@
 // against its sources, byte caches, metadata and engine; nothing here starts
 // a step. Pure and DOM-free so the lifecycle can be unit tested.
 
-export const DEMAND_OUTPUTS = Object.freeze(['metadata', 'playable-media']);
+// 'whole-file' asks for the complete source bytes, assembled from the same
+// byte cache and HTTP response that metadata probing and streaming use.
+export const DEMAND_OUTPUTS = Object.freeze(['metadata', 'playable-media', 'whole-file']);
+export const MAX_WHOLE_FILE_BYTES = 320 * 1024 * 1024;
 const BRIDGES = ['cenc', 'bvc2'];
 const PRIORITIES = ['active', 'speculative'];
 const MAX_DEMANDS = 8;
@@ -49,8 +52,10 @@ export function normalizeDemand(input) {
   const codec = input.codec ?? null;
   if (codec !== null && !['h264', 'hevc'].includes(codec)) throw invalid('codec');
   if (output === 'playable-media' && bridge === 'cenc' && !key) throw invalid('key');
+  const maxBytes = input.maxBytes ?? MAX_WHOLE_FILE_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_WHOLE_FILE_BYTES) throw invalid('maxBytes');
   return {
-    id, revision, output, codec, positionSeconds, durationHint, priority, processing,
+    id, revision, output, codec, positionSeconds, durationHint, priority, processing, maxBytes,
     source: { url: source.url, proxyUrl: source.proxyUrl || null, bridge, key },
     playback: { paused, bufferedAheadSeconds, bufferTargetSeconds }
   };

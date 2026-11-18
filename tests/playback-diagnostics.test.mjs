@@ -3,10 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDiagnosticBuffer } from '../src/playback-diagnostics.js';
 import { readFileSync } from 'node:fs';
-import { blockHevcFullFileFallback } from '../src/playback-policy.js';
 
 test('the bvc2_stream URL option no longer exists; ByteVC2 always starts on streaming', () => {
-  for (const file of ['src/player.js', 'src/media-session.js', 'src/playback-policy.js'])
+  for (const file of ['src/player.js', 'src/media-session.js'])
     assert.doesNotMatch(readFileSync(new URL('../' + file, import.meta.url), 'utf8'), /bvc2_stream|bvc2Mode/);
 });
 
@@ -28,11 +27,9 @@ test('diagnostics redact URLs and keys and have a bounded log', () => {
   assert.equal(b.text(), '');
 });
 
-test('HEVC CENC MP4 rejects whole-file playback fallback', () => {
-  const video = { codec: 'hevc', contentKey: 'placeholder', url: 'https://example.com/x.mp4' };
-  assert.equal(blockHevcFullFileFallback(video), true);
-  assert.equal(blockHevcFullFileFallback({ ...video, codec: 'bytevc2' }), false);
-  assert.equal(blockHevcFullFileFallback({ ...video, contentKey: null }), false);
+test('HEVC CENC uses the shared fallback policy rather than a codec block', () => {
+  assert.doesNotMatch(readFileSync(new URL('../src/media-session.js', import.meta.url), 'utf8'),
+    /blockHevcFullFileFallback|增量串流重試失敗，已禁止整檔備援下載/);
 });
 
 

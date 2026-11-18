@@ -16,6 +16,8 @@ on:
       - 'src/media-demand.js'
       - 'src/media-route.js'
       - 'src/media-processor.js'
+      - 'src/whole-file-read.js'
+      - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
       - 'tests/media-worker-core.test.mjs'
       - 'tests/cenc-startup.test.mjs'
@@ -58,6 +60,8 @@ on:
       - 'src/media-demand.js'
       - 'src/media-route.js'
       - 'src/media-processor.js'
+      - 'src/whole-file-read.js'
+      - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
       - 'tests/media-worker-core.test.mjs'
       - 'tests/cenc-startup.test.mjs'
@@ -214,6 +218,8 @@ jobs:
           CENC_BROWSER=firefox node tests/playback-cancel.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=chromium CENC_FALLBACK=midstream node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          CENC_BROWSER=firefox CENC_FALLBACK=midstream node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium CENC_TEST_AUDIO=1 CENC_TEST_RANGE_RETRY=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           CENC_BROWSER=firefox CENC_TEST_AUDIO=1 CENC_TEST_RANGE_RETRY=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           node tests/cenc-worker-reuse.node.mjs /tmp/cenc-h264-seek-fixture.mp4

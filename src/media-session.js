@@ -10,23 +10,43 @@ import { openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { createDownloadSourceSession } from './download-source-session.js';
-import { blockHevcFullFileFallback } from './playback-policy.js';
 import { createMediaDownload } from './media-download.js';
 import { clearMediaProcessors } from './media-processor.js';
+import { createRetainedSources } from './whole-file-read.js';
+import { allowsWholeFileFallback, isProcessingFailure } from './fallback-policy.js';
+
+const WHOLE_FILE_LIMIT = 260 * 1024 * 1024;
 
 export function createMediaSession({
-  video, getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache,
+  video, getSeries, sourceFor, getWorkerOrigin, cache,
   selection, context, savedResumeSeconds, waitForOutputCleanup,
   mimeSupport, mseSupport, log, ageMs, markStartupStage,
   reportStartup, reportStage, onVariants, onSelection
 }) {
-  const download = createMediaDownload({ fetchBytes, getWorkerOrigin });
+  const download = createMediaDownload({ getWorkerOrigin });
   const CODEC_NAMES = { h264: 'H.264', hevc: 'HEVC', bytevc2: 'ByteVC2' };
   let sourceAttempt = 0, activeAttempts = createPlaybackAttempts();
   let activeDownload = null;
   let streamFailure = null;
   let lastVariants = null, lastWinnerVariants = null, lastVariantsVid = null;
-  let prefetched = null, retryIncrementalCenc = false, canTranscodeBvc2 = false;
+  let prefetched = null, canTranscodeBvc2 = false;
+  // Workers whose streaming route failed while processing keep their source
+  // and byte cache for this episode's whole-file fallback.
+  const retained = createRetainedSources();
+  // Episode whose incremental route failed while processing: its next
+  // attempt goes straight to the whole-file fallback.
+  let processingFailedVid = null;
+  function retainFor(source) {
+    return processor => retained.keep(source, processor);
+  }
+  // Whole-file fallback bytes come from the media Worker's source and cache,
+  // continuing on the retained Worker when the stream already opened it.
+  function readSource(source, bridge, signal, onStage, onProgress) {
+    const processor = retained.take(source);
+    log('whole-file.source', { reused: Boolean(processor), bridge });
+    return download.whole(source, { bridge, processor, maxBytes: WHOLE_FILE_LIMIT,
+      signal, onStage, onProgress });
+  }
   function refreshBvc2Choices(variants, signal) {
     if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
     void bvc2BridgeAvailable().then(available => {
@@ -41,15 +61,11 @@ export function createMediaSession({
       log('cenc.prepare.begin', { codec: args.codec, elapsedMs: ageMs() });
       const stream = await openClearKeyStream(args);
       log('cenc.route', { kind: stream?.kind || 'unavailable', elapsedMs: ageMs() });
-      if (stream?.kind === 'cenc-remux') retryIncrementalCenc = true;
       return stream;
     }
     catch (error) {
       if (args.signal?.aborted) throw error;
       log('cenc.prepare.failed', { code: error?.code || 'UNKNOWN', elapsedMs: ageMs() });
-      // This also covers the nativePending prefetch handoff, not just open().
-      if (['CENC_SOURCE_FORBIDDEN', 'CENC_RANGE_HTTP'].includes(error?.code))
-        retryIncrementalCenc = true;
       throw error;
     }
   }
@@ -66,6 +82,10 @@ export function createMediaSession({
         log('cenc.stage', { phase: stage, elapsedMs: ageMs(), ...fields });
         if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
           streamFailure = { code: fields.code, status: fields.status || 0, retryStep: fields.retryStep, stepAttempt: fields.attempt, retryAfterMs: fields.retryAfterMs };
+        if (stage === 'mse.failed' && isProcessingFailure(fields.code) && episode?.vid) {
+          processingFailedVid = episode.vid;
+          log('playback.fallback.armed', { code: fields.code });
+        }
         if (stage === 'seek.request') prefetched?.prepared?.native?.pauseProcessing?.();
         if (stage === 'mse.done') maybeStartPrefetchedProcessing();
         reportStage(stage, signal, attempt, fields);
@@ -218,39 +238,48 @@ export function createMediaSession({
         // processor before producing a bounded clear prefix.
         if (quiet && !options.nativePrefetch) return { bvc2Pending: true, source, fallbackNotice, variants,
           winnerVariants: list.winnerVariants || variants.slice() };
-        if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
-        const { transport } = download.open(source);
-        log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
-        // The media Worker opens the source, probes its index and chooses
-        // the route; this layer only states the playable-media demand.
-        const native = await openCencProgressiveStream({
-          video, input: download.input(source, transport), onStage,
-          codec: 'h264', key: source.contentKey || '', signal, bridge: 'bvc2',
-          remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
-          durationSeconds: source.duration || null,
-          startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0
-        });
-        if (native) return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
-          fallbackNotice, variants: quiet ? variants : null };
+        const skipStream = !quiet && processingFailedVid === episode.vid;
+        let native = null, fallbackReason = skipStream ? 'processing-failed' : 'stream-unavailable';
+        if (!skipStream) {
+          if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
+          const { transport } = download.open(source);
+          log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
+          // The media Worker opens the source, probes its index and chooses
+          // the route; this layer only states the playable-media demand.
+          try {
+            native = await openCencProgressiveStream({
+              video, input: download.input(source, transport), onStage,
+              codec: 'h264', key: source.contentKey || '', signal, bridge: 'bvc2',
+              remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
+              durationSeconds: source.duration || null,
+              startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0,
+              retainSource: quiet ? undefined : retainFor(source)
+            });
+          } catch (error) {
+            if (signal.aborted || quiet || !allowsWholeFileFallback(error)) throw error;
+            fallbackReason = error.code || 'stream-failed';
+          }
+          if (native) return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
+            fallbackNotice, variants: quiet ? variants : null };
+        }
         // A speculative episode never starts a whole-file transcode.
         if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants,
           winnerVariants: list.winnerVariants || variants.slice() };
-        // Whole-file transcoding is only a fallback when this browser cannot
-        // host the incremental ByteVC2 → H.264 MSE route.
+        // Whole-file transcoding is only a fallback after the incremental
+        // ByteVC2 → H.264 route was unavailable or failed while processing.
         const reportBvc2 = (message, layer = 2) => report(message, layer);
-        log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2', reason: 'stream-unavailable' });
+        log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2', reason: fallbackReason });
         onStage('cdn.probe', { mode: 'whole-file' });
         failureStep = 'media-download'; steps.begin('media-download');
         reportBvc2('正在下載 ByteVC2 影片…', 1);
         const started = performance.now();
         let received = 0;
-        const raw = await download.read(source, signal, 260 * 1024 * 1024,
-          (length, total) => {
-            received += length;
-            if (length > 0) markStartupStage('first-media-byte');
-            if (total > 0) reportBvc2('讀取 ByteVC2 影片 ' +
-              Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）', 1);
-          });
+        const raw = await readSource(source, 'bvc2', signal, onStage, (count, total) => {
+          if (count > received) markStartupStage('first-media-byte');
+          received = count;
+          if (total > 0) reportBvc2('讀取 ByteVC2 影片 ' +
+            Math.min(100, Math.round(100 * received / total)) + '%（需整集下載）', 1);
+        });
         if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
         log('bvc2.download.complete', { bytes: raw.length });
         failureStep = 'processing'; steps.begin('processing');
@@ -290,32 +319,32 @@ export function createMediaSession({
       // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
       // A source/API failure may consume attempt zero before any CENC setup.
       // Every newly selected encrypted source must still try incremental playback.
+      let fallbackReason = 'cenc-unavailable';
       if ((!quiet || options.nativePrefetch) && source.contentKey) {
-        await waitForOutputCleanup();
-        const native = await (quiet ? openClearKeyStream : prepareNativeStream)({
-          preload: quiet && options.nativePrefetch, video, source, download, codec: codecId(source.codec),
-          workerOrigin: getWorkerOrigin(), signal, remainingMediaAttempts: 20 - steps.count('media-download'),
-          startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId), onStage,
-        });
-        if (native) {
-          if (!quiet && native.kind === 'cenc-remux') retryIncrementalCenc = true;
-          log('playback.route', { kind: native.kind, elapsedMs: ageMs() });
-          return { url: native.url, native, source, fallbackNotice, variants: quiet ? variants : null };
+        if (!quiet && processingFailedVid === episode.vid) fallbackReason = 'processing-failed';
+        else {
+          await waitForOutputCleanup();
+          let native = null;
+          try {
+            native = await (quiet ? openClearKeyStream : prepareNativeStream)({
+              preload: quiet && options.nativePrefetch, video, source, download, codec: codecId(source.codec),
+              workerOrigin: getWorkerOrigin(), signal, remainingMediaAttempts: 20 - steps.count('media-download'),
+              startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId), onStage,
+              retainSource: quiet ? undefined : retainFor(source)
+            });
+          } catch (error) {
+            if (signal.aborted || quiet || !allowsWholeFileFallback(error)) throw error;
+            fallbackReason = error.code || 'stream-failed';
+          }
+          if (native) {
+            log('playback.route', { kind: native.kind, elapsedMs: ageMs() });
+            return { url: native.url, native, source, fallbackNotice, variants: quiet ? variants : null };
+          }
         }
         if (quiet) return { nativePending: true, source, fallbackNotice, variants };
-        if (retryIncrementalCenc)
-          throw errorWith('CENC_UNAVAILABLE', '增量串流重試失敗，已禁止整檔備援下載');
-      }
-      // Whole-file FFmpeg is not a valid fallback for encrypted HEVC MP4.
-      if (blockHevcFullFileFallback(source)) {
-        log('playback.fallback.blocked', { codec: 'hevc', reason: 'cenc-unavailable' });
-        throw errorWith('CENC_UNAVAILABLE',
-          'HEVC 增量串流無法使用；已禁止改為整集下載。請複製頁面底部播放診斷 Log。');
       }
       log('playback.fallback.whole-file', {
-        codec: codecId(source.codec) || 'unknown',
-        reason: 'cenc-unavailable',
-        elapsedMs: ageMs()
+        codec: codecId(source.codec) || 'unknown', reason: fallbackReason, elapsedMs: ageMs()
       });
       let bytes;
       // Encrypted MP4s still require the complete source before decryption.
@@ -327,19 +356,17 @@ export function createMediaSession({
       onStage('cdn.probe', { mode: 'whole-file' });
       failureStep = 'media-download'; steps.begin('media-download');
       fallbackStatus('正在下載整集影片…');
-      const raw = await download.read(source, signal,
-        quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
-        (length, total) => {
-          if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
-          received += length;
-          if (length > 0) markStartupStage('first-media-byte');
-          const now = Date.now();
-          if (!quiet && now - lastUpdate > 250) {
-            lastUpdate = now;
-            fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
-              : '正在下載整集影片…');
-          }
-        });
+      const raw = await readSource(source, 'cenc', signal, onStage, (count, total) => {
+        if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
+        if (count > received) markStartupStage('first-media-byte');
+        received = count;
+        const now = Date.now();
+        if (!quiet && now - lastUpdate > 250) {
+          lastUpdate = now;
+          fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
+            : '正在下載整集影片…');
+        }
+      });
       failureStep = 'processing'; steps.begin('processing');
       fallbackStatus('正在準備影片處理工具…', 2);
       const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
@@ -479,7 +506,6 @@ export function createMediaSession({
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       if (prepared?.native?.activate) {
         prepared.native.activate();
-        if (prepared.native.kind === 'cenc-remux') retryIncrementalCenc = true;
         log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true, ready: handoff.ready });
       }
       if (resolved?.bvc2Pending) {
@@ -517,7 +543,7 @@ export function createMediaSession({
     begin(episode) {
       sourceAttempt = 0; activeAttempts = createPlaybackAttempts();
       activeDownload = null; streamFailure = null;
-      retryIncrementalCenc = false;
+      processingFailedVid = null; retained.clear();
       if (lastVariantsVid !== episode.vid) {
         lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
       }
@@ -533,15 +559,17 @@ export function createMediaSession({
     beginPlayback() { return activeAttempts.begin('playback'); },
     decoratePlaybackError(error) { return activeAttempts.decorate(error, 'playback'); },
     canResumeDownload(code) {
+      // Another CDN candidate is a new source: streaming is tried again.
       const retry = activeDownload?.failed(code) || false;
-      if (retry && activeDownload?.tier?.codec === 'hevc') retryIncrementalCenc = true;
+      if (retry) { processingFailedVid = null; retained.clear(); }
       return retry;
     },
     updateContext() { maybePrefetchNext(); },
     cancelPrefetch,
-    releaseEngines: clearMediaProcessors,
+    releaseEngines() { retained.clear(); clearMediaProcessors(); },
     clear() {
       cancelPrefetch();
+      retained.clear(); processingFailedVid = null;
       lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
     },
     takeFailure() { const failure = streamFailure; streamFailure = null; return failure; },

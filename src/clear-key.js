@@ -173,6 +173,7 @@ function openCencMse({ video, mime, url, signal, fetchImpl }) {
 export async function openClearKeyStream({
   video, source, codec, workerOrigin, signal, startSeconds = 0,
   fetchImpl = fetch, download = null, onStage = () => {}, preload = false, remainingMediaAttempts = 20,
+  retainSource = () => false,
   requestAccess = typeof navigator !== 'undefined'
     ? navigator.requestMediaKeySystemAccess?.bind(navigator) : null
 }) {
@@ -204,7 +205,7 @@ export async function openClearKeyStream({
   try {
     remux = await openCencProgressiveStream({
       video, input: input.input(source, transport), onStage, codec,
-      key: source.contentKey, signal, preload, remainingMediaAttempts, fetchImpl,
+      key: source.contentKey, signal, preload, remainingMediaAttempts, fetchImpl, retainSource,
       durationSeconds: source.duration || null, startSeconds,
       onMetadata: (value, decided) => { metadata = value; route = decided; }
     });
