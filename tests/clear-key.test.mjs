@@ -323,3 +323,16 @@ test('an unusable key status is an EME failure, not a source failure', async () 
     { code: 'EME_UNAVAILABLE' });
   assert.equal(keySystem.calls.closed, 1);
 });
+
+test('the key system request offers a video-only configuration after the audio one', async () => {
+  let configs = null;
+  const keySystem = fakeKeySystem();
+  await ensureMediaKeys({ setMediaKeys: async () => {} }, async (_system, offered) => {
+    configs = offered;
+    return keySystem.access;
+  });
+  assert.equal(configs.length, 2);
+  assert.ok(configs[0].audioCapabilities?.length, 'First configuration includes audio');
+  assert.equal(configs[1].audioCapabilities, undefined, 'Second configuration is video-only');
+  assert.deepEqual(configs[1].videoCapabilities, configs[0].videoCapabilities);
+});

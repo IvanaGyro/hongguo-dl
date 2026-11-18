@@ -74,13 +74,18 @@ export function ensureMediaKeys(video, requestAccess, onStage = () => {}) {
   if (pending) return pending;
   pending = (async () => {
     onStage('eme-access');
-    const access = await requestAccess(KEY_SYSTEM, [{
+    const base = {
       initDataTypes: ['cenc', 'keyids'],
       videoCapabilities: EME_VIDEO.map(contentType => ({ contentType, encryptionScheme: 'cenc' })),
-      audioCapabilities: EME_AUDIO.map(contentType => ({ contentType, encryptionScheme: 'cenc' })),
       persistentState: 'not-allowed', distinctiveIdentifier: 'not-allowed',
       sessionTypes: ['temporary']
-    }]);
+    };
+    // A CDM rejects a configuration when none of its audio entries match;
+    // the video-only configuration keeps EME usable on such a CDM.
+    const access = await requestAccess(KEY_SYSTEM, [
+      { ...base, audioCapabilities: EME_AUDIO.map(contentType => ({ contentType, encryptionScheme: 'cenc' })) },
+      base
+    ]);
     const keys = await access.createMediaKeys();
     await video.setMediaKeys(keys);
     return { access, keys };

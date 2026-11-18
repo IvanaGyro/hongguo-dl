@@ -517,7 +517,12 @@ export function createMediaSession({
       if (prepared?.native?.activate) {
         try { await prepared.native.activate(); }
         catch (error) {
-          void prepared.native.close();
+          // Keep the preloaded Worker for the EME → WASM fallback, so the
+          // retry continues on its source and cache instead of a new download.
+          const kept = !signal.aborted && error?.code === 'EME_UNAVAILABLE' &&
+            prepared.native.releaseSource?.();
+          if (kept) retained.keep(prepared.source, kept);
+          else void prepared.native.close();
           if (signal.aborted || error?.code !== 'EME_UNAVAILABLE') throw error;
           // The preloaded EME episode could not open its key session.
           emeFailedVid = episode.vid;

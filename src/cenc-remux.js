@@ -201,6 +201,9 @@ export async function openCencProgressiveStream({
     throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法啟動');
   }
   let route, emeSession = null, emeDeferred = false;
+  // Close this episode's key session on every exit path: MediaKeys stay
+  // attached to the element, so a leftover session would stay on it.
+  const closeEme = () => { const session = emeSession; emeSession = null; void session?.close().catch(() => {}); };
   try {
     route = await routed;
     if (route.kind === 'eme' && preload) emeDeferred = true;
@@ -218,7 +221,7 @@ export async function openCencProgressiveStream({
         route = await routed;
       }
     }
-  } catch (error) { processor.close({ discard: true }); throw error; }
+  } catch (error) { closeEme(); processor.close({ discard: true }); throw error; }
   finally { signal?.removeEventListener('abort', abortEarly); }
   onMetadata(metadata, route);
   if (!['mse', 'eme'].includes(route.kind)) {
@@ -227,7 +230,7 @@ export async function openCencProgressiveStream({
     else processor.close();
     return null;
   }
-  if (signal?.aborted) { processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
+  if (signal?.aborted) { closeEme(); processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
   const { fileSize, hasAac, videoCodec, durationSeconds } = route;
   startSeconds = route.startSeconds;
   const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
@@ -246,7 +249,6 @@ export async function openCencProgressiveStream({
   };
   const internal = new AbortController();
   let closed = false, failed = false, retained = false, buffer = null, queued = Promise.resolve();
-  const closeEme = () => { const session = emeSession; emeSession = null; void session?.close().catch(() => {}); };
   let finished = false, initialStartChecked = false;
   let generation = processor.generation, outputController = new AbortController(), seekPending = null;
   // Playback state is demand state: pausing keeps the demand, and the
@@ -485,6 +487,17 @@ export async function openCencProgressiveStream({
       setPrefetch();
     },
     failEme: code => fail('eme-key-status', { code: code || 'EME_FAILED' }),
+    // Give up this stream but keep its media Worker (source, response and
+    // byte cache) for the next step of the fallback order; returns it.
+    releaseSource: () => {
+      if (closed || failed) return null;
+      retained = true;
+      void close();
+      // Leave preload staging so the next owner receives its output.
+      try { processor.activate(); } catch { /* staging already closed */ }
+      processor.keepSourceOnly();
+      return processor;
+    },
     get mime() { return mime; },
     durationSeconds, startSeconds, snapshot: () => processor.snapshot(), finished: () => finished || processor.finished() };
   return streamHandle;
