@@ -1,6 +1,6 @@
 // Layer 1 owns source discovery, candidate URLs, failure history and refresh.
 // One session represents requested media, independently of how it is consumed.
-import { errorWith, isHlsUrl } from './logic.js';
+import { errorWith, assertSupportedMediaUrl } from './logic.js';
 import { codecId, qualityId, playbackRendition, untriedPlaybackRendition, sourceQueryForPlayback } from './source-options.js';
 import { sameTierPlaybackCandidates, isRecoverableMediaSourceError } from './cenc-source-fallback.js';
 
@@ -10,7 +10,7 @@ export const downloadSource = handle => sources.get(handle) || handle;
 function handleFor(source) {
   if (handles.has(source)) return handles.get(source);
   const { url, userAgent, ...metadata } = source;
-  const handle = Object.freeze({ ...metadata, hls: isHlsUrl(url) });
+  const handle = Object.freeze({ ...metadata });
   sources.set(handle, source);
   handles.set(source, handle);
   return handle;
@@ -45,7 +45,11 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
       const query = sourceQueryForPlayback(quality);
       let list;
       if (sameList) list = { variants, winnerVariants: winners };
-      else if (episode.vid === 'direct') list = { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] };
+      else if (episode.vid === 'direct') {
+        // Reject unsupported playlists before any media request.
+        assertSupportedMediaUrl(episode.url);
+        list = { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] };
+      }
       else {
         try { list = await sourceFor(seriesId, episode.vid, query.quality, query.codec, signal,
           { refresh: Boolean(refresh || selected), onStage }); }
@@ -97,12 +101,12 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
       }
       selected++; unavailable = false;
       if (!ids.has(source.url)) ids.set(source.url, ids.size + 1);
-      if (!tier && ['bytevc2', 'h264', 'hevc'].includes(codecId(source.codec)) && !isHlsUrl(source.url))
+      if (!tier && ['bytevc2', 'h264', 'hevc'].includes(codecId(source.codec)))
         tier = { codec: codecId(source.codec), quality: qualityId(source) };
       current = { ...resolved, source: handleFor(source), candidate: ids.get(source.url) };
       log('source.selected', { candidate: current.candidate, episode: Number(episode.index) || 0,
         quality: qualityId(source) || 'unknown', codec: codecId(source.codec) || 'unknown',
-        encrypted: Boolean(source.contentKey), hls: current.source.hls,
+        encrypted: Boolean(source.contentKey),
         fallback: resolved.fallback, attempt: selected, elapsedMs: ageMs() });
       return current;
     },

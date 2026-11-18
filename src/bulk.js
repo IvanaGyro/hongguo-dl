@@ -1,11 +1,11 @@
 // Batch orchestration, independent of the browser UI. A ZIP is emitted as a
 // single ZIP64 stream; a lossless concat uses FFmpeg and is memory-limited.
-import { isHlsUrl, safeName, errorWith, classifyError } from './logic.js';
+import { assertSupportedMediaUrl, safeName, errorWith, classifyError } from './logic.js';
 import { episodeFileName } from './naming.js';
 import { recordFailure } from './retry.js';
 import { episodeCacheKey } from './media-cache.js';
 import { zipReadableStream } from './zip.js';
-import { convertHls, convertBytes, concatLosslessly } from './ffmpeg.js';
+import { convertBytes, concatLosslessly } from './ffmpeg.js';
 
 const PER_EPISODE_LIMIT = 260 * 1024 * 1024;
 const CONCAT_INPUT_LIMIT = 160 * 1024 * 1024;
@@ -56,22 +56,13 @@ export async function getEpisodeBytes({
     : await sourceFor(series.seriesId, episode.vid, quality, codec);
   const source = sources.variants?.[0];
   if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '找不到第 ' + episode.index + ' 集的媒體來源');
+  assertSupportedMediaUrl(source.url);
   const profile = source.source === 'app' ? 'app' : 'web';
-  const hls = isHlsUrl(source.url);
-  const process = type === 'concat' || hls || !!source.contentKey || outputMode !== 'original';
-  let bytes;
-  if (hls) {
-    bytes = await convertHls(source.url, {
-      mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
-      fetchBytes: (uri, sig, max) => fetchBytes(uri, profile, sig, Math.min(max, PER_EPISODE_LIMIT)),
-      segmentProgress: p => onUpdate?.('第 ' + episode.index + ' 集：分片 ' + p.current + '/' + p.total)
-    });
-  } else {
-    const raw = await fetchBytes(source.url, profile, signal, PER_EPISODE_LIMIT);
-    bytes = process ? await convertBytes(raw, {
-      mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal
-    }) : raw;
-  }
+  const process = type === 'concat' || !!source.contentKey || outputMode !== 'original';
+  const raw = await fetchBytes(source.url, profile, signal, PER_EPISODE_LIMIT);
+  const bytes = process ? await convertBytes(raw, {
+    mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal
+  }) : raw;
   if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '第 ' + episode.index + ' 集下載結果為空');
   const ext = extensionFor(source, process);
   if (ext === '.mp4' && outputMode !== 'h264')

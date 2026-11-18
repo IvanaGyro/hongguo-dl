@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { safeName, formatBytes, selectHlsVariant, assertHlsManifest,
+import { safeName, formatBytes, assertSupportedMediaUrl,
   classifyError, isHlsUrl, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin } from '../src/logic.js';
 
 test('filename sanitization preserves Traditional Chinese and blocks unsafe characters', () => {
@@ -17,12 +17,10 @@ test('sizes and HLS URL detection', () => {
   assert.ok(isHlsUrl('https://example.com/a.m3u8?token=abc'));
   assert.ok(!isHlsUrl('https://example.com/a.mp4'));
 });
-test('HLS master selects highest bandwidth and rejects live/DRM', () => {
-  const txt = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=10000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=20000\nhi.m3u8\n';
-  assert.equal(selectHlsVariant(txt, 'https://example.com/master.m3u8'), 'https://example.com/hi.m3u8');
-  assert.doesNotThrow(() => assertHlsManifest(txt));
-  assert.throws(() => assertHlsManifest('#EXTM3U\n#EXTINF:3,\na.ts\n'), { code: 'HLS_LIVE' });
-  assert.throws(() => assertHlsManifest('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="key"\n#EXT-X-ENDLIST\n'), { code: 'HLS_DRM' });
+test('HLS playlists are rejected as an unsupported format', () => {
+  assert.throws(() => assertSupportedMediaUrl('https://example.com/a.m3u8?token=abc'), { code: 'UNSUPPORTED_FORMAT' });
+  assert.doesNotThrow(() => assertSupportedMediaUrl('https://example.com/a.mp4'));
+  assert.equal(classifyError({ code: 'UNSUPPORTED_FORMAT' }).code, 'UNSUPPORTED_FORMAT');
 });
 test('errors are safe for UI display', () => {
   assert.equal(classifyError({ code: 'EMPTY_MEDIA', message: 'no bytes' }).code, 'EMPTY_MEDIA');

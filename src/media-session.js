@@ -3,7 +3,7 @@ import { createPlaybackAttempts } from './playback-attempts.js';
 // and speculative work. Playback supplies context; this layer owns scheduling.
 import { errorWith } from './logic.js';
 import { episodeCacheKey } from './media-cache.js';
-import { convertBytes, convertHls, prepareFfmpeg } from './ffmpeg.js';
+import { convertBytes, prepareFfmpeg } from './ffmpeg.js';
 import { renditionOptions, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, reconcileRendition, playableVariants } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
@@ -17,7 +17,7 @@ import { clearMediaProcessors } from './media-processor.js';
 export function createMediaSession({
   video, getSeries, sourceFor, fetchBytes, getWorkerOrigin, cache,
   selection, context, savedResumeSeconds, waitForOutputCleanup,
-  mimeSupport, mseSupport, bvc2Mode, log, ageMs, markStartupStage,
+  mimeSupport, mseSupport, log, ageMs, markStartupStage,
   reportStartup, reportStage, onVariants, onSelection
 }) {
   const download = createMediaDownload({ fetchBytes, getWorkerOrigin });
@@ -149,7 +149,7 @@ export function createMediaSession({
             mimeSupport, 0, false, mseSupport).source)
         });
       }
-      log('source.selection.policy', { quality, codec, nativeAvailable: Boolean(nativeChoice), bvc2Mode });
+      log('source.selection.policy', { quality, codec, nativeAvailable: Boolean(nativeChoice) });
       const needsBvc2 = formatCandidates.some(v => codecId(v.codec) === 'bytevc2' &&
         (quality === 'auto' || qualityId(v) === quality) &&
         (!nativeChoice || parseInt(qualityId(v), 10) > parseInt(qualityId(nativeChoice), 10)));
@@ -214,32 +214,31 @@ export function createMediaSession({
         }
       }
       if (codecId(source.codec) === 'bytevc2') {
-        if (source.hls) throw errorWith('PLAYBACK_UNSUPPORTED',
-          'ByteVC2 HLS 尚未支援；目前的 WASM 路徑只接受 MP4');
         // Streaming preload downloads independently and waits for the current
-        // processor before producing a bounded clear prefix. Whole-file mode
-        // keeps metadata-only lookahead to avoid a second full transcode.
-        if (quiet && (bvc2Mode !== 'stream' || !options.nativePrefetch)) return { bvc2Pending: true, source, fallbackNotice, variants,
+        // processor before producing a bounded clear prefix.
+        if (quiet && !options.nativePrefetch) return { bvc2Pending: true, source, fallbackNotice, variants,
           winnerVariants: list.winnerVariants || variants.slice() };
-        if (bvc2Mode === 'stream') {
-          if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
-          const { transport } = download.open(source);
-          log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
-          // The media Worker opens the source, probes its index and chooses
-          // the route; this layer only states the playable-media demand.
-          const native = await openCencProgressiveStream({
-            video, input: download.input(source, transport), onStage,
-            codec: 'h264', key: source.contentKey || '', signal, bridge: 'bvc2',
-            remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
-            durationSeconds: source.duration || null,
-            startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0
-          });
-          if (!native) throw errorWith('BVC2_UNAVAILABLE', '瀏覽器無法使用 ByteVC2 → H.264 MSE 串流');
-          return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
-            fallbackNotice, variants: quiet ? variants : null };
-        }
+        if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
+        const { transport } = download.open(source);
+        log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
+        // The media Worker opens the source, probes its index and chooses
+        // the route; this layer only states the playable-media demand.
+        const native = await openCencProgressiveStream({
+          video, input: download.input(source, transport), onStage,
+          codec: 'h264', key: source.contentKey || '', signal, bridge: 'bvc2',
+          remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
+          durationSeconds: source.duration || null,
+          startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0
+        });
+        if (native) return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
+          fallbackNotice, variants: quiet ? variants : null };
+        // A speculative episode never starts a whole-file transcode.
+        if (quiet) return { bvc2Pending: true, source, fallbackNotice, variants,
+          winnerVariants: list.winnerVariants || variants.slice() };
+        // Whole-file transcoding is only a fallback when this browser cannot
+        // host the incremental ByteVC2 → H.264 MSE route.
         const reportBvc2 = (message, layer = 2) => report(message, layer);
-        log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2' });
+        log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2', reason: 'stream-unavailable' });
         onStage('cdn.probe', { mode: 'whole-file' });
         failureStep = 'media-download'; steps.begin('media-download');
         reportBvc2('正在下載 ByteVC2 影片…', 1);
@@ -280,7 +279,7 @@ export function createMediaSession({
         cache.put(key, playable, outputSource);
         return { blob: playable, source: outputSource, fallbackNotice, variants: null };
       }
-      if (!source.hls && !source.contentKey) {
+      if (!source.contentKey) {
         log('playback.route', { kind: 'direct-mp4', elapsedMs: ageMs() });
         const native = await download.nativeSource(source, signal,
           (reason, fields) => onStage('media.transport.fallback', { reason, ...fields }), onStage);
@@ -291,7 +290,7 @@ export function createMediaSession({
       // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
       // A source/API failure may consume attempt zero before any CENC setup.
       // Every newly selected encrypted source must still try incremental playback.
-      if ((!quiet || options.nativePrefetch) && source.contentKey && !source.hls) {
+      if ((!quiet || options.nativePrefetch) && source.contentKey) {
         await waitForOutputCleanup();
         const native = await (quiet ? openClearKeyStream : prepareNativeStream)({
           preload: quiet && options.nativePrefetch, video, source, download, codec: codecId(source.codec),
@@ -315,63 +314,47 @@ export function createMediaSession({
       }
       log('playback.fallback.whole-file', {
         codec: codecId(source.codec) || 'unknown',
-        reason: source.hls ? 'hls' : 'cenc-unavailable',
+        reason: 'cenc-unavailable',
         elapsedMs: ageMs()
       });
       let bytes;
-      if (source.hls) {
-        onStage('cdn.probe', { mode: 'whole-file' });
-        failureStep = 'media-download'; steps.begin('media-download');
-        if (!quiet) report('正在讀取分片清單…');
-        bytes = await convertHls(download.playlistUrl(source), {
-          mode: 'copy', contentKey: source.contentKey, signal,
-          fetchBytes: (uri, sig, max) => download.read(source, sig, max, undefined, uri),
-          segmentProgress: x => report('正在下載分片 ' + x.current + '/' + x.total),
-          onStage: phase => {
-            if (phase === 'hls-tool') { failureStep = 'processing'; steps.begin('processing'); report('正在準備影片處理工具…', 2); }
-            if (phase === 'hls-playlist') { failureStep = 'media-download'; report('正在讀取分片清單…', 1); }
-            if (phase === 'hls-remux') { failureStep = 'processing'; report('正在解密並封裝影片…', 2); }
+      // Encrypted MP4s still require the complete source before decryption.
+      // Initialize FFmpeg after the first media chunk, in parallel with the
+      // remaining download, so the initial startup stages do not run serially.
+      let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
+      let received = 0, lastUpdate = 0;
+      const wholeFileStarted = performance.now();
+      onStage('cdn.probe', { mode: 'whole-file' });
+      failureStep = 'media-download'; steps.begin('media-download');
+      fallbackStatus('正在下載整集影片…');
+      const raw = await download.read(source, signal,
+        quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
+        (length, total) => {
+          if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
+          received += length;
+          if (length > 0) markStartupStage('first-media-byte');
+          const now = Date.now();
+          if (!quiet && now - lastUpdate > 250) {
+            lastUpdate = now;
+            fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
+              : '正在下載整集影片…');
           }
         });
-      } else {
-        // Encrypted MP4s still require the complete source before decryption.
-        // Initialize FFmpeg after the first media chunk, in parallel with the
-        // remaining download, so the initial startup stages do not run serially.
-        let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
-        let received = 0, lastUpdate = 0;
-        const downloadStarted = performance.now();
-        onStage('cdn.probe', { mode: 'whole-file' });
-        failureStep = 'media-download'; steps.begin('media-download');
-        fallbackStatus('正在下載整集影片…');
-        const raw = await download.read(source, signal,
-          quiet ? Math.min(cache.limit, 32 * 1024 * 1024) : 260 * 1024 * 1024,
-          (length, total) => {
-            if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
-            received += length;
-            if (length > 0) markStartupStage('first-media-byte');
-            const now = Date.now();
-            if (!quiet && now - lastUpdate > 250) {
-              lastUpdate = now;
-              fallbackStatus(total ? '下載整集 ' + Math.min(100, Math.round(100 * received / total)) + '%'
-                : '正在下載整集影片…');
-            }
-          });
-        failureStep = 'processing'; steps.begin('processing');
-        fallbackStatus('正在準備影片處理工具…', 2);
-        const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
-        if (warmupError) throw warmupError;
-        if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-        if (!quiet) {
-          console.info('[Hongguo playback] E' + episode.index +
-            ' 片源下載：' + Math.round(performance.now() - downloadStarted) +
-            'ms，' + raw.byteLength + ' bytes');
-          fallbackStatus('正在解密並重新封裝整集影片…', 2);
-        }
-        const remuxStarted = performance.now();
-        bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
-        if (!quiet) console.info('[Hongguo playback] E' + episode.index +
-          ' 解密封裝：' + Math.round(performance.now() - remuxStarted) + 'ms');
+      failureStep = 'processing'; steps.begin('processing');
+      fallbackStatus('正在準備影片處理工具…', 2);
+      const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
+      if (warmupError) throw warmupError;
+      if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+      if (!quiet) {
+        console.info('[Hongguo playback] E' + episode.index +
+          ' 片源下載：' + Math.round(performance.now() - wholeFileStarted) +
+          'ms，' + raw.byteLength + ' bytes');
+        fallbackStatus('正在解密並重新封裝整集影片…', 2);
       }
+      const remuxStarted = performance.now();
+      bytes = await convertBytes(raw, { mode: 'copy', contentKey: source.contentKey, signal });
+      if (!quiet) console.info('[Hongguo playback] E' + episode.index +
+        ' 解密封裝：' + Math.round(performance.now() - remuxStarted) + 'ms');
       if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '來源沒有媒體資料');
       const result = new Blob([bytes], { type: 'video/mp4' });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');

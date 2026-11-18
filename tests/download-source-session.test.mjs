@@ -87,3 +87,12 @@ test('whole-file ByteVC2 HTTP_403 rotates once to a distinct same-tier CDN', asy
   );
   assert.equal(queries, 2, 'Refresh must not resurrect either rejected signed URL');
 });
+
+test('a direct HLS URL is rejected before any source query or media request', async () => {
+  let queries = 0;
+  const session = createDownloadSourceSession({ seriesId: null,
+    episode: { vid: 'direct', url: 'https://v.fqnovelvod.com/list.m3u8' },
+    sourceFor: async () => { queries++; return { variants: [] }; } });
+  await assert.rejects(session.list(options()), { code: 'UNSUPPORTED_FORMAT' });
+  assert.equal(queries, 0);
+});

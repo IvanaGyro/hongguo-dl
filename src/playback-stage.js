@@ -24,7 +24,7 @@ export function playbackStage(stage, fields = {}) {
   const http = fields.status ? ` · HTTP ${fields.status}` : '';
   const names = {
     'cdn.selected': '準備探測 CDN 候選',
-    'cdn.probe': fields.mode === 'whole-file' ? '準備從 CDN 下載整集／分片' : '探測 CDN 可讀性（Range bytes=0–15）',
+    'cdn.probe': fields.mode === 'whole-file' ? '準備從 CDN 下載整集' : '探測 CDN 可讀性（Range bytes=0–15）',
     metadata: '開始讀取 MP4 檔案資訊（不是查詢片源 API）',
     'range.request': '讀取 ' + part + rangeText(fields),
     'range.response': '已收到 CDN HTTP 回應，正在下載 ' + part + rangeText(fields) + http,

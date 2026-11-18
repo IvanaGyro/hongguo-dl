@@ -9,7 +9,7 @@
 | **1. 網頁產品與下載流程** | 已完成核心 | GitHub Pages + Cloudflare Worker、播放／畫質選擇、佇列、ZIP/MP4、取消與進度恢復；仍需真實 Android Firefox 大批次驗收 |
 | **2. CENC 低延遲串流核心** | 已完成核心 | HTTP 206 有界讀取、Librempeg WASM 解密並無損轉封裝 fMP4、MSE 播放、跨緩衝 Seek／續播、背壓／清理；合成 Chromium／Firefox 及 1800 秒壓測通過 |
 | **3. 真實 HEVC 端到端播放** | **目前階段：部分通過，Seek 回歸不穩定** | 真實 CDN 206、真實 HEVC/AAC 轉封裝／FFmpeg 解碼、macOS WebKit 1080p 首影格已通過；120 秒遠距 Seek 曾 PASS，但最新 CI 停於 86.65 秒而 FAIL。**瀏覽器實際 AAC 聲音、reload 續播、整集播畢皆未完成驗收** |
-| **4. ByteVC2 串流與下載** | 實驗性實作已合併 | PR #10 已合併；五種輸出、953 KiB 合成來源 EOF 前起播與 24 秒未緩衝 Seek 皆通過。真實 BTY2 與實際裝置仍未驗收；增量播放須加 `bvc2_stream=experimental` |
+| **4. ByteVC2 串流與下載** | 實驗性實作已合併 | PR #10 已合併；五種輸出、953 KiB 合成來源 EOF 前起播與 24 秒未緩衝 Seek 皆通過。真實 BTY2 與實際裝置仍未驗收；播放一律先走增量串流，整集轉碼僅在增量路徑不可用時作為備援（Issue #22 已移除 `bvc2_stream` 網址參數） |
 | **5. 跨裝置與產品穩定性** | 待驗收 | Windows／Android 的 HEVC 能力與實播、真實長片 RAM／CPU、弱網、來源過期與跨模式回歸 |
 
 ## 當前階段 Goal
@@ -51,7 +51,7 @@
 
 ## 工作原則與驗收入口
 
-- **下一集媒體預載**：CENC／ByteVC2 增量模式預載下一集實際影片。當本集 WASM 處理完成即開始 lookahead（不必等最後 45 秒）；若處理尚未完成，既有接近結尾門檻仍可先取得索引並啟動原始資料下載。下一集 Worker 的解密／轉封裝／轉碼須等待本集 `mse.done`；下載不受此 CPU gate 限制。預載最多一集、沿用原始資料快取上限（通常 32 MiB），清晰 fMP4 prefix 在 4 MiB 門檻停止 ACK，容許最後一個完整片段跨過門檻。切集重用同一個 Worker、raw cache 與已處理片段，再掛上可見播放器的 MSE；取消／換影集會終止背景 Worker 並釋放 URL。當本集重新進行索引 seek，暫停下一集的片段 ACK，最多讓已在處理的單一片段完成，原始資料下載仍可繼續。明確 whole-file BVC2／無法安全預建的 EME 路徑仍只預取 metadata，不把第二個 CDM 掛到本集播放器。新增 `prefetch.begin/stage/prepared/handoff/failed` 紀錄；handoff 後的 stage 重新歸屬目前播放，保留媒體錯誤與效能資訊。CI 用合成加密影片驗證 Chromium／Firefox 的真實第 13→14 集接續、處理先後、重用來源／資料；production worker 證明先完成 raw download 再允許 WASM，且 forward/back seek 繼續使用快取。真實 CDN／Windows 裝置切集延遲與記憶體仍需實測。 原始 HTTP 封包可能跨入檔尾 moov；快取寫入後必須重疊套回 initialRanges 的權威 metadata，避免 ByteVC2 bv2C 正規化被 CDN 原始內容覆寫。production ByteVC2 worker 的「先下載、再轉碼、再前後 seek」已在本機驗證。WebKit Journey 僅對最終停止／不支援狀態提前結束，不能把尚在重試的「失敗」訊息當成最終失敗；首影格、續播時間與真實 EOF 斷言維持。
+- **下一集媒體預載**：CENC／ByteVC2 增量模式預載下一集實際影片。當本集 WASM 處理完成即開始 lookahead（不必等最後 45 秒）；若處理尚未完成，既有接近結尾門檻仍可先取得索引並啟動原始資料下載。下一集 Worker 的解密／轉封裝／轉碼須等待本集 `mse.done`；下載不受此 CPU gate 限制。預載最多一集、沿用原始資料快取上限（通常 32 MiB），清晰 fMP4 prefix 在 4 MiB 門檻停止 ACK，容許最後一個完整片段跨過門檻。切集重用同一個 Worker、raw cache 與已處理片段，再掛上可見播放器的 MSE；取消／換影集會終止背景 Worker 並釋放 URL。當本集重新進行索引 seek，暫停下一集的片段 ACK，最多讓已在處理的單一片段完成，原始資料下載仍可繼續。整集 BVC2 備援／無法安全預建的 EME 路徑仍只預取 metadata，不把第二個 CDM 掛到本集播放器。新增 `prefetch.begin/stage/prepared/handoff/failed` 紀錄；handoff 後的 stage 重新歸屬目前播放，保留媒體錯誤與效能資訊。CI 用合成加密影片驗證 Chromium／Firefox 的真實第 13→14 集接續、處理先後、重用來源／資料；production worker 證明先完成 raw download 再允許 WASM，且 forward/back seek 繼續使用快取。真實 CDN／Windows 裝置切集延遲與記憶體仍需實測。 原始 HTTP 封包可能跨入檔尾 moov；快取寫入後必須重疊套回 initialRanges 的權威 metadata，避免 ByteVC2 bv2C 正規化被 CDN 原始內容覆寫。production ByteVC2 worker 的「先下載、再轉碼、再前後 seek」已在本機驗證。WebKit Journey 僅對最終停止／不支援狀態提前結束，不能把尚在重試的「失敗」訊息當成最終失敗；首影格、續播時間與真實 EOF 斷言維持。
 
 - **Windows Firefox HEVC 排除調查已定位（2026-11-15）**：使用者的 Surface／Firefox ARM64 在 `about:support` 顯示 `media.hardware-video-decoding.failed=true`、`HARDWARE_VIDEO_DECODING` 被 `FEATURE_FAILURE_SANITY_TEST_FAILED` 封鎖；Profiler 顯示 DXVA disabled/blacklisted、HEVC 無可用 decoder。清除失敗設定並重新啟動後，使用者確認硬體解碼恢復 available 且影片可播。暫時的 HEVC admission 診斷模式已移除，所有入口統一使用正常的瀏覽器支援過濾。保留 metadata codecString、`mse.codec-check` 的 hvc1/hev1 支援結果、`mse.output-codec` 及 EME 失敗名稱，供後續排查；不新增 HEVC 軟體轉碼或整集備援。自我測試最初失敗原因與是否復發仍未知。
 

@@ -11,6 +11,7 @@ test('only official URLs and digits are accepted', () => {
   assert.deepEqual(parseInput('https://hongguoduanju.com/detail?series_id=123456789'),
     { kind: 'series', seriesId: '123456789' });
   assert.equal(parseInput('https://cdn.fqnovelvod.com/video.mp4').kind, 'media');
+  assert.throws(() => parseInput('https://cdn.fqnovelvod.com/list.m3u8'), { code: 'UNSUPPORTED_FORMAT' });
   assert.throws(() => parseInput('https://evil.example/?series_id=123456789'), { code: 'HOST_NOT_ALLOWED' });
   assert.throws(() => parseInput('file:///etc/passwd'), { code: 'INVALID_INPUT' });
   assert.throws(() => safeUrl('https://127.0.0.1/private', ['fqnovelvod.com']), { code: 'HOST_NOT_ALLOWED' });

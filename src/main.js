@@ -21,8 +21,8 @@ import '@videojs/html/ui/hotkey';
 import '@videojs/html/ui/status-announcer';
 import '@fontsource-variable/chiron-goround-tc/wght.css';
 import './styles.css';
-import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, displayStatus } from './logic.js';
-import { convertBytes, convertHls } from './ffmpeg.js';
+import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, isHlsUrl, assertSupportedMediaUrl, displayStatus } from './logic.js';
+import { convertBytes } from './ffmpeg.js';
 import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
@@ -137,7 +137,7 @@ function restoreJobs() {
     const totals = new Map(recentSeries(localStorage).map(item => [String(item.seriesId), item.total]));
     return (JSON.parse(localStorage.getItem(STORE) || '[]')).slice(0, 2000).map(item => ({
       ...item, seriesTotal: item.seriesTotal ?? totals.get(String(item.seriesId)) ?? null,
-      directUrl: null, progress: null, segment: null, controller: null,
+      directUrl: null, progress: null, controller: null,
       status: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'failed' : item.status,
       errorCode: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ? 'INTERRUPTED' : item.errorCode,
       error: ['queued', 'resolving', 'downloading', 'processing', 'retrying'].includes(item.status) ?
@@ -220,8 +220,7 @@ function renderQueue() {
     const bytesDetail = ['downloading', 'processing'].includes(job.status) && job.bytes > 0
       ? formatBytes(job.bytes) + (job.totalBytes ? ' / ' + formatBytes(job.totalBytes) : '') : '';
     const progressDetail = job.status === 'processing' && Number.isFinite(job.progress)
-      ? '處理 ' + Math.round(job.progress * 100) + '%'
-      : job.segment ? '分片 ' + job.segment.current + '/' + job.segment.total : '';
+      ? '處理 ' + Math.round(job.progress * 100) + '%' : '';
     const elapsed = job.status === 'processing' && job.processingStarted
       ? Math.round((Date.now() - job.processingStarted) / 1000) : 0;
     const timeDetail = elapsed > 0 ? '已處理 ' + elapsed + ' 秒' +
@@ -589,6 +588,8 @@ async function lookup(event) {
   $('lookup-error').hidden = true;
   $('lookup-button').textContent = '查詢分集列表…';
   try {
+    // A pasted HLS playlist is rejected before any API or media request.
+    if (isHlsUrl(input)) assertSupportedMediaUrl(input);
     const response = await apiJson('/api/series?input=' + encodeURIComponent(input));
     if (response.kind === 'series') currentMode = 'play';
     showSeries(response);
@@ -629,7 +630,7 @@ function queueSelected() {
     const job = { id: crypto.randomUUID(), seriesId: series.seriesId || null,
       seriesTitle: series.title || '影集', seriesTotal: series.total, vid: ep.vid,
       directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
-      bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', segment: null, progress: null,
+      bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', progress: null,
       lastErrorKey: '', errorStreak: 0, failureAttempts: 0, stored: false, onDisk: false };
     jobs.push(job);
     exportSelected.add(job.id);
@@ -646,7 +647,7 @@ function queueRetry(job) {
   }
   const timer = retryTimers.get(job.id);
   if (timer) { clearTimeout(timer); retryTimers.delete(job.id); }
-  update(job, { status: 'queued', bytes: 0, totalBytes: 0, progress: null, segment: null,
+  update(job, { status: 'queued', bytes: 0, totalBytes: 0, progress: null,
     error: '', errorCode: '', lastErrorKey: '', errorStreak: 0, failureAttempts: 0,
     fileName: null, stored: false, onDisk: false });
   pump();
@@ -755,7 +756,7 @@ async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
   const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(),
     fetch, undefined, userAgent, { retryRejectedDirect: false });
   const res = await transport.fetch(url, { signal,
-    ...(profile === 'app' && !isHlsUrl(url) ? { headers: { Range: 'bytes=0-' } } : {}) });
+    ...(profile === 'app' ? { headers: { Range: 'bytes=0-' } } : {}) });
   if (!res.ok) { await assertOk(res); }
   const chunks = [];
   let size = 0;
@@ -845,12 +846,12 @@ async function runJob(job, signal) {
       effective, job.attempts - 1);
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
     update(job, { status: 'downloading', quality: effective.quality, codec: effective.codec, sourceCodec: source.codec || 'unknown' });
-    const hls = isHlsUrl(source.url);
+    assertSupportedMediaUrl(source.url);
     const profile = source.source === 'app' ? 'app' : 'web';
-    const requiresFfmpeg = hls || !!source.contentKey || job.mode !== 'original';
+    const requiresFfmpeg = !!source.contentKey || job.mode !== 'original';
     if (!requiresFfmpeg) {
       await streamToDestination(job, source, signal);
-    } else if (!hls && (codecId(source.codec) === 'bytevc2' || ['hevc', 'vvc', 'av1'].includes(job.mode))) {
+    } else if ((codecId(source.codec) === 'bytevc2' || ['hevc', 'vvc', 'av1'].includes(job.mode))) {
       if (!await bvc2BridgeAvailable())
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
       const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
@@ -859,27 +860,6 @@ async function runJob(job, signal) {
       const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode, signal,
         progress: progress => update(job, { progress }) });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      await saveProcessed(out, outputFileName(job, source, true), job,
-        { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
-    } else if (hls) {
-      update(job, { status: 'processing' });
-      let out = await convertHls(source.url, {
-        mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
-        fetchBytes: (url, signal, max) => fetchBytes(url, profile, signal, max,
-          n => update(job, { bytes: (job.bytes || 0) + n }), source.userAgent),
-        segmentProgress: segment => update(job, { segment }),
-        progress: progress => update(job, { progress })
-      });
-      if (['hevc', 'vvc', 'av1'].includes(job.mode)) {
-        update(job, { status: 'processing', progress: 0 });
-        out = await transcodeBvc2(out, { mode: job.mode, signal,
-          progress: progress => update(job, { progress }) });
-      }
-      if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
-      if (['original', 'copy'].includes(job.mode)) {
-        mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
-          new Blob([out], { type: 'video/mp4' }));
-      }
       await saveProcessed(out, outputFileName(job, source, true), job,
         { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     } else {

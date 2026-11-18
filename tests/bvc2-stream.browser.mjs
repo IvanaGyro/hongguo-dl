@@ -17,6 +17,9 @@ const context = await browser.newContext();
 const page = await context.newPage();
 // The app opens in watch mode; this suite was written against a download-mode start.
 await page.addInitScript(() => { window.__HONGGUO_START_MODE = 'download'; });
+// Whole-file transcoding is only a fallback. Hide MSE so the incremental
+// ByteVC2 → H.264 route is unavailable and the fallback is exercised.
+if (whole) await page.addInitScript(() => { delete window.MediaSource; delete window.ManagedMediaSource; });
 const errors = [], reads = [];
 const consoleMessages = [];
 page.on('console', message => { consoleMessages.push(message.text()); if (consoleMessages.length > 30) consoleMessages.shift(); });
@@ -34,7 +37,7 @@ await page.addInitScript(() => {
   }));
   URL.createObjectURL = value => {
     const url = create(value);
-    if (value instanceof MediaSource) { live.set(url, value); window.__activeMse = live.size; }
+    if (typeof MediaSource !== 'undefined' && value instanceof MediaSource) { live.set(url, value); window.__activeMse = live.size; }
     return url;
   };
   URL.revokeObjectURL = url => { live.delete(url); window.__activeMse = live.size; revoke(url); };
@@ -78,8 +81,8 @@ await context.route(url => url.pathname.startsWith('/api/') || url.hostname.ends
 });
 await page.exposeFunction('recordBvcFirstFrame', () => { firstFrameBytes ??= deliveredBytes; });
 try {
-  // Exercise the actual default URL; whole-file conversion is opt-in.
-  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789${whole ? '&bvc2_stream=whole-file' : ''}`);
+  // There is no URL option for whole-file conversion; it is a fallback only.
+  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789`);
   // The controls exist in static HTML before the application attaches handlers.
   await page.waitForFunction(() => document.querySelector('#series-title')
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
@@ -105,7 +108,7 @@ try {
   assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, 'Selecting the healthy current episode must preserve its CDN');
   assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
   assert.match(await page.locator('#playback-log').inputValue(),
-    whole ? /bvc2\.prepare\.begin mode=whole-file/ : /bvc2\.prepare\.begin mode=stream/);
+    whole ? /bvc2\.prepare\.begin mode=whole-file reason=stream-unavailable/ : /bvc2\.prepare\.begin mode=stream/);
   if (!whole) {
   // The first real decoded browser picture must appear before the whole
   // long source is delivered, not merely before its last requested offset.
