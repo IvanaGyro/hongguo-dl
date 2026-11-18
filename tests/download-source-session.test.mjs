@@ -96,3 +96,22 @@ test('a direct HLS URL is rejected before any source query or media request', as
   await assert.rejects(session.list(options()), { code: 'UNSUPPORTED_FORMAT' });
   assert.equal(queries, 0);
 });
+
+test('HLS variants from the source API are never offered to playback', async () => {
+  const hls = { ...source('hls'), url: 'https://hls.fqnovelvod.com/list.m3u8' };
+  const session = createDownloadSourceSession({ seriesId: '42', episode: { vid: '1' },
+    sourceFor: async () => ({ variants: [hls, source('a')], winnerVariants: [hls, source('a')] }) });
+  const list = await session.list(options());
+  assert.equal(list.variants.length, 1);
+  assert.equal(list.winnerVariants.length, 1);
+  const selected = session.acquire(preferences, capabilities);
+  const download = createMediaDownload({ getWorkerOrigin: () => 'https://proxy.test' });
+  assert.equal(download.input(selected.source, { mode: 'direct' }).url, source('a').url);
+});
+
+test('a source list with only HLS variants fails as unsupported, not as a media error', async () => {
+  const hls = { ...source('hls'), url: 'https://hls.fqnovelvod.com/list.m3u8' };
+  const session = createDownloadSourceSession({ seriesId: '42', episode: { vid: '1' },
+    sourceFor: async () => ({ variants: [hls] }) });
+  await assert.rejects(session.list(options()), { code: 'UNSUPPORTED_FORMAT' });
+});

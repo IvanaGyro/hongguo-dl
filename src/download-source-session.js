@@ -1,9 +1,12 @@
 // Layer 1 owns source discovery, candidate URLs, failure history and refresh.
 // One session represents requested media, independently of how it is consumed.
-import { errorWith, assertSupportedMediaUrl } from './logic.js';
+import { errorWith, assertSupportedMediaUrl, isHlsUrl } from './logic.js';
 import { codecId, qualityId, playbackRendition, untriedPlaybackRendition, sourceQueryForPlayback } from './source-options.js';
 import { sameTierPlaybackCandidates, isRecoverableMediaSourceError } from './cenc-source-fallback.js';
 
+// HLS playlists are not supported: a variant the source API returns as
+// .m3u8 is never offered to playback or downloads.
+const playableUrl = source => !isHlsUrl(source?.url || '');
 const sources = new WeakMap();
 const handles = new WeakMap();
 export const downloadSource = handle => sources.get(handle) || handle;
@@ -18,6 +21,8 @@ function handleFor(source) {
 
 export function createDownloadSourceSession({ sourceFor, seriesId, episode, log = () => {}, ageMs = () => 0 }) {
   let variants = null, winners = null, view = null, tier = null, current = null, expansion = null;
+  // The API's own lists, before unsupported variants are removed.
+  let rawVariants = null, rawWinners = null;
   let refreshes = 0, selected = 0, unavailable = false;
   const tried = new Set(), ids = new Map();
   const remaining = preferences => tier ? sameTierPlaybackCandidates(variants || [], preferences, tier)
@@ -25,7 +30,7 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
   const merge = extras => {
     const seen = new Set((variants || []).map(source => source.url));
     let added = 0;
-    for (const source of extras || []) if (source?.url && !seen.has(source.url)) {
+    for (const source of extras || []) if (source?.url && playableUrl(source) && !seen.has(source.url)) {
       seen.add(source.url); variants.push(source); view?.push(handleFor(source)); added++;
     }
     return added;
@@ -44,7 +49,7 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
       }
       const query = sourceQueryForPlayback(quality);
       let list;
-      if (sameList) list = { variants, winnerVariants: winners };
+      if (sameList) list = { variants: rawVariants, winnerVariants: rawWinners };
       else if (episode.vid === 'direct') {
         // Reject unsupported playlists before any media request.
         assertSupportedMediaUrl(episode.url);
@@ -56,11 +61,17 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
         catch (error) { throw Object.assign(error, { stage: 'source-api' }); }
       }
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
-      if (variants !== list.variants) {
-        variants = list.variants || [];
+      if (rawVariants !== list.variants) {
+        rawVariants = list.variants || [];
+        variants = rawVariants.filter(playableUrl);
         view = variants.map(handleFor);
+        if (rawVariants.length && !variants.length) throw errorWith('UNSUPPORTED_FORMAT',
+          '不支援 HLS（.m3u8）媒體網址；本集沒有可用的 MP4 片源');
+        if (variants.length < rawVariants.length)
+          log('source.list.unsupported', { removed: rawVariants.length - variants.length, reason: 'hls' });
       }
-      winners = list.winnerVariants || variants.slice();
+      rawWinners = list.winnerVariants || null;
+      winners = rawWinners ? rawWinners.filter(playableUrl) : variants.slice();
       if (list.lateVariants && (refreshing || (quality !== 'auto' || codec !== 'auto') &&
           !variants.some(source => (quality === 'auto' || qualityId(source) === quality) &&
             (codec === 'auto' || codecId(source.codec) === codec)))) {
