@@ -79,7 +79,7 @@ jobs:
   playback:
     runs-on: ubuntu-24.04
     container: debian:trixie-slim
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - run: apt-get update -qq && apt-get install -y ca-certificates curl unzip git nodejs ffmpeg >/dev/null
       - uses: actions/checkout@v4

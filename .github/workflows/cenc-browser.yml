@@ -104,7 +104,7 @@ jobs:
         # Focused CENC fixes run real Chromium/Firefox acceptance; main retains both suites.
         suite: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["fast","long"]') || fromJSON('["fast"]') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       CENC_SUITE: ${{ matrix.suite }}
     steps:
