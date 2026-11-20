@@ -36,6 +36,10 @@ export function createMediaSession({
   // Episode whose incremental route failed while processing: its next
   // attempt goes straight to the whole-file fallback.
   let processingFailedVid = null;
+  // Episode whose native EME route failed: its next attempt skips EME and
+  // continues with WASM streaming (the next step of the fallback order).
+  let emeFailedVid = null;
+  const EME_FAILURES = ['EME_FAILED', 'EME_UNAVAILABLE'];
   function retainFor(source) {
     return processor => retained.keep(source, processor);
   }
@@ -83,8 +87,10 @@ export function createMediaSession({
         if ((stage === 'media-range-failed' || stage === 'mse.failed') && fields.code)
           streamFailure = { code: fields.code, status: fields.status || 0, retryStep: fields.retryStep, stepAttempt: fields.attempt, retryAfterMs: fields.retryAfterMs };
         if (stage === 'mse.failed' && isProcessingFailure(fields.code) && episode?.vid) {
-          processingFailedVid = episode.vid;
-          log('playback.fallback.armed', { code: fields.code });
+          if (EME_FAILURES.includes(fields.code)) emeFailedVid = episode.vid;
+          else processingFailedVid = episode.vid;
+          log('playback.fallback.armed', { code: fields.code,
+            next: EME_FAILURES.includes(fields.code) ? 'wasm-stream' : 'whole-file' });
         }
         if (stage === 'seek.request') prefetched?.prepared?.native?.pauseProcessing?.();
         if (stage === 'mse.done') maybeStartPrefetchedProcessing();
@@ -325,12 +331,16 @@ export function createMediaSession({
         else {
           await waitForOutputCleanup();
           let native = null;
+          const emeFailed = !quiet && emeFailedVid === episode.vid;
           try {
             native = await (quiet ? openClearKeyStream : prepareNativeStream)({
               preload: quiet && options.nativePrefetch, video, source, download, codec: codecId(source.codec),
               workerOrigin: getWorkerOrigin(), signal, remainingMediaAttempts: 20 - steps.count('media-download'),
               startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId), onStage,
-              retainSource: quiet ? undefined : retainFor(source)
+              retainSource: quiet ? undefined : retainFor(source),
+              // After an EME failure, continue with WASM streaming on the
+              // retained Worker's source and cache.
+              allowEme: !emeFailed, processor: emeFailed ? retained.take(source) : null
             });
           } catch (error) {
             if (signal.aborted || quiet || !allowsWholeFileFallback(error)) throw error;
@@ -505,7 +515,23 @@ export function createMediaSession({
         { refresh: refreshExhaustedPrefetch });
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       if (prepared?.native?.activate) {
-        prepared.native.activate();
+        try { await prepared.native.activate(); }
+        catch (error) {
+          // Keep the preloaded Worker for the EME → WASM fallback, so the
+          // retry continues on its source and cache instead of a new download.
+          const kept = !signal.aborted && error?.code === 'EME_UNAVAILABLE' &&
+            prepared.native.releaseSource?.();
+          if (kept) retained.keep(prepared.source, kept);
+          else void prepared.native.close();
+          if (signal.aborted || error?.code !== 'EME_UNAVAILABLE') throw error;
+          // The preloaded EME episode could not open its key session.
+          emeFailedVid = episode.vid;
+          log('prefetch.handoff.eme-failed', { episode: Number(episode.index) || 0 });
+          prepared = null;
+          resolved = await prepareEpisode(episode, signal, attempt, {});
+        }
+      }
+      if (prepared?.native?.activate) {
         log('prefetch.handoff', { episode: Number(episode.index) || 0, media: true, ready: handoff.ready });
       }
       if (resolved?.bvc2Pending) {
@@ -543,7 +569,7 @@ export function createMediaSession({
     begin(episode) {
       sourceAttempt = 0; activeAttempts = createPlaybackAttempts();
       activeDownload = null; streamFailure = null;
-      processingFailedVid = null; retained.clear();
+      processingFailedVid = null; emeFailedVid = null; retained.clear();
       if (lastVariantsVid !== episode.vid) {
         lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
       }
@@ -561,7 +587,7 @@ export function createMediaSession({
     canResumeDownload(code) {
       // Another CDN candidate is a new source: streaming is tried again.
       const retry = activeDownload?.failed(code) || false;
-      if (retry) { processingFailedVid = null; retained.clear(); }
+      if (retry) { processingFailedVid = null; emeFailedVid = null; retained.clear(); }
       return retry;
     },
     updateContext() { maybePrefetchNext(); },
@@ -569,7 +595,7 @@ export function createMediaSession({
     releaseEngines() { retained.clear(); clearMediaProcessors(); },
     clear() {
       cancelPrefetch();
-      retained.clear(); processingFailedVid = null;
+      retained.clear(); processingFailedVid = null; emeFailedVid = null;
       lastVariants = lastWinnerVariants = null; lastVariantsVid = null;
     },
     takeFailure() { const failure = streamFailure; streamFailure = null; return failure; },

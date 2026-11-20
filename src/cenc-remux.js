@@ -133,7 +133,14 @@ export async function openCencProgressiveStream({
   // Called with the media Worker when this route cannot play or fails while
   // processing. Returning true transfers ownership: the Worker keeps only
   // its source and byte cache for a whole-file fallback.
-  retainSource = () => false
+  retainSource = () => false,
+  // Native EME passthrough for fragmented CENC. `prepareEme(metadata, { onFailure })`
+  // attaches keys and opens this episode's session; it rejects with
+  // EME_UNAVAILABLE, and the same Worker then re-routes to WASM streaming.
+  eme = false, prepareEme = null,
+  // Continue on a Worker that already holds this source (e.g. retained after
+  // a failed route); its demand, HTTP response and byte cache are reused.
+  processor: existingProcessor = null
 }) {
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
@@ -150,39 +157,41 @@ export async function openCencProgressiveStream({
   // Step budgets are enforced synchronously before any source is declared,
   // so an exhausted budget never reaches the network.
   onStage('metadata');
-  let processor;
+  let processor = existingProcessor;
+  const supportsType = mime => typeof MediaSource !== 'undefined' &&
+    Boolean(MediaSource.isTypeSupported?.(mime)) &&
+    // HEVC: a precise MSE codec string must not be vetoed by canPlayType('hvc1').
+    (outputCodec === 'hevc' || Boolean(video.canPlayType?.(mime)));
   try {
-    processor = createMediaProcessor({ bridge, preload, onStage, fetchImpl,
-      // HEVC: a precise MSE codec string must not be vetoed by canPlayType('hvc1').
-      supportsType: mime => typeof MediaSource !== 'undefined' &&
-        Boolean(MediaSource.isTypeSupported?.(mime)) &&
-        (outputCodec === 'hevc' || Boolean(video.canPlayType?.(mime))) });
+    processor ||= createMediaProcessor({ bridge, preload, onStage, fetchImpl, supportsType });
+    processor.setStageObserver?.(onStage);
   } catch {
     throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法建立');
   }
-  let metadata = null, routeWaiter;
-  const routed = new Promise((resolve, reject) => { routeWaiter = { resolve, reject }; });
+  let metadata = null, routeWaiter = null, routeDecided = false, streamHandle = null;
+  const nextRoute = () => new Promise((resolve, reject) => { routeWaiter = { resolve, reject }; });
+  let routed = nextRoute();
   processor.onmetadata = value => { metadata = value; };
-  let routeDecided = false;
-  processor.onroute = value => { routeDecided = true; routeWaiter.resolve(value); };
+  processor.onroute = value => { routeDecided = true; routeWaiter?.resolve(value); };
   // A refused step budget during source opening stops this startup, exactly
   // as when the metadata probe still ran on the main thread.
   processor.onstageerror = error => {
     if (routeDecided) throw error;
-    routeWaiter.reject(error);
+    routeWaiter?.reject(error);
   };
-  processor.onerror = fields => routeWaiter.reject(fields?.workerError
+  processor.onerror = fields => routeWaiter?.reject(fields?.workerError
     ? errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法執行') : workerError(fields));
-  const abortEarly = () => routeWaiter.reject(errorWith('CANCELED', '已切換影片'));
+  const abortEarly = () => routeWaiter?.reject(errorWith('CANCELED', '已切換影片'));
   signal?.addEventListener('abort', abortEarly, { once: true });
   try {
     processor.reportCapabilities({ processing: { [bridge]: Boolean(processing) } });
     processor.need({
-      source: { url: input.url, proxyUrl: input.proxyUrl || null, bridge, key: key || '' },
+      source: existingProcessor?.demand?.source ||
+        { url: input.url, proxyUrl: input.proxyUrl || null, bridge, key: key || '' },
       output: 'playable-media', codec: outputCodec, positionSeconds: startSeconds,
       durationHint: Number.isFinite(durationHint) && durationHint > 0 && durationHint <= 24 * 3600 ? durationHint : null,
       playback: { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 },
-      priority: preload ? 'speculative' : 'active', processing: !preload
+      priority: preload ? 'speculative' : 'active', processing: !preload, eme: Boolean(eme && prepareEme)
     });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
@@ -191,19 +200,37 @@ export async function openCencProgressiveStream({
     processor.close({ discard: true });
     throw errorWith('CENC_UNAVAILABLE', 'CENC 串流 Worker 無法啟動');
   }
-  let route;
-  try { route = await routed; }
-  catch (error) { processor.close({ discard: true }); throw error; }
+  let route, emeSession = null, emeDeferred = false;
+  // Close this episode's key session on every exit path: MediaKeys stay
+  // attached to the element, so a leftover session would stay on it.
+  const closeEme = () => { const session = emeSession; emeSession = null; void session?.close().catch(() => {}); };
+  try {
+    route = await routed;
+    if (route.kind === 'eme' && preload) emeDeferred = true;
+    else if (route.kind === 'eme') {
+      try {
+        onStage('eme-session');
+        emeSession = await prepareEme(metadata, { onFailure: code => streamHandle?.failEme(code) });
+      } catch (error) {
+        if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
+        if (error?.code !== 'EME_UNAVAILABLE') throw error;
+        // Next in the fallback order: WASM streaming on the same source/cache.
+        onStage('eme.fallback', { reason: error.reason || 'eme-unavailable' });
+        routeDecided = false; routed = nextRoute();
+        processor.need({ eme: false });
+        route = await routed;
+      }
+    }
+  } catch (error) { closeEme(); processor.close({ discard: true }); throw error; }
   finally { signal?.removeEventListener('abort', abortEarly); }
   onMetadata(metadata, route);
-  if (route.kind !== 'mse') {
-    // Fragmented CENC still has native EME; only a remux-less route is
-    // certain to continue as a whole-file fallback on this source.
-    if (!metadata?.fragmented && retainSource(processor)) processor.keepSourceOnly();
+  if (!['mse', 'eme'].includes(route.kind)) {
+    // The whole-file fallback continues on this source's response and cache.
+    if (retainSource(processor)) processor.keepSourceOnly();
     else processor.close();
     return null;
   }
-  if (signal?.aborted) { processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
+  if (signal?.aborted) { closeEme(); processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
   const { fileSize, hasAac, videoCodec, durationSeconds } = route;
   startSeconds = route.startSeconds;
   const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
@@ -224,7 +251,6 @@ export async function openCencProgressiveStream({
   let closed = false, failed = false, retained = false, buffer = null, queued = Promise.resolve();
   let finished = false, initialStartChecked = false;
   let generation = processor.generation, outputController = new AbortController(), seekPending = null;
-  let streamHandle;
   // Playback state is demand state: pausing keeps the demand, and the
   // Worker reads ahead until the reported buffer target is satisfied.
   const setPrefetch = () => {
@@ -288,6 +314,7 @@ export async function openCencProgressiveStream({
       isProcessingFailure(streamError?.code || 'CENC_REMUX_FAILED') && retainSource(processor);
     if (retained) processor.keepSourceOnly();
     else processor.close({ discard: true });
+    closeEme();
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     const endWithError = () => {
       if (closed) return;
@@ -315,6 +342,7 @@ export async function openCencProgressiveStream({
     signal?.removeEventListener('abort', onAbort);
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     if (!retained) processor.close();
+    closeEme();
     revokeObjectUrl();
   };
   const onAbort = () => { void close(); };
@@ -370,7 +398,9 @@ export async function openCencProgressiveStream({
       if (closed || failed) return;
       if (data.type === 'init') {
         // Each generation emits a fresh init for the same track configuration.
-        if (outputCodec === 'hevc') {
+        // The EME passthrough init is the source's own (encrypted) moov, whose
+        // hvcC already produced the codec string; only remux output is checked.
+        if (outputCodec === 'hevc' && route.kind !== 'eme') {
           const actualCodec = assertHevcInitCodecMatches(
             new Uint8Array(data.bytes), videoCodec);
           mime = toMime(actualCodec);
@@ -439,14 +469,36 @@ export async function openCencProgressiveStream({
       bufferedRanges: bufferedIntervals(video.buffered) });
     return ready;
   };
-  streamHandle = { url: objectUrl, inPlaceSeek: true, kind: bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
+  streamHandle = { url: objectUrl, inPlaceSeek: true,
+    kind: route.kind === 'eme' ? 'eme-mse' : bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
     close, seekTo, startProcessing: () => processor.startProcessing(),
     pauseProcessing: () => processor.pauseProcessing(),
-    activate: () => {
+    // A preloaded EME episode opens its key session only when it becomes the
+    // visible episode; the speculative one never touches the playing element.
+    activate: async () => {
       if (failed || closed) throw errorWith('CENC_REMUX_FAILED', '預載串流已失效');
+      if (emeDeferred) {
+        emeDeferred = false;
+        onStage('eme-session');
+        emeSession = await prepareEme(metadata, { onFailure: code => streamHandle?.failEme(code) });
+        if (closed || failed) { closeEme(); throw errorWith('CANCELED', '已切換影片'); }
+      }
       processor.activate();
       setPrefetch();
-    }, get mime() { return mime; },
+    },
+    failEme: code => fail('eme-key-status', { code: code || 'EME_FAILED' }),
+    // Give up this stream but keep its media Worker (source, response and
+    // byte cache) for the next step of the fallback order; returns it.
+    releaseSource: () => {
+      if (closed || failed) return null;
+      retained = true;
+      void close();
+      // Leave preload staging so the next owner receives its output.
+      try { processor.activate(); } catch { /* staging already closed */ }
+      processor.keepSourceOnly();
+      return processor;
+    },
+    get mime() { return mime; },
     durationSeconds, startSeconds, snapshot: () => processor.snapshot(), finished: () => finished || processor.finished() };
   return streamHandle;
 }

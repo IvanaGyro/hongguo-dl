@@ -3,7 +3,7 @@
 // capabilities the main thread reported. Pure: no fetch, DOM or WASM.
 
 // The application-owned WASM remux/transcode budget. Metadata inspection and
-// browser-native EME routes deliberately do not apply this limit.
+// native EME passthrough deliberately do not apply this limit.
 export const MAX_REMUX_FILE_BYTES = 260 * 1024 * 1024;
 const HEVC_CODEC = /^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/;
 
@@ -26,13 +26,19 @@ export function mseCandidates({ bridge, codec, metadata }) {
 
 /**
  * Returns { kind, reason, ... } where kind is
- *  - 'mse': the Worker produces clear fMP4 for MSE,
- *  - 'native': only a browser-native pipeline (EME/CDM) can play it,
- *  - 'unsupported': no route, the caller selects another rendition,
+ *  - 'mse': the Worker produces clear fMP4 for MSE (WASM remux/transcode),
+ *  - 'eme': the Worker passes already-fragmented CENC through for MSE, and
+ *    the browser's CDM decrypts it (native EME; needs a fragment index),
+ *  - 'unsupported': no route, the caller falls back or selects another rendition,
  *  - 'error': a source failure with a public code,
- *  - 'pending': MIME support answers are still needed (see `types`).
+ *  - 'pending': MIME support answers are still needed (see `types`),
+ *  - 'pending-index': the fragment index has not been probed yet.
+ * An encrypted URL is never handed to the media element directly: browsers
+ * decrypt CENC only through MSE.
  */
-export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupport = {} }) {
+export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupport = {},
+  eme = false, fragmentIndex }) {
+  let passthrough = false;
   if (bridge === 'bvc2') {
     if (!metadata.indexed || metadata.fragmented)
       return { kind: 'error', code: 'BVC2_ERROR', reason: 'bvc2-unindexed' };
@@ -44,13 +50,19 @@ export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupp
         (codec === 'hevc' && !['hvc1', 'hev1'].includes(metadata.videoCodec) ||
          codec === 'h264' && !['avc1', 'avc3'].includes(metadata.videoCodec)))
       return { kind: 'unsupported', reason: 'stsd-declared-codec-mismatch' };
-    if (metadata.fragmented) return { kind: 'native', reason: 'fragmented' };
-    if (metadata.fileSize > MAX_REMUX_FILE_BYTES) return { kind: 'native', reason: 'remux-file-limit' };
-    if (!processing) return { kind: 'native', reason: 'remux-unavailable' };
+    // Fallback order: native EME → WASM streaming → (caller) whole-file.
+    if (metadata.fragmented && eme) {
+      if (fragmentIndex === undefined) return { kind: 'pending-index' };
+      passthrough = Boolean(fragmentIndex);
+    }
+    if (!passthrough) {
+      if (metadata.fileSize > MAX_REMUX_FILE_BYTES) return { kind: 'unsupported', reason: 'remux-file-limit' };
+      if (!processing) return { kind: 'unsupported', reason: metadata.fragmented
+        ? (eme ? 'fmp4-index-unavailable' : 'eme-unavailable') : 'remux-unavailable' };
+    }
   }
   const candidates = mseCandidates({ bridge, codec: bridge === 'bvc2' ? 'h264' : codec, metadata });
-  const fallback = bridge === 'bvc2' ? 'unsupported' : 'native';
-  if (!candidates) return { kind: fallback, reason: 'codec-string' };
+  if (!candidates) return { kind: 'unsupported', reason: 'codec-string' };
   const wanted = [candidates.mime, candidates.alternateMime].filter(Boolean);
   const unknown = wanted.filter(mime => typeof typeSupport[mime] !== 'boolean');
   if (unknown.length) return { kind: 'pending', types: unknown, candidates };
@@ -58,6 +70,7 @@ export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupp
   const alternateSupported = Boolean(candidates.alternateMime && typeSupport[candidates.alternateMime]);
   const check = { primarySupported, alternateSupported };
   if (!primarySupported && !alternateSupported)
-    return { kind: fallback, reason: 'mse-codec-unsupported', candidates, check };
-  return { kind: 'mse', reason: 'progressive-remux', candidates, check };
+    return { kind: 'unsupported', reason: 'mse-codec-unsupported', candidates, check };
+  if (passthrough) return { kind: 'eme', reason: 'fragmented-eme', candidates, check };
+  return { kind: 'mse', reason: metadata.fragmented ? 'fragmented-remux' : 'progressive-remux', candidates, check };
 }

@@ -12,6 +12,7 @@
 import { createDemandTable, wantsReadAhead } from './media-demand.js';
 import { createMediaSource } from './media-source.js';
 import { createEngineJob } from './media-engine.js';
+import { createPassthroughJob, probeFragmentLayout } from './fmp4-passthrough.js';
 import { decideMediaRoute } from './media-route.js';
 import { clampStreamSeek } from './cenc-seek.js';
 
@@ -42,7 +43,8 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
   }
   function openSource(demand) {
     const key = demand.sourceKey;
-    const entry = { failure: null, media: null };
+    // `layout`: fragmented-MP4 init + index; undefined until probed, null if none.
+    const entry = { failure: null, media: null, layout: undefined, layoutProbe: null };
     entry.media = createMediaSource({
       source: demand.source, origin, fetchImpl, cacheBudget, onStage: stage,
       onFailure: fields => failSource(key, { code: fields.code, status: fields.status || 0 })
@@ -87,6 +89,23 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     post({ type: 'metadata', demand: demand.id, revision: demand.revision,
       metadata: entry.media.metadata });
   }
+  // Probe a fragmented source's init segment and index once, from the cache.
+  function probeLayout(key, entry) {
+    if (entry.layoutProbe) return;
+    const controller = new AbortController();
+    entry.layoutProbe = controller;
+    probeFragmentLayout(entry.media.reader(), entry.media.metadata.fileSize, controller.signal).then(layout => {
+      entry.layout = layout;
+      stage('fmp4.index', { kind: layout?.index.kind || 'none',
+        points: layout ? (layout.index.entries?.length ?? [...layout.index.tracks.values()][0].length) : 0 });
+    }, error => {
+      if (closed || controller.signal.aborted) return;
+      if (/^CENC_(?:SOURCE|RANGE|RATE)/.test(error?.code || ''))
+        return failSource(key, { code: error.code, status: error.status || 0 });
+      entry.layout = null;
+      stage('fmp4.index', { kind: 'invalid' });
+    }).finally(() => { if (sources.get(key) === entry) reconcile(); });
+  }
   function routeFor(demand, entry) {
     const sent = delivered.get(demand.id) || {};
     // A route is chosen once per demand source; later revisions only move
@@ -96,8 +115,13 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     const decision = decideMediaRoute({
       bridge: demand.source.bridge, codec: demand.codec, metadata,
       processing: Boolean(capabilities.processing?.[demand.source.bridge]),
-      typeSupport: capabilities.types
+      typeSupport: capabilities.types, eme: demand.eme,
+      fragmentIndex: entry.layout === undefined ? undefined : entry.layout?.index || null
     });
+    if (decision.kind === 'pending-index') {
+      probeLayout(demand.sourceKey, entry);
+      return null;
+    }
     if (decision.kind === 'pending') {
       const missing = decision.types.filter(type => !requestedTypes.has(type));
       for (const type of missing) requestedTypes.add(type);
@@ -119,7 +143,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
       sendError(demand, { code: route.code, status: 0, phase: 'route' });
       return route;
     }
-    if (route.kind === 'native' && !metadata.fragmented && demand.source.bridge === 'cenc')
+    if (route.kind === 'unsupported' && demand.source.bridge === 'cenc')
       stage('cenc.remux-unavailable', { codec: demand.codec, reason: route.reason });
     post({ type: 'route', demand: demand.id, revision: demand.revision, route });
     return route;
@@ -181,24 +205,27 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
   }
   function servePlayable(demand, entry) {
     const route = routeFor(demand, entry);
-    if (!route || route.kind !== 'mse') return;
+    if (!route || !['mse', 'eme'].includes(route.kind)) return;
     if (job && job.demandId === demand.id && job.sourceKey === demand.sourceKey &&
-        job.key === demand.source.key) {
+        job.key === demand.source.key && job.kind === route.kind) {
       const target = clampStreamSeek(demand.positionSeconds, route.durationSeconds) ?? 0;
       job.engine.seek(target, demand.positionRevision);
     } else {
       if (job) void stopJob();
       const reader = entry.media.reader();
+      const onError = fields => {
+        const current = demands.get(demand.id);
+        if (current) sendError(current, { ...fields, phase: 'processing' });
+      };
       job = {
-        demandId: demand.id, sourceKey: demand.sourceKey, key: demand.source.key, reader,
-        engine: createEngineJob({
+        demandId: demand.id, sourceKey: demand.sourceKey, key: demand.source.key, reader, kind: route.kind,
+        engine: route.kind === 'eme' ? createPassthroughJob({
+          reader, fileSize: route.fileSize, layout: entry.layout, position: route.startSeconds,
+          generation: demand.positionRevision, post, onStage: stage, onError
+        }) : createEngineJob({
           bridge: demand.source.bridge, reader, fileSize: route.fileSize, key: demand.source.key,
           runtime, loadRuntime, position: route.startSeconds, generation: demand.positionRevision,
-          processing: demand.processing, post, onStage: stage, after: unwinding,
-          onError: fields => {
-            const current = demands.get(demand.id);
-            if (current) sendError(current, { ...fields, phase: 'processing' });
-          }
+          processing: demand.processing, post, onStage: stage, after: unwinding, onError
         })
       };
     }
@@ -213,6 +240,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     if (job && (!wanted.has(job.sourceKey) || demands.playable()?.id !== job.demandId)) void stopJob();
     for (const [key, entry] of sources) {
       if (wanted.has(key)) continue;
+      entry.layoutProbe?.abort();
       entry.media.close();
       sources.delete(key);
     }
@@ -241,7 +269,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
   function dropAll() {
     stopWholeFiles();
     demands.clear(); delivered.clear();
-    for (const entry of sources.values()) entry.media.close();
+    for (const entry of sources.values()) { entry.layoutProbe?.abort(); entry.media.close(); }
     sources.clear();
     return stopJob();
   }

@@ -26,12 +26,16 @@ MSE 消費片段後才回 ACK，形成背壓；下載層的位元組預取可獨
 
 - 主執行緒只宣告「我需要…」（`need`，以穩定的 `id` 與遞增的 `revision` upsert）或「我不再需要…」（`dont-need`），回報瀏覽器能力（`capabilities`：WASM／MSE 可用性與 Worker 詢問的精確 MIME 支援），並以 ACK 回饋輸出背壓。沒有 `prepare`／`start`／`seek` 等程序指令。
 - 需求內容（`media-demand.js`）：來源（網址、代理網址、bridge、金鑰）、輸出（`metadata`、`playable-media` 或 `whole-file`）、位置、播放狀態（暫停、已緩衝秒數、緩衝目標）、優先順序（`active`／`speculative`）與是否已給予 CPU 處理額度。相同 revision 重送不產生新工作；舊 revision 被忽略。只有位置或來源改變時才產生新的 `positionRevision`，輸出片段帶此值，主執行緒與 Worker 都丟棄舊位置的輸出。
-- Worker 依需求自行協調：新的可播放需求會自動開啟來源、做有界的索引探測，再依 `media-route.js` 選擇路線（`mse`、`native`、`unsupported`），然後產生 fMP4 片段。只要索引的需求不啟動 WASM，探測完畢就釋放 HTTP 連線，但保留已讀取的索引範圍。
+- Worker 依需求自行協調：新的可播放需求會自動開啟來源、做有界的索引探測，再依 `media-route.js` 選擇路線（`mse`、`eme`、`unsupported`），然後產生 fMP4 片段。只要索引的需求不啟動 WASM，探測完畢就釋放 HTTP 連線，但保留已讀取的索引範圍。
 - 同一來源可由多個需求共用（例如預覽索引與播放）；移除其中一個不會取消仍被其他需求使用的下載、快取或引擎。每個 Worker 最多一個可播放輸出。
 - 暫停只是需求狀態更新，不撤回需求；Worker 在播放中、預載中，或暫停但緩衝尚未達到回報的目標時持續讀取前方資料。seek 是位置更新，沿用同一個 Worker、WASM 與下載快取。
 - 來源失敗只以固定代碼與 HTTP 狀態回報給每個使用該來源的需求，不包含網址或金鑰；換 CDN 仍由主執行緒第一層決定。
-- 必須由瀏覽器自行抓取媒體的路線（已分段的 CENC、超過 WASM 處理上限、MSE 不支援的編碼）由 Worker 回報 `native` 路線及索引資訊，交回主執行緒的 EME 管線；這條路線不保證只用一個應用程式連線。
-- WASM 處理上限只影響路線選擇，不限制索引探測或原生 EME。
+- **不會把加密網址交給 `<video src>`**：Chromium／Firefox 只透過 MSE 解密 CENC（見 `diagnostics/CENC-FINDINGS.md`），原本的 `eme-progressive` 路線已移除。
+- **已分段 CENC → 原生 EME（`eme` 路線，#24）**：需求帶 `eme: true` 時，Worker 先從快取探測分段索引（`fmp4-index.js`：`moov` 後的 `sidx`，否則以一次 64 KiB 尾端讀取取得 `mfro`／`mfra`），再由 `fmp4-passthrough.js` 把原始加密 init（`ftyp`+`moov`）與 `moof`+`mdat` 片段從同一份位元組快取送出，沿用 WASM 路線的片段／ACK／seek 協定；瀏覽器 CDM 解密。seek 從目標時間之前、以同步樣本開頭的片段重新開始。沒有索引時改走 WASM 串流（`fragmented-remux`），不實作 `moof` 掃描。
+- 一般（非分段）CENC 一律走 WASM 解密並轉封裝為清晰 fMP4；不可用時回報 `unsupported`，由整檔備援接手。
+- **MediaKeys 生命週期**：`clear-key.js` 在第一次需要 EME 時把 MediaKeys 掛到 `<video>`，之後不再 `setMediaKeys(null)`；清晰 MSE 與直接播放在 MediaKeys 已掛上時照常播放。每集各自開一個 Clear Key session，離開該集時關閉。預載下一集時不碰正在播放的元素，session 在交接（`activate`）時才建立。
+- **EME 失敗**：金鑰系統無法使用時，同一個 Worker 以 `eme: false` 重新決定路線，改走 WASM 串流並沿用同一回應與快取；播放中金鑰狀態失效（`EME_FAILED`）時，該集下一次嘗試停用 EME。
+- WASM 處理上限只影響 WASM 路線選擇，不限制索引探測或原生 EME 直通。
 - 每個步驟的 20 次額度在宣告需求前於主執行緒同步檢查，額度耗盡時不會再發出網路請求。
 - 沒有 MSE 的環境（以及 Node 測試）無法使用應用程式處理路線，`media-worker-local.js` 會在目前執行緒執行同一套需求協調，只做索引探測與整檔讀取。
 - `whole-file` 需求由同一個來源的讀取器依序組出整個檔案：已在快取中的範圍（索引探測、串流已下載的部分）不再請求，缺少的才以 Range 補齊，完成後以 transfer 交給主執行緒，不另外複製。檔案超過需求的 `maxBytes`（上限 320 MiB）時回報 `MEMORY_LIMIT`，不下載本體。撤回需求會停止讀取。

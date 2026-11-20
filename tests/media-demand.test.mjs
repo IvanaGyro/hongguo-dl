@@ -72,7 +72,7 @@ test('pause keeps the demand and reads ahead until the reported buffer target is
   assert.equal(wantsReadAhead({ ...base, output: 'metadata' }), false);
 });
 
-test('route: CENC remux limits and MSE answers stay separate from native EME eligibility', () => {
+test('route: CENC never falls back to an encrypted URL; fragmented CENC prefers native EME', () => {
   const metadata = { indexed: true, fragmented: false, hasKid: true, hasAac: true,
     videoCodec: 'hvc1', hevcCodecString: 'hvc1.2.4.L120.90', fileSize: 1024 };
   const pending = decideMediaRoute({ bridge: 'cenc', codec: 'hevc', metadata, processing: true });
@@ -82,11 +82,27 @@ test('route: CENC remux limits and MSE answers stay separate from native EME eli
   const types = { [pending.types[0]]: false, [pending.types[1]]: true };
   assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', metadata, processing: true, typeSupport: types }).kind, 'mse');
   const none = { [pending.types[0]]: false, [pending.types[1]]: false };
-  assert.deepEqual(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', metadata, processing: true, typeSupport: none }).kind, 'native');
+  assert.deepEqual(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', metadata, processing: true, typeSupport: none }).kind, 'unsupported');
   assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true, typeSupport: types,
     metadata: { ...metadata, fileSize: MAX_REMUX_FILE_BYTES + 1 } }).reason, 'remux-file-limit');
-  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true,
-    metadata: { ...metadata, fragmented: true } }).kind, 'native');
+  const fragmented = { ...metadata, fragmented: true };
+  // Native EME waits for the fragment index probe, then passes fragments through.
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true, eme: true,
+    metadata: fragmented }).kind, 'pending-index');
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: false, eme: true, typeSupport: types,
+    fragmentIndex: { kind: 'sidx' }, metadata: fragmented }).kind, 'eme');
+  // Passthrough is not WASM work: the remux file limit does not apply.
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true, eme: true, typeSupport: types,
+    fragmentIndex: { kind: 'mfra' }, metadata: { ...fragmented, fileSize: MAX_REMUX_FILE_BYTES + 1 } }).kind, 'eme');
+  // Without an index (or without EME) the next step is WASM streaming.
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true, eme: true, typeSupport: types,
+    fragmentIndex: null, metadata: fragmented }).reason, 'fragmented-remux');
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true, typeSupport: types,
+    metadata: fragmented }).kind, 'mse');
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: false, eme: true,
+    fragmentIndex: null, metadata: fragmented }).reason, 'fmp4-index-unavailable');
+  assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: false,
+    metadata: fragmented }).reason, 'eme-unavailable');
   assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'hevc', processing: true,
     metadata: { ...metadata, hasKid: false } }).reason, 'no-cenc-kid');
   assert.equal(decideMediaRoute({ bridge: 'cenc', codec: 'h264', processing: true, metadata }).reason,
