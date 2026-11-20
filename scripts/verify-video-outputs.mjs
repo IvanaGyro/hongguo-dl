@@ -10,6 +10,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { syntheticBvc2 } from './synthetic-bvc2.mjs';
 import { createFmp4Assembler } from '../src/fmp4-assembler.js';
+import { normalizeBvc2Config } from '../src/bvc2-config.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'hongguo-output-check-'));
 const coreDir = resolve(process.argv[2] || 'public/bvc2');
@@ -92,6 +93,46 @@ try {
     } else writeFileSync(join(dir, 'bvc-roundtrip.mp4'), out);
     ffmpeg(['-xerror', '-i', join(dir, 'bvc-roundtrip.mp4'), '-f', 'null', '-']);
     console.log(JSON.stringify({ syntheticBvc2Framing: true, mode }));
+  }
+  // ByteVC2 -> VVC must copy the H.266 NAL units into vvc1/vvcC instead of
+  // re-encoding. Cover both raw and configuration-record bv2C layouts.
+  const vvcAnnexB = path => execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error', '-i', path,
+    '-map', '0:v', '-c', 'copy', '-bsf:v', 'vvc_mp4toannexb', '-f', 'vvc', '-'], { maxBuffer: 32 * 1024 * 1024 });
+  const sourceVvc = vvcAnnexB(join(dir, 'vvc3.mp4'));
+  for (const configurationRecord of [false, true]) {
+    const progress = [];
+    const core = await createModule({ wasmBinary, onProgress: p => progress.push(p) });
+    const framed = syntheticBvc2(join(dir, 'vvc3.mp4'), { configurationRecord });
+    core.FS.writeFile('/bvc.mp4', normalizeBvc2Config(framed).bytes);
+    const start = performance.now();
+    const rc = await core.ccall('bvc2_convert', 'number',
+      ['string', 'string', 'string', 'number'], ['/bvc.mp4', '/out.mp4', '', 3], { async: true });
+    assert.equal(rc, 0, core.UTF8ToString(core._bvc2_last_error()));
+    assert.equal(core._bvc2_last_remuxed(), 1, 'ByteVC2 -> VVC must remux, not re-encode');
+    const path = join(dir, 'bvc-remux-' + configurationRecord + '.mp4');
+    const out = core.FS.readFile('/out.mp4');
+    writeFileSync(path, out);
+    for (const tag of ['vvc1', 'vvcC']) assert(Buffer.from(out).includes(Buffer.from(tag)), tag);
+    for (const tag of ['bvc2', 'bv2C']) assert(!Buffer.from(out).includes(Buffer.from(tag)), tag);
+    assert.deepEqual(vvcAnnexB(path), sourceVvc, 'Remuxed VVC NAL units must equal the source');
+    const info = probe(path, true), video = info.streams.find(s => s.codec_type === 'video');
+    assert.equal(video.codec_name, 'vvc');
+    if (process.env.VVC_FFMPEG) {
+      assert.equal(Number(video.nb_read_frames), 96);
+      execFileSync(process.env.VVC_FFMPEG, ['-nostdin', '-v', 'error', '-xerror', '-i', path, '-map', '0:v', '-f', 'null', '-']);
+    }
+    assert.equal(progress.at(-1), 1);
+    console.log(JSON.stringify({ syntheticBvc2Remux: 'vvc', configurationRecord,
+      milliseconds: Math.round(performance.now() - start) }));
+  }
+  // Non-ByteVC2 input selected as VVC still goes through VVenC.
+  {
+    const core = await createModule({ wasmBinary });
+    core.FS.writeFile('/in.mp4', raw);
+    const rc = await core.ccall('bvc2_convert', 'number',
+      ['string', 'string', 'string', 'number'], ['/in.mp4', '/out.mp4', key, 3], { async: true });
+    assert.equal(rc, 0, core.UTF8ToString(core._bvc2_last_error()));
+    assert.equal(core._bvc2_last_remuxed(), 0);
   }
   // Same async input/output ABI as BVC2 playback, tested with a decodable
   // synthetic H.264 input. This validates transport, not BVC2 conformance.
