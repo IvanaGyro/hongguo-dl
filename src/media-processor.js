@@ -75,6 +75,7 @@ function release(worker, bridge) {
 export function createMediaProcessor({ bridge, preload = false, onStage = () => {},
   supportsType = () => false, fetchImpl }) {
   const worker = acquire(bridge, fetchImpl);
+  let stageObserver = onStage;
   const id = 'demand-' + (++demandSequence);
   let demand = null, revision = 0, generation = 0, closed = false, consumer = null;
   let completed = false, failed = false, cacheInfo = {}, pendingRead = { pending: 0 };
@@ -97,13 +98,26 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
     send({ type: 'need', demand });
     return generation;
   };
-  const staging = createStreamPreload({ enabled: preload, onStage,
+  const staging = createStreamPreload({ enabled: preload, onStage: (...args) => stageObserver(...args),
     post: message => message.type === 'process' ? need({ processing: true }) : send(message) });
   const processor = {
     onmetadata: () => {}, onroute: () => {}, onerror: () => {},
     onstageerror: error => { throw error; },
     need, post: send,
     reportCapabilities(capabilities) { send({ type: 'capabilities', capabilities }); },
+    /** A new owner (e.g. a whole-file fallback) observes this Worker's stages. */
+    setStageObserver(observer) { stageObserver = observer || (() => {}); },
+    /**
+     * Stop consuming playable output but keep the demand, so the Worker keeps
+     * the source, its open HTTP response and byte cache for a later owner.
+     */
+    keepSourceOnly() {
+      waiting.length = 0; consumer = null;
+      // Stop CPU work and read-ahead until a new owner states its demand;
+      // the source, its HTTP response and byte cache stay open.
+      if (demand) need({ processing: false,
+        playback: { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 } });
+    },
     dontNeed() { send({ type: 'dont-need', id }); },
     consume(handler) {
       consumer = handler;
@@ -142,7 +156,7 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
       if (stage === 'media.wait') pendingRead = fields;
       // Stage observers enforce the caller's step budgets by throwing; such
       // a refusal belongs to this consumer, not to the Worker message loop.
-      try { onStage(stage, fields); }
+      try { stageObserver(stage, fields); }
       catch (error) { processor.onstageerror(error); }
       return;
     }
@@ -164,7 +178,7 @@ export function createMediaProcessor({ bridge, preload = false, onStage = () => 
       processor.onerror(data);
       return;
     }
-    if (data.type === 'done') completed = true;
+    if (data.type === 'done' || data.type === 'whole-file') completed = true;
     if (!staging.capture(data)) deliver(data);
   };
   return processor;

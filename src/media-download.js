@@ -1,11 +1,12 @@
 import { retryAfterMs } from './retry-after.js';
-// Layer 1: source transport and complete-byte reads. Streaming byte reads use
-// cached-media-reader.js, which owns its own range cache and network lookahead.
+// Layer 1: source transport. Every byte read, streaming or whole-file, goes
+// through the media Worker's source and cache (cached-media-reader.js).
 import { mediaProxyUrl, errorWith } from './logic.js';
 import { createMediaTransportForSource, isApprovedDirectMediaUrl } from './media-transport.js';
 import { downloadSource } from './download-source-session.js';
+import { readWholeFile } from './whole-file-read.js';
 
-export function createMediaDownload({ fetchBytes, getWorkerOrigin, fetchImpl = (...args) => fetch(...args) }) {
+export function createMediaDownload({ getWorkerOrigin, fetchImpl = (...args) => fetch(...args) }) {
   const profileFor = source => source.source === 'app' ? 'app' : 'web';
   function open(handle, onFallback, options = {}) {
     const source = downloadSource(handle);
@@ -22,9 +23,17 @@ export function createMediaDownload({ fetchBytes, getWorkerOrigin, fetchImpl = (
       const proxyUrl = mediaProxyUrl(source.url, profileFor(source), getWorkerOrigin(), source.userAgent);
       return { url: transport.mode === 'direct' ? source.url : proxyUrl, proxyUrl };
     },
-    read(handle, signal, maxBytes, onChunk, url) {
-      const source = downloadSource(handle);
-      return fetchBytes(url || source.url, profileFor(source), signal, maxBytes, onChunk, source.userAgent);
+    /**
+     * Complete source bytes, assembled by the media Worker from its byte
+     * cache. `processor` continues on a Worker already holding this source.
+     */
+    whole(handle, { signal, maxBytes, onProgress, onStage, bridge = 'cenc', processor = null } = {}) {
+      let input = null;
+      if (!processor) {
+        const { transport } = open(handle);
+        input = this.input(handle, transport);
+      }
+      return readWholeFile({ input, bridge, processor, maxBytes, signal, onProgress, onStage });
     },
     async nativeSource(handle, signal, onFallback, onStage = () => {}) {
       const source = downloadSource(handle);

@@ -4,6 +4,7 @@
 import { createMediaProcessor } from './media-processor.js';
 import { bvc2BridgeAvailable } from './bvc2.js';
 import { errorWith } from './logic.js';
+import { isProcessingFailure } from './fallback-policy.js';
 import { evictionEnd } from './mse-eviction.js';
 import { retryableAvailability } from './retryable-availability.js';
 import { assertHevcInitCodecMatches } from './cenc-init-codec.js';
@@ -128,7 +129,11 @@ function workerError(fields) {
 export async function openCencProgressiveStream({
   video, input, onStage = () => {}, codec, key, signal, startSeconds = 0,
   durationSeconds: durationHint = null, bridge = 'cenc', preload = false,
-  remainingMediaAttempts = 20, onMetadata = () => {}, fetchImpl
+  remainingMediaAttempts = 20, onMetadata = () => {}, fetchImpl,
+  // Called with the media Worker when this route cannot play or fails while
+  // processing. Returning true transfers ownership: the Worker keeps only
+  // its source and byte cache for a whole-file fallback.
+  retainSource = () => false
 }) {
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
@@ -192,7 +197,10 @@ export async function openCencProgressiveStream({
   finally { signal?.removeEventListener('abort', abortEarly); }
   onMetadata(metadata, route);
   if (route.kind !== 'mse') {
-    processor.close();
+    // Fragmented CENC still has native EME; only a remux-less route is
+    // certain to continue as a whole-file fallback on this source.
+    if (!metadata?.fragmented && retainSource(processor)) processor.keepSourceOnly();
+    else processor.close();
     return null;
   }
   if (signal?.aborted) { processor.close({ discard: true }); throw errorWith('CANCELED', '已切換影片'); }
@@ -213,7 +221,7 @@ export async function openCencProgressiveStream({
     URL.revokeObjectURL(objectUrl);
   };
   const internal = new AbortController();
-  let closed = false, failed = false, buffer = null, queued = Promise.resolve();
+  let closed = false, failed = false, retained = false, buffer = null, queued = Promise.resolve();
   let finished = false, initialStartChecked = false;
   let generation = processor.generation, outputController = new AbortController(), seekPending = null;
   let streamHandle;
@@ -274,7 +282,12 @@ export async function openCencProgressiveStream({
     });
     console.info('[Hongguo CENC] streaming bridge failed:', cause || 'unknown');
     internal.abort();
-    processor.close({ discard: true });
+    // A processing failure leaves the source and its cache intact; hand them
+    // to the whole-file fallback. A crashed Worker or a failed source is not kept.
+    retained = cause !== 'worker-error' &&
+      isProcessingFailure(streamError?.code || 'CENC_REMUX_FAILED') && retainSource(processor);
+    if (retained) processor.keepSourceOnly();
+    else processor.close({ discard: true });
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     const endWithError = () => {
       if (closed) return;
@@ -301,7 +314,7 @@ export async function openCencProgressiveStream({
     for (const event of ['playing', 'pause', 'ended']) video.removeEventListener?.(event, setPrefetch);
     signal?.removeEventListener('abort', onAbort);
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
-    processor.close();
+    if (!retained) processor.close();
     revokeObjectUrl();
   };
   const onAbort = () => { void close(); };

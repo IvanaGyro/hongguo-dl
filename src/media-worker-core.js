@@ -4,6 +4,9 @@
 // reconciles those demands against the Worker's two layers:
 //   layer 1, download (media-source.js): HTTP, metadata probe, byte cache;
 //   layer 2, processing (media-engine.js): WASM demux/decrypt/remux/transcode.
+// A 'whole-file' demand reads the complete source through layer 1's reader,
+// so bytes already cached by metadata probing or streaming are not fetched
+// again, and transfers the assembled file to the main thread.
 // Both layers live in this one Worker; they communicate by function calls,
 // never by per-read messages or cross-thread stream transfers.
 import { createDemandTable, wantsReadAhead } from './media-demand.js';
@@ -13,6 +16,8 @@ import { decideMediaRoute } from './media-route.js';
 import { clampStreamSeek } from './cenc-seek.js';
 
 const PUBLIC_SOURCE_CODES = /^(?:CENC_[A-Z_]{2,45}|CANCELED|MEDIA_SOURCE_INVALID)$/;
+const WHOLE_FILE_READ = 1024 * 1024;
+const WHOLE_FILE_PROGRESS = 512 * 1024;
 
 export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...args), origin,
   loadRuntime = () => Promise.reject(new Error('Media runtime unavailable')), cacheBudget }) {
@@ -23,6 +28,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
   let capabilities = { processing: { cenc: false, bvc2: false }, types: {} };
   const requestedTypes = new Set();
   let job = null, closed = false;
+  const wholeFiles = new Map();   // demand id -> AbortController of a whole-file read
   const stage = (name, fields = {}) => post({ type: 'stage', stage: name, ...fields });
 
   function failureCodeFor(demand) {
@@ -118,6 +124,61 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     post({ type: 'route', demand: demand.id, revision: demand.revision, route });
     return route;
   }
+  function serveWholeFile(demand, entry) {
+    const sent = delivered.get(demand.id) || {};
+    if (sent.wholeFile) return;
+    delivered.set(demand.id, { ...sent, wholeFile: true });
+    const { fileSize } = entry.media.metadata;
+    if (!Number.isSafeInteger(fileSize) || fileSize < 1 || fileSize > demand.maxBytes) {
+      sendError(demand, { code: 'MEMORY_LIMIT', status: 0, phase: 'whole-file' });
+      return;
+    }
+    const controller = new AbortController();
+    wholeFiles.set(demand.id, controller);
+    const reader = entry.media.reader();
+    // Keep the single response pump running ahead of the sequential copy.
+    reader.prefetch(true);
+    const before = reader.snapshot();
+    stage('whole-file.begin', { fileBytes: fileSize, cachedBytes: before.cachedBytes || 0,
+      requests: before.requests || 0 });
+    const output = new Uint8Array(fileSize);
+    (async () => {
+      let offset = 0, reported = 0;
+      while (offset < fileSize) {
+        const bytes = await reader.read(offset, Math.min(WHOLE_FILE_READ, fileSize - offset), controller.signal);
+        output.set(bytes, offset);
+        offset += bytes.length;
+        if (offset - reported >= WHOLE_FILE_PROGRESS || offset === fileSize) {
+          reported = offset;
+          post({ type: 'whole-file.progress', demand: demand.id, received: offset, total: fileSize });
+        }
+      }
+      const after = reader.networkStats;
+      stage('whole-file.complete', { fileBytes: fileSize, requests: after.requests,
+        downloadedBytes: after.downloadedBytes });
+      if (wholeFiles.get(demand.id) !== controller) return;
+      wholeFiles.delete(demand.id);
+      post({ type: 'whole-file', demand: demand.id, revision: demand.revision, bytes: output.buffer },
+        [output.buffer]);
+    })().catch(error => {
+      if (wholeFiles.get(demand.id) === controller) wholeFiles.delete(demand.id);
+      if (closed || controller.signal.aborted) return;
+      const current = demands.get(demand.id);
+      if (!current) return;
+      sendError(current, {
+        code: PUBLIC_SOURCE_CODES.test(error?.code || '') ? error.code : 'CENC_RANGE_HTTP',
+        status: Number.isInteger(error?.status) ? error.status : 0, phase: 'whole-file',
+        ...(Number.isFinite(error?.retryAfterMs) ? { retryAfterMs: error.retryAfterMs } : {})
+      });
+    });
+  }
+  function stopWholeFiles(keep = () => false) {
+    for (const [id, controller] of wholeFiles) {
+      if (keep(id)) continue;
+      controller.abort();
+      wholeFiles.delete(id);
+    }
+  }
   function servePlayable(demand, entry) {
     const route = routeFor(demand, entry);
     if (!route || route.kind !== 'mse') return;
@@ -148,6 +209,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
   function reconcile() {
     if (closed) return;
     const wanted = demands.sourceKeys();
+    stopWholeFiles(id => demands.get(id)?.output === 'whole-file');
     if (job && (!wanted.has(job.sourceKey) || demands.playable()?.id !== job.demandId)) void stopJob();
     for (const [key, entry] of sources) {
       if (wanted.has(key)) continue;
@@ -158,18 +220,26 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
       const entry = sources.get(demand.sourceKey) || openSource(demand);
       if (entry.failure) { sendError(demand, { ...entry.failure, phase: 'source' }); continue; }
       if (!entry.media.metadata) continue;
+      // Only a whole-file read can use a source whose index exceeded the
+      // bounded metadata probe; every other consumer gets that error.
+      if (entry.media.metadata.probeError && demand.output !== 'whole-file') {
+        sendError(demand, { code: entry.media.metadata.probeError, status: 0, phase: 'source' });
+        continue;
+      }
       serveMetadata(demand, entry);
       if (demand.output === 'playable-media') servePlayable(demand, entry);
+      else if (demand.output === 'whole-file') serveWholeFile(demand, entry);
     }
     // Bounded metadata consumers do not keep a CDN response open.
     for (const [key, entry] of sources) {
       if (!entry.media.metadata || entry.media.readerOpen) continue;
-      if (!demands.consumers(key).some(demand => demand.output === 'playable-media'))
+      if (!demands.consumers(key).some(demand => demand.output !== 'metadata'))
         entry.media.releaseNetwork();
     }
   }
 
   function dropAll() {
+    stopWholeFiles();
     demands.clear(); delivered.clear();
     for (const entry of sources.values()) entry.media.close();
     sources.clear();

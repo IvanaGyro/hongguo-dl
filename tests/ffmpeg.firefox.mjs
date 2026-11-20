@@ -25,12 +25,18 @@ page.route(url => url.pathname === '/api/series', route => route.fulfill({
     episodes: [{ vid: 'direct', index: 1, url: 'https://cdn.fqnovelvod.com/smoke.mp4' }]
   })
 }));
-page.route(url => url.pathname === '/api/media', route => route.fulfill({
-  status: 200,
-  contentType: 'video/mp4',
-  headers: { 'Content-Length': String(sample.length), 'Access-Control-Allow-Origin': '*' },
-  body: sample
-}));
+// The media proxy and the CDN answer Range requests; whole-file processing
+// reads through the media Worker, which requires HTTP 206 like streaming.
+page.route(url => url.pathname === '/api/media', route => {
+  const match = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+  if (!match) return route.fulfill({ status: 200, contentType: 'video/mp4',
+    headers: { 'Content-Length': String(sample.length), 'Access-Control-Allow-Origin': '*' }, body: sample });
+  const first = Number(match[1]);
+  const last = match[2] ? Math.min(Number(match[2]), sample.length - 1) : sample.length - 1;
+  return route.fulfill({ status: 206, contentType: 'video/mp4',
+    headers: { 'Content-Length': String(last - first + 1), 'Access-Control-Allow-Origin': '*',
+      'Content-Range': `bytes ${first}-${last}/${sample.length}` }, body: sample.subarray(first, last + 1) });
+});
 try {
   await page.goto('http://127.0.0.1:4173/hongguo-dl/', { waitUntil: 'load', timeout: 30000 });
   await page.locator('#input-url').fill('123');

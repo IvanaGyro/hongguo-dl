@@ -44,3 +44,13 @@ test('malformed lengths, mismatched NAL types, unsupported length widths and tra
   }
   assert.throws(() => bvc2ParameterNals(Buffer.concat([config, Buffer.from([0])])), { code: 'BVC2_CONFIG_INVALID' });
 });
+
+test('normalizing already-normalized bytes changes nothing (Worker reader, then bvc2-worker)', () => {
+  // Playback's whole-file fallback reads with the 'bvc2' bridge, whose reader
+  // normalizes the config; bvc2-worker.js then normalizes the same bytes again.
+  const { moov } = fixture();
+  const once = Uint8Array.from(normalizeBvc2Config(moov).bytes);
+  const twice = normalizeBvc2Config(Uint8Array.from(once), { inPlace: true });
+  assert.equal(twice.changed, 0);
+  assert.deepEqual([...twice.bytes], [...once]);
+});

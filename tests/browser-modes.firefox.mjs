@@ -97,6 +97,15 @@ page.route(url => url.pathname.startsWith('/api/'), route => {
   if (url.pathname === '/api/media') {
     if (url.searchParams.get('url')?.includes('vvc-720.mp4'))
       throw new Error('Encrypted VVC must not be sent to FFmpeg.wasm');
+    const match = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+    if (match) {
+      const first = Number(match[1]);
+      const last = match[2] ? Math.min(Number(match[2]), sample.length - 1) : sample.length - 1;
+      return route.fulfill({ status: 206, contentType: 'video/mp4',
+        headers: { 'Access-Control-Allow-Origin': '*', 'Accept-Ranges': 'bytes',
+          'Content-Length': String(last - first + 1), 'Content-Range': `bytes ${first}-${last}/${sample.length}` },
+        body: sample.subarray(first, last + 1) });
+    }
     return route.fulfill({
       status: 200, contentType: 'video/mp4',
       headers: {

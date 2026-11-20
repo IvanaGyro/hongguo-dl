@@ -16,14 +16,14 @@ test('layer 1 selects CDNs and refreshes a full failed cycle; consumers receive 
       assert.equal(Boolean(args[5].refresh), queries > 1);
       return { variants: queries === 1 ? [source('a'), source('b')] : [source('a'), source('c')] };
     } });
-  const download = createMediaDownload({ getWorkerOrigin: () => 'https://proxy.test',
-    fetchBytes: async url => { fetched.push(url); return new Uint8Array([1, 2]); } });
+  const download = createMediaDownload({ getWorkerOrigin: () => 'https://proxy.test' });
   for (const code of ['CENC_SOURCE_SLOW', 'CENC_RANGE_HTTP', 'CENC_RATE_LIMITED']) {
     const list = await session.list(options());
     assert(list.variants.every(item => item.url === undefined && item.userAgent === undefined));
     const selected = session.acquire(preferences, capabilities);
     assert.equal(selected.source.url, undefined);
-    assert.deepEqual(await download.read(selected.source), new Uint8Array([1, 2]));
+    // Only layer 1 resolves the opaque handle back to its URL for the Worker.
+    fetched.push(download.input(selected.source, { mode: 'direct' }).url);
     assert.equal(session.failed(code), true);
   }
   assert.equal(queries, 2);

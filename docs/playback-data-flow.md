@@ -2,7 +2,7 @@
 
 播放分成三層。下一層提出需求，上一層自行決定快取命中、下載、處理及預取；一次需求不代表一定要新增工作。
 
-1. **下載**：`download-source-session.js` 管理片源查詢、CDN 網址、候選輪替、失敗名單及重新取源；`media-download.js` 負責來源傳輸、原生影片探測及整檔讀取。串流來源的 HTTP 由媒體 Worker 的下載層（`media-source.js`、`progressive-media-download.js`、`mp4-metadata.js`、`cached-media-reader.js`、`http-stream.js`、`media-byte-cache.js`）負責：開啟唯一的 `Range: bytes=0-` 回應、有界的 MP4 索引探測、位元組範圍、請求排程、快取、重試及網路預取。下載快取配額與省流量策略在這一層決定。
+1. **下載**：`download-source-session.js` 管理片源查詢、CDN 網址、候選輪替、失敗名單及重新取源；`media-download.js` 負責來源傳輸與原生影片探測；整檔讀取（播放備援與下載佇列的處理工作）一律經由媒體 Worker 的同一個來源與位元組快取（`whole-file-read.js`），主執行緒不再自行整檔下載。串流來源的 HTTP 由媒體 Worker 的下載層（`media-source.js`、`progressive-media-download.js`、`mp4-metadata.js`、`cached-media-reader.js`、`http-stream.js`、`media-byte-cache.js`）負責：開啟唯一的 `Range: bytes=0-` 回應、有界的 MP4 索引探測、位元組範圍、請求排程、快取、重試及網路預取。下載快取配額與省流量策略在這一層決定。
 2. **媒體處理**：`media-session.js` 只以不含網址的媒體參照要求資料，提供可處理的編碼／畫質需求，負責整檔備援，以及下一集預備與交接。串流的 CENC 解密／轉封裝、ByteVC2 解碼及 H.264 轉碼由媒體 Worker 的處理層（`media-engine.js`，Librempeg WASM）執行；`media-processor.js` 是主執行緒端的需求客戶端，管理 Worker 重用、預備片段及消費端 ACK。
 3. **播放**：`player.js` 負責操作介面、播放進度、切集與觀看紀錄；`cenc-remux.js` 是 MSE 呈現介面，負責追加片段、緩衝清除、時間軸與 seek 的呈現。`clear-key.js` 只保留瀏覽器 EME/CDM 的相容路徑，所需的索引資訊由媒體 Worker 回報。
 
@@ -16,7 +16,7 @@ MSE 消費片段後才回 ACK，形成背壓；下載層的位元組預取可獨
 
 下一集的串流建立與可播放狀態分別記錄為 `prefetch.prepared`、`prefetch.ready`。預載期間的慢速、讀取失敗或首次重試會觸發有界的候選輪替，候選耗盡後可重新查詢新的片源，受每步驟 20 次額度限制；刷新只得到已失敗 URL 時會提早停止。交接會保留已失敗 URL 與刷新額度，不把只有初始化標頭且已失敗的工作重新當成健康串流；正常交接沿用已取得的片段和下載快取。 預載以 CENC_SOURCE_EXHAUSTED 結束時，前景交接會在剩餘額度內強制重新查片源／畫質列表；繼承原畫質／編碼、已失敗 URL、候選編號與步驟計數，僅嘗試新的候選。若回來仍只有舊 URL 就停止；真正耗盡 20 次額度則回報 PLAYBACK_STEP_LIMIT，不追加查詢或重設計數。
 
-單集工作與引擎的生命週期分開。完成工作的串流引擎最多保留一個、閒置 30 秒，可供後續相同種類的工作重用；重用前先等待上一集的讀取迴圈退出，並清除單集下載與輸出狀態。未完成、取消或失敗的工作終止 Worker，避免重用未確認清理完成的執行狀態。離開播放、停止與 pagehide 會清掉保留引擎。整檔 ByteVC2 備援仍使用獨立工作；一般 FFmpeg 備援沿用原本的共用引擎。
+單集工作與引擎的生命週期分開。完成工作的串流引擎最多保留一個、閒置 30 秒，可供後續相同種類的工作重用；重用前先等待上一集的讀取迴圈退出，並清除單集下載與輸出狀態。未完成、取消或失敗的工作終止 Worker，避免重用未確認清理完成的執行狀態。離開播放、停止與 pagehide 會清掉保留引擎。整檔 ByteVC2 轉碼仍使用獨立工作；一般 FFmpeg 處理沿用原本的共用引擎；兩者的輸入位元組都由媒體 Worker 讀取。
 
 測試以 `createPlayer`、既有串流介面與瀏覽器可觀察的行為為準，不要求內部檔案切法或私有物件形狀。`player-behavior.test.mjs` 的相同行為案例已在重構前後執行。
 
@@ -25,7 +25,7 @@ MSE 消費片段後才回 ACK，形成背壓；下載層的位元組預取可獨
 下載層與處理層在**同一個** Worker 內，是兩個模組層，不是兩個 Worker；兩層之間以函式呼叫共用同一份位元組快取，不經過逐次讀取的跨執行緒訊息。`cenc-remux-worker.js`／`bvc2-stream-worker.js` 只是入口，協調者是 `media-worker-core.js`：
 
 - 主執行緒只宣告「我需要…」（`need`，以穩定的 `id` 與遞增的 `revision` upsert）或「我不再需要…」（`dont-need`），回報瀏覽器能力（`capabilities`：WASM／MSE 可用性與 Worker 詢問的精確 MIME 支援），並以 ACK 回饋輸出背壓。沒有 `prepare`／`start`／`seek` 等程序指令。
-- 需求內容（`media-demand.js`）：來源（網址、代理網址、bridge、金鑰）、輸出（`metadata` 或 `playable-media`）、位置、播放狀態（暫停、已緩衝秒數、緩衝目標）、優先順序（`active`／`speculative`）與是否已給予 CPU 處理額度。相同 revision 重送不產生新工作；舊 revision 被忽略。只有位置或來源改變時才產生新的 `positionRevision`，輸出片段帶此值，主執行緒與 Worker 都丟棄舊位置的輸出。
+- 需求內容（`media-demand.js`）：來源（網址、代理網址、bridge、金鑰）、輸出（`metadata`、`playable-media` 或 `whole-file`）、位置、播放狀態（暫停、已緩衝秒數、緩衝目標）、優先順序（`active`／`speculative`）與是否已給予 CPU 處理額度。相同 revision 重送不產生新工作；舊 revision 被忽略。只有位置或來源改變時才產生新的 `positionRevision`，輸出片段帶此值，主執行緒與 Worker 都丟棄舊位置的輸出。
 - Worker 依需求自行協調：新的可播放需求會自動開啟來源、做有界的索引探測，再依 `media-route.js` 選擇路線（`mse`、`native`、`unsupported`），然後產生 fMP4 片段。只要索引的需求不啟動 WASM，探測完畢就釋放 HTTP 連線，但保留已讀取的索引範圍。
 - 同一來源可由多個需求共用（例如預覽索引與播放）；移除其中一個不會取消仍被其他需求使用的下載、快取或引擎。每個 Worker 最多一個可播放輸出。
 - 暫停只是需求狀態更新，不撤回需求；Worker 在播放中、預載中，或暫停但緩衝尚未達到回報的目標時持續讀取前方資料。seek 是位置更新，沿用同一個 Worker、WASM 與下載快取。
@@ -33,7 +33,17 @@ MSE 消費片段後才回 ACK，形成背壓；下載層的位元組預取可獨
 - 必須由瀏覽器自行抓取媒體的路線（已分段的 CENC、超過 WASM 處理上限、MSE 不支援的編碼）由 Worker 回報 `native` 路線及索引資訊，交回主執行緒的 EME 管線；這條路線不保證只用一個應用程式連線。
 - WASM 處理上限只影響路線選擇，不限制索引探測或原生 EME。
 - 每個步驟的 20 次額度在宣告需求前於主執行緒同步檢查，額度耗盡時不會再發出網路請求。
-- 沒有 MSE 的環境（以及 Node 測試）無法使用應用程式處理路線，`media-worker-local.js` 會在目前執行緒執行同一套需求協調，只做索引探測。
+- 沒有 MSE 的環境（以及 Node 測試）無法使用應用程式處理路線，`media-worker-local.js` 會在目前執行緒執行同一套需求協調，只做索引探測與整檔讀取。
+- `whole-file` 需求由同一個來源的讀取器依序組出整個檔案：已在快取中的範圍（索引探測、串流已下載的部分）不再請求，缺少的才以 Range 補齊，完成後以 transfer 交給主執行緒，不另外複製。檔案超過需求的 `maxBytes`（上限 320 MiB）時回報 `MEMORY_LIMIT`，不下載本體。撤回需求會停止讀取。
+
+## 備援順序（#23）
+
+`fallback-policy.js` 定義單一順序：原生 EME（已分段 CENC）→ WASM 串流 → 整檔處理（FFmpeg.wasm 解密封裝／ByteVC2 整檔轉碼）。
+
+- **只有處理失敗才往下一層**：WASM 無法載入或執行、轉封裝／轉碼失敗、SourceBuffer／HEVC init 失敗、EME 設定失敗、沒有分段索引。HEVC 不再有獨立的整檔禁令。
+- **來源失敗不備援**：CDN 403／429、Range 錯誤或不支援、逾時與過慢由 `download-source-session.js` 輪替同畫質候選或重新取源；整檔讀取只會再碰到同一個失敗的 CDN。
+- **快取交接**：串流路線不可用或播放中處理失敗時，`cenc-remux.js` 不終止媒體 Worker，而是交給 `media-session.js` 保留（`createRetainedSources`，最多一個）。該集的整檔備援改用這個 Worker 的同一個需求繼續讀取，沿用尚未關閉的 HTTP 回應與位元組快取。換 CDN、換集、離開播放時釋放。
+- 播放中發生處理失敗後，該集的下一次嘗試直接走整檔備援，不再重試串流。預載下一集永遠不啟動整檔處理。
 
 ## 匿名播放裝置與取源
 

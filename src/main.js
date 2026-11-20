@@ -41,6 +41,7 @@ import { recordFailure } from './retry.js';
 import { interruptQueueOnPageHide } from './queue-lifecycle.js';
 import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId, reconcileRendition } from './source-options.js';
 import { readMediaBody } from './media-body.js';
+import { createMediaDownload } from './media-download.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
 
 const $ = id => {
@@ -748,29 +749,20 @@ function assertOk(response) {
       data?.error?.message || '媒體來源 HTTP ' + response.status);
   });
 }
-async function fetchBytes(url, profile, signal, max, onRead, userAgent = '') {
-  if (max <= 0) throw errorWith('MEMORY_LIMIT', '記憶體上限已達');
-  // A concrete HTTP 403 belongs to the selected CDN candidate; the source
-  // session should rotate candidates rather than re-request the same signed
-  // URL once directly and then again through the proxy.
-  const transport = createMediaTransportForSource(url, profile, requireWorkerOrigin(),
-    fetch, undefined, userAgent, { retryRejectedDirect: false });
-  const res = await transport.fetch(url, { signal,
-    ...(profile === 'app' ? { headers: { Range: 'bytes=0-' } } : {}) });
-  if (!res.ok) { await assertOk(res); }
-  const chunks = [];
-  let size = 0;
-  for await (const { bytes, total } of readMediaBody(res, {
-    fetchImpl: transport.fetch, url, signal, maxBytes: max
-  })) {
-    chunks.push(bytes); size += bytes.length;
-    onRead?.(bytes.length, total);
+// Whole-file download jobs read through the media Worker's source and byte
+// cache, the same layer playback uses, never a separate main-thread fetch.
+const queueDownload = createMediaDownload({ getWorkerOrigin: () => requireWorkerOrigin() });
+async function readWholeSource(job, source, signal, maxBytes) {
+  try {
+    return await queueDownload.whole(source, { signal, maxBytes,
+      onProgress: (received, total) => update(job, { bytes: received, totalBytes: total }) });
+  } catch (error) {
+    // Keep the queue's existing retry policy: a CDN refusal is retried with
+    // a refreshed source list, as for the former main-thread download.
+    if (error?.code === 'CENC_SOURCE_FORBIDDEN')
+      throw Object.assign(errorWith('MEDIA_SOURCE_FORBIDDEN', '媒體來源回傳 HTTP 403'), { status: 403 });
+    throw error;
   }
-  if (!size) throw errorWith('EMPTY_MEDIA', '媒體回傳零位元組');
-  const result = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
-  return result;
 }
 async function streamToDestination(job, source, signal) {
   const transport = createMediaTransportForSource(source.url,
@@ -847,15 +839,13 @@ async function runJob(job, signal) {
     if (!source?.url) throw errorWith('SOURCE_UNAVAILABLE', '沒有可用來源');
     update(job, { status: 'downloading', quality: effective.quality, codec: effective.codec, sourceCodec: source.codec || 'unknown' });
     assertSupportedMediaUrl(source.url);
-    const profile = source.source === 'app' ? 'app' : 'web';
     const requiresFfmpeg = !!source.contentKey || job.mode !== 'original';
     if (!requiresFfmpeg) {
       await streamToDestination(job, source, signal);
     } else if ((codecId(source.codec) === 'bytevc2' || ['hevc', 'vvc', 'av1'].includes(job.mode))) {
       if (!await bvc2BridgeAvailable())
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
-      const raw = await fetchBytes(source.url, profile, signal, 260 * 1024 * 1024,
-        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }), source.userAgent);
+      const raw = await readWholeSource(job, source, signal, 260 * 1024 * 1024);
       update(job, { status: 'processing', progress: null });
       const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode, signal,
         progress: progress => update(job, { progress }) });
@@ -863,8 +853,7 @@ async function runJob(job, signal) {
       await saveProcessed(out, outputFileName(job, source, true), job,
         { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     } else {
-      const bytes = await fetchBytes(source.url, profile, signal, 320 * 1024 * 1024,
-        (n, total) => update(job, { bytes: (job.bytes || 0) + n, totalBytes: total }), source.userAgent);
+      const bytes = await readWholeSource(job, source, signal, 320 * 1024 * 1024);
       update(job, { status: 'processing', progress: 0 });
       const out = await convertBytes(bytes, {
         mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
@@ -1012,7 +1001,7 @@ player = createPlayer({
   settingsToggle: $('player-settings-toggle'), settingsMenu: $('player-settings'),
   settingsClose: $('player-settings-close'), sourceInfo: $('player-source-info'),
   getSeries: () => series, sourceFor: getSource,
-  fetchBytes, getWorkerOrigin: requireWorkerOrigin,
+  getWorkerOrigin: requireWorkerOrigin,
   cache: mediaCache, storage: localStorage,
   diagnostics: playbackDiagnostics.log,
   onProgress: () => { if (series && currentMode === 'play') renderEpisodes(); }
