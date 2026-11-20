@@ -81,7 +81,7 @@ test('playback status distinguishes identical-error and total retry limits and e
   assert.equal(alternating.stoppedBy, 'total-limit');
   assert.match(playbackFailureMessage(alternating,
     { code: 'HTTP_403', message: '媒體來源拒絕' }, limit), /累計失敗 20 次（安全上限）/);
-  const blocked = recordFailure(null, { code: 'HLS_DRM', message: 'DRM 不支援' }, limit);
+  const blocked = recordFailure(null, { code: 'UNSUPPORTED_FORMAT', message: '不支援 HLS' }, limit);
   assert.equal(blocked.stoppedBy, 'not-retryable');
   const tooLargeIndex = recordFailure(null, {
     code: 'CENC_METADATA_LIMIT', message: 'MP4 moov exceeds 8 MiB'
@@ -89,7 +89,7 @@ test('playback status distinguishes identical-error and total retry limits and e
   assert.equal(tooLargeIndex.stoppedBy, 'not-retryable');
   assert.equal(tooLargeIndex.retry, false);
   assert.match(playbackFailureMessage(blocked,
-    { code: 'HLS_DRM', message: 'DRM 不支援' }, limit), /此錯誤不可重試/);
+    { code: 'UNSUPPORTED_FORMAT', message: '不支援 HLS' }, limit), /此錯誤不可重試/);
 });
 
 test('memory buffers are bounded and keyed by source quality/codec', () => {

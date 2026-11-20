@@ -13,7 +13,6 @@ import { renditionOptions, parseRenditionValue, matchingRenditionValue, codecId,
 import { createMediaSession } from './media-session.js';
 import { timeIsBuffered, clampStreamSeek } from './cenc-seek.js';
 import { bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
-import { bvc2PlaybackMode } from './playback-policy.js';
 
 const PREF_KEY = 'hongguo-dl-player-preferences-v1';
 const SESSION_TIMEOUT = 25000;
@@ -58,7 +57,6 @@ export function createPlayer({
     console.info('[Hongguo startup] E' + current.index + ' ' + stage + ': ' +
       Math.round(performance.now() - loadStartedAt) + 'ms');
   }
-  const bvc2Mode = bvc2PlaybackMode(location.search);
   const mimeSupport = mime => video.canPlayType(mime);
   // Source selection uses a provisional HEVC probe; openClearKeyStream later
   // parses bounded hvcC metadata and checks the exact MSE SourceBuffer MIME.
@@ -71,7 +69,7 @@ export function createPlayer({
       startupSeconds: lastStartupSeconds, duration: video.duration,
       position: video.currentTime, paused: video.paused, seeking: video.seeking || restartingRemoteSeek }),
     savedResumeSeconds, waitForOutputCleanup: () => keyCleanup,
-    mimeSupport, mseSupport, bvc2Mode, log, ageMs, markStartupStage,
+    mimeSupport, mseSupport, log, ageMs, markStartupStage,
     reportStartup,
     reportStage: (stage, signal, attempt, fields = {}) => {
       if (signal.aborted) return;

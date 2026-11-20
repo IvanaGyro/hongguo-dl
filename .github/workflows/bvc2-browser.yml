@@ -75,7 +75,7 @@ jobs:
   playback:
     runs-on: ubuntu-24.04
     container: debian:trixie-slim
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - run: apt-get update -qq && apt-get install -y ca-certificates curl unzip git nodejs ffmpeg >/dev/null
       - uses: actions/checkout@v4
@@ -92,7 +92,7 @@ jobs:
           node scripts/generate-bvc2-fixtures.mjs /tmp
           node scripts/verify-bvc2-fixture.mjs /tmp/bvc2-short.mp4
           PROOF_BRIDGE=bvc2 PROOF_SHORT=1 node tests/cenc-worker-reuse.node.mjs /tmp/bvc2-long.mp4
-      - name: Whole-file and streaming browser decode with CDN refusal recovery
+      - name: Streaming and whole-file-fallback browser decode with CDN refusal recovery
         run: |
           VITE_BASE_PATH=/hongguo-dl/ bun run build
           VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-bvc2.log 2>&1 &

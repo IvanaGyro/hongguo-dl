@@ -98,6 +98,9 @@ export function parseInput(input) {
   let u;
   try { u = new URL(text); } catch { throw httpError(400, 'INVALID_INPUT', '請輸入劇集 ID、官方分享網址或媒體直連網址'); }
   if (u.protocol !== 'https:' || u.username || u.password || u.href.length > 8192) throw httpError(400, 'INVALID_INPUT', '只接受 HTTPS 網址');
+  // HLS playlists are not supported by the player or the download queue.
+  if (/\.m3u8$/i.test(u.pathname))
+    throw httpError(400, 'UNSUPPORTED_FORMAT', '不支援 HLS（.m3u8）媒體網址；請改用 MP4 媒體直連或官方劇集網址');
   if (isHost(u.hostname, MEDIA_HOSTS)) {
     safeUrl(text, MEDIA_HOSTS);
     return { kind: 'media', url: u.href };

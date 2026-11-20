@@ -10,7 +10,7 @@ export function recordFailure(previous, error, repeatedLimit, attemptLimit = 20,
   const streak = scoped?.key === key ? (scoped.streak || 0) + 1 : 1;
   const attempts = Math.max((scoped?.attempts || 0) + 1, step ? Number(error.stepAttempt) || 0 : 0);
   const rateLimited = error.status === 429 || ['CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'HTTP_429'].includes(error.code);
-  const stoppedBy = error.code === 'PLAYBACK_STEP_LIMIT' || step && attempts >= attemptLimit ? 'step-limit' : ['CANCELED', 'HLS_DRM', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
+  const stoppedBy = error.code === 'PLAYBACK_STEP_LIMIT' || step && attempts >= attemptLimit ? 'step-limit' : ['CANCELED', 'UNSUPPORTED_FORMAT', 'INVALID_KEY', 'CENC_METADATA_LIMIT',
     'CENC_SOURCE_FORBIDDEN', 'CENC_SOURCE_EXHAUSTED', 'CENC_RATE_LIMITED', 'MEDIA_RATE_LIMITED', 'CENC_RANGE_INVALID',
     'CENC_RANGE_UNSUPPORTED'].includes(error.code) &&
     !(retryForbidden && error.code === 'CENC_SOURCE_FORBIDDEN') && !(retryRateLimited && rateLimited)

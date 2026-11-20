@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Single-thread FFmpeg.wasm is loaded only when a job actually needs processing.
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { assertHlsManifest, selectHlsVariant, errorWith } from './logic.js';
-import { planHlsMediaPlaylist, rewriteHlsMediaPlaylist } from './hls-playlist.js';
+import { errorWith } from './logic.js';
 
 const MAX_FFMPEG_INPUT = 320 * 1024 * 1024;
 let instance = null;
@@ -69,13 +68,12 @@ async function exclusive(task, signal) {
 export function prepareFfmpeg(signal) {
   return exclusive(async () => {}, signal);
 }
-function argsFor(mode, contentKey, input, output, hls = false) {
+function argsFor(mode, contentKey, input, output) {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
   if (contentKey) {
     if (!/^[a-f\d]{32}$/i.test(contentKey)) throw errorWith('INVALID_KEY', '影片來源的解密金鑰格式錯誤');
     args.push('-decryption_key', contentKey);
   }
-  if (hls) args.push('-protocol_whitelist', 'file,crypto,data', '-allowed_extensions', 'ALL');
   // Never mux a separate subtitle/data stream into an output video.
   args.push('-i', input, '-map', '0:v:0', '-map', '0:a?', '-sn', '-dn');
   if (mode === 'h264') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p');
@@ -153,85 +151,6 @@ export async function concatLosslessly(inputs, { signal, progress } = {}) {
       for (const path of [...created, output]) {
         try { await ffmpeg.deleteFile(path); } catch { /* missing after abort */ }
       }
-    }
-  }, signal);
-}
-async function readLimited(fetchBytes, url, signal, max = 2 * 1024 * 1024) {
-  const bytes = await fetchBytes(url, signal, max);
-  if (bytes.length > max) throw errorWith('HLS_MANIFEST', 'HLS 清單大小超過限制');
-  return new TextDecoder().decode(bytes);
-}
-async function getMediaPlaylist(url, fetchBytes, signal) {
-  const visited = new Set();
-  for (let i = 0; i < 3; i++) {
-    if (visited.has(url)) throw errorWith('HLS_MANIFEST', 'HLS 清單循環引用');
-    visited.add(url);
-    const text = await readLimited(fetchBytes, url, signal);
-    assertHlsManifest(text);
-    const variant = selectHlsVariant(text, url);
-    if (!variant) return { text, url };
-    url = variant;
-  }
-  throw errorWith('HLS_MANIFEST', 'HLS 主清單巢狀過深');
-}
-export async function convertHls(url, {
-  mode = 'copy', contentKey = null, signal, fetchBytes, segmentProgress, progress, onStage = () => {}
-} = {}) {
-  onStage('hls-tool');
-  return exclusive(async ffmpeg => {
-    const files = new Set();
-    const unique = new Map();
-    let size = 0;
-    const id = fileId(), playlist = id + '.m3u8', output = id + '.mp4';
-    try {
-      onStage('hls-playlist');
-      const media = await getMediaPlaylist(url, fetchBytes, signal);
-      const plan = planHlsMediaPlaylist(media.text);
-      const total = plan.segmentCount;
-      let done = 0;
-      let seq = 0;
-      async function stage(resource) {
-        const { uri, key, kind } = resource;
-        const full = new URL(uri, media.url).href;
-        // A URL used both as a decryption key and as media needs distinct
-        // local files and length validation, not a shared cache entry.
-        const cacheKey = (key ? 'key:' : 'media:') + full;
-        let name = unique.get(cacheKey);
-        if (!name) {
-          if (signal?.aborted) throw cancelError();
-          const extension = key ? 'key' : (/\.(m4s|mp4|aac|m4a|ts)(?:$|\?)/i.exec(uri)?.[1] || 'ts');
-          name = id + '_part_' + (seq++) + '.' + extension;
-          const data = await fetchBytes(full, signal, Math.min(64 * 1024 * 1024, MAX_FFMPEG_INPUT - size));
-          if (!data.length) throw errorWith('EMPTY_MEDIA', 'HLS 分片沒有資料');
-          if (key && data.length !== 16) throw errorWith('HLS_MANIFEST', 'AES-128 HLS 金鑰必須是 16 位元組');
-          size += data.length;
-          if (size > MAX_FFMPEG_INPUT) throw errorWith('FFMPEG_LIMIT', 'HLS 分片合計超過 FFmpeg.wasm 安全上限');
-          await ffmpeg.writeFile(name, data);
-          files.add(name);
-          unique.set(cacheKey, name);
-        }
-        // Count logical segments rather than unique URLs or URI attributes.
-        // HLS playlists may repeat the same segment URI many times.
-        if (kind === 'segment') {
-          done++;
-          segmentProgress?.({ current: done, total, bytes: size });
-        }
-        return name;
-      }
-      const localNames = [];
-      for (const resource of plan.resources) {
-        if (signal?.aborted) throw cancelError();
-        localNames.push(await stage(resource));
-      }
-      const rewritten = rewriteHlsMediaPlaylist(plan, localNames);
-      await ffmpeg.writeFile(playlist, new TextEncoder().encode(rewritten)); files.add(playlist);
-      onStage('hls-remux');
-      await run(ffmpeg, argsFor(mode, contentKey, playlist, output, true), signal, progress);
-      files.add(output);
-      return new Uint8Array(await ffmpeg.readFile(output));
-    } finally {
-      for (const path of files) { try { await ffmpeg.deleteFile(path); } catch { /* ignore */ } }
-      try { await ffmpeg.deleteFile(output); } catch { /* ignore */ }
     }
   }, signal);
 }

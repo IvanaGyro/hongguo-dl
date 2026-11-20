@@ -22,7 +22,6 @@ export function createMediaDownload({ fetchBytes, getWorkerOrigin, fetchImpl = (
       const proxyUrl = mediaProxyUrl(source.url, profileFor(source), getWorkerOrigin(), source.userAgent);
       return { url: transport.mode === 'direct' ? source.url : proxyUrl, proxyUrl };
     },
-    playlistUrl(handle) { return downloadSource(handle).url; },
     read(handle, signal, maxBytes, onChunk, url) {
       const source = downloadSource(handle);
       return fetchBytes(url || source.url, profileFor(source), signal, maxBytes, onChunk, source.userAgent);

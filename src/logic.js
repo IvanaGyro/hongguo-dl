@@ -57,9 +57,7 @@ export function classifyError(error) {
     FFMPEG_ERROR: 'FFmpeg.wasm 處理失敗：可能不支援此影片編碼、加密方式或媒體格式',
     FFMPEG_LIMIT: 'FFmpeg.wasm 的記憶體限制：請選擇較短分集或原始串流下載',
     NO_DIRECTORY: '儲存資料夾不可使用，請重新選擇',
-    HLS_DRM: '此 HLS 使用目前不支援的加密或 DRM 方式',
-    HLS_LIVE: '不支援尚未結束的直播 HLS 清單',
-    HLS_MANIFEST: 'HLS 清單無效或包含不支援的語法',
+    UNSUPPORTED_FORMAT: '不支援 HLS（.m3u8）媒體網址；請改用 MP4 媒體直連或官方劇集網址',
     INCOMPLETE: '下載內容不完整，收到的位元組數與 Content-Length 不符',
     EMPTY_MEDIA: '媒體內容為空，請重新取得來源',
     SOURCE_UNAVAILABLE: '目前無法取得片源，請重試或確認官方是否提供本集',
@@ -81,30 +79,14 @@ export function classifyError(error) {
 export function errorWith(code, message) {
   return Object.assign(new Error(message), { code });
 }
+// HLS playlists are not supported. Detect them only to reject them early,
+// before any media request is made.
 export function isHlsUrl(url) {
   try { return /\.m3u8$/i.test(new URL(url).pathname); } catch { return false; }
 }
-export function selectHlsVariant(text, manifestUrl) {
-  const lines = text.split(/\r?\n/);
-  const variants = [];
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
-    let next = i + 1;
-    while (next < lines.length && !lines[next].trim()) next++;
-    if (!lines[next] || lines[next].trim().startsWith('#')) throw errorWith('HLS_MANIFEST', 'HLS 主清單缺少子清單網址');
-    const bandwidth = Number(/\bBANDWIDTH=(\d+)/.exec(lines[i])?.[1] || 0);
-    variants.push({ url: new URL(lines[next].trim(), manifestUrl).href, bandwidth });
-  }
-  return variants.sort((a, b) => b.bandwidth - a.bandwidth)[0]?.url || null;
-}
-export function assertHlsManifest(text) {
-  if (!text.trimStart().startsWith('#EXTM3U')) throw errorWith('HLS_MANIFEST', '內容不是 HLS 清單');
-  if (/#EXT-X-DEFINE:/i.test(text)) throw errorWith('HLS_MANIFEST', '不支援 HLS 動態網址變數');
-  if (/#EXT-X-KEY:[^\r\n]*METHOD=(?!AES-128(?:,|$)|NONE(?:,|$))/i.test(text) ||
-      /#EXT-X-SESSION-KEY:[^\r\n]*METHOD=(?!AES-128(?:,|$)|NONE(?:,|$))/i.test(text))
-    throw errorWith('HLS_DRM', '不支援 SAMPLE-AES / DRM HLS');
-  if (!/#EXT-X-ENDLIST/i.test(text) && !/#EXT-X-STREAM-INF/i.test(text))
-    throw errorWith('HLS_LIVE', '這是尚未結束的直播清單');
+export function assertSupportedMediaUrl(url) {
+  if (isHlsUrl(url)) throw errorWith('UNSUPPORTED_FORMAT',
+    '不支援 HLS（.m3u8）媒體網址；請改用 MP4 媒體直連或官方劇集網址');
 }
 export function displayStatus(status) {
   return ({ queued: '等待中', resolving: '取得片源', downloading: '下載中', processing: '處理媒體', completed: '完成',

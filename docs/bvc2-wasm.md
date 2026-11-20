@@ -102,3 +102,4 @@ libaom/VVenC 使用純量版本，WASM C stack 配置 5 MiB，線性記憶體仍
 `verify-video-outputs.mjs` 使用合成影片驗證實際編碼、AAC、完整影格、進度與串流；
 `synthetic-bvc2.mjs` 的 BVC2 封裝測試只使用標準 VVC picture data，不能代表專有 BTY2 實際 bitstream 已驗收。
 真實紅果 BVC2 片源、目標裝置速度與記憶體高水位仍須另行驗證。上述舊版 whole-file 播放限制只適用 API 1。
+播放一律先使用 `bvc2_stream` 增量串流；`bvc2_stream=whole-file` 網址參數已移除，整集轉碼只在瀏覽器無法使用增量 MSE 路徑時作為備援。
