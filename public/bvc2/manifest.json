@@ -7,8 +7,8 @@
   "librempegCommit": "cb1f8f3eef84999e61b27e2d44664858179bc240",
   "x264Commit": "33cac6b77d5b9259c552156013a817ab23119612",
   "files": {
-    "bvc2-core.mjs": "da8ca2fa68d07a782dfaed5eea8e95ec2c7c09124b3bf66bb5f4f5aac433bc91",
-    "bvc2-core.wasm": "3717825892693b0290f8761bfc164015e8fac219f5dad0d303406c109cc757b1"
+    "bvc2-core.mjs": "28d3a177e9196f69b17d5543517083e50699c4c6ef703f9f230739abe31eafb3",
+    "bvc2-core.wasm": "fb3301e04e30ca6e980de16c23429745c44a0431f71d433c51f7b2e33cc4abce"
   },
   "inputs": {
     "scripts/bvc2-transcoder.c": "39172ec8818f2dba16406755c5ffd2f99a4b48737815a3c91beedfd9f212bb5f",
