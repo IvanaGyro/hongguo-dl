@@ -26,7 +26,11 @@ function getProcessIdentity() {
 }
 // GPL-3.0-only: Android v5 player transport, ported from N3urda/hongguoTV
 // kotlin-tv/core/src/main/kotlin/com/hongguotv/core/{MobilePlayback,Signer,AesV3,V5Constants}.kt.
-const VIDEO_API = 'https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1';
+// Primary, then backup official v5 player host; both accept the same request.
+const VIDEO_HOSTS = Object.freeze(['https://api5-normal-sinfonlinea.fqnovel.com', 'https://api5-normal-sinfonlineb.fqnovel.com']);
+const PLAYER_PATH = '/novel/player/multi_video_model/player/v1';
+const VIDEO_TAB_HOST = 'https://api5-normal-sinfonlineb.fqnovel.com';
+const VIDEO_TAB_PATH = '/reading/bookapi/video_tab/multi_video_model/v1/';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
 const { DEVICE_QUERY: DEVICE, APP_UA: VIDEO_UA } = require('./device-profile');
 const SEARCH_UA = VIDEO_UA;
@@ -260,13 +264,29 @@ function buildMedusaV5(url, body, ts, who) {
     for (let i = 0; i < prefix.length; i++) prefix[i] ^= timestamp[i & 3];
     return Buffer.concat([prefix, Buffer.from([nonce & 255, (nonce >>> 8) & 255, 0, 1]), encrypted]).toString('base64');
 }
-// Unlike the old API, the v5 player uses one POST endpoint and only the
-// Khronos/Helios/Medusa signing headers. Search, catalogue and account signers
-// above are kept intact.
-function playbackRequest(payload, identity) {
-    const body = gzipSync(Buffer.from(payload, 'utf8'));
+// The v5 player family signs only Khronos/Helios/Medusa. Search, catalogue
+// and account signers above are kept intact. Each call signs afresh: the
+// ticket is adjusted to select Medusa branch 12 for this exact query/body.
+const EMPTY_BODY = Buffer.alloc(0);
+function signPlaybackV5(base, values, body = null) {
+    const digestBody = body || EMPTY_BODY;
     const now = Date.now(), khronos = Math.floor(now / 1000);
-    const device = {
+    for (let offset = 0; offset < 1024; offset++) {
+        const query = pythonUrlEncode({ ...values, _rticket: String(now + offset) });
+        if (v5Branch(query, digestBody, khronos) !== 12) continue;
+        const url = `${base}?${query}`;
+        return { url, headers: {
+            'x-khronos': String(khronos),
+            'x-helios': Ladon.encrypt(khronos, Number(V5_LICENSE), 8662, le32(random32())),
+            'x-medusa': buildMedusaV5(url, digestBody, khronos, values),
+            // A bodyless GET has no SS-STUB; its Medusa digest covers an empty body.
+            ...(body ? { 'x-ss-stub': md5(body) } : {}),
+        } };
+    }
+    throw Object.assign(new Error('無法產生 v5 播放簽章'), { code: 'SIGNING_FAILED' });
+}
+function playbackQuery(identity) {
+    return {
         aid: String(DEVICE.aid), app_name: DEVICE.app_name,
         version_code: DEVICE.version_code, version_name: DEVICE.version_name,
         channel: DEVICE.channel, device_platform: DEVICE.device_platform,
@@ -274,19 +294,30 @@ function playbackRequest(payload, identity) {
         update_version_code: DEVICE.update_version_code,
         iid: identity.iid, cdid: identity.cdid, device_id: identity.device_id,
     };
-    for (let offset = 0; offset < 1024; offset++) {
-        const query = pythonUrlEncode({ ...device, _rticket: String(now + offset) });
-        if (v5Branch(query, body, khronos) !== 12) continue;
-        const url = `${VIDEO_API}?${query}`;
-        return { url, body, method: 'POST', headers: {
-            'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
-            'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
-            'x-ss-stub': md5(body), 'x-khronos': String(khronos),
-            'x-helios': Ladon.encrypt(khronos, Number(V5_LICENSE), 8662, le32(random32())),
-            'x-medusa': buildMedusaV5(url, body, khronos, device),
-        }};
-    }
-    throw Object.assign(new Error('無法產生 v5 播放簽章'), { code: 'SIGNING_FAILED' });
+}
+function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
+    if (!VIDEO_HOSTS.includes(host)) throw new TypeError('Unsupported v5 playback host');
+    const body = gzipSync(Buffer.from(payload, 'utf8'));
+    const signed = signPlaybackV5(host + PLAYER_PATH, playbackQuery(identity), body);
+    return { url: signed.url, body, method: 'POST', headers: {
+        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+        'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
+        ...signed.headers,
+    }};
+}
+// Same player signing family as the POST, but bodyless: no Content-Type,
+// Content-Encoding or SS-STUB. Parameters follow the APK GetVideoModelRequest.
+function videoTabRequest(vid, identity, deviceLevel) {
+    const signed = signPlaybackV5(VIDEO_TAB_HOST + VIDEO_TAB_PATH, {
+        ...playbackQuery(identity),
+        video_id: String(vid), video_id_type: '0', device_level: String(deviceLevel),
+        need_all_video_definition: '1', need_mp4_align: '0', use_os_player: '0',
+        video_platform: '1024', source: '0', from_video_id: '',
+    });
+    return { url: signed.url, body: null, method: 'GET', headers: {
+        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+        ...signed.headers,
+    }};
 }
 
 function parseSearchInteger(value) {
@@ -489,7 +520,8 @@ async function requestJson(url, options, deadline, signal) {
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.byteLength > 2 * 1024 * 1024) throw Object.assign(new Error('App 回應過大'), { code: 'INVALID_RESPONSE' });
         const raw = new TextDecoder().decode(bytes);
-        if (!raw.trim()) throw Object.assign(new Error('App 接口返回空響應（HTTP 200）'), { code: 'EMPTY_RESPONSE', status: 200 });
+        if (!raw.trim()) throw Object.assign(new Error('App 接口返回空響應（HTTP 200）'), { code: 'EMPTY_RESPONSE', status: 200,
+            ...(response.headers.has('retry-after') ? { retryAfter: true, retryAfterMs: retryAfterMs(response.headers.get('retry-after')) } : {}) });
         const normalized = preserveFields.length ? preserveLargeJsonIntegers(raw, preserveFields) : raw;
         const parsed = jsonBody(normalized);
         if (!parsed || typeof parsed !== 'object') throw Object.assign(new Error('App 接口未返回有效數據'), { code: 'INVALID_RESPONSE' });
@@ -527,15 +559,18 @@ async function fetchAppPlayUrlFresh(vid, options) {
     const request = boundedSignal(options.signal, 12000);
     const { signal } = request;
     try {
-        // Retry only the v5 endpoint once for transient empty HTTP 200 responses.
+        // HTTP 200 with an empty body: primary v5 POST -> backup v5 POST ->
+        // bodyless v5-signed video_tab GET. Same identity, freshly signed each time.
         // Old v3/Argus playback endpoints are deliberately not retained as fallbacks.
-        const response = await retryEmptyResponse(() => {
+        const response = await retryEmptyResponse(attempt => {
             throwIfAborted(signal);
-            const signed = playbackRequest(payload, identity);
+            const signed = attempt < VIDEO_HOSTS.length
+                ? playbackRequest(payload, identity, VIDEO_HOSTS[attempt])
+                : videoTabRequest(vid, identity, deviceLevel);
             return requestJson(signed.url, {
                 method: signed.method, headers: signed.headers, data: signed.body,
             }, deadline, signal);
-        }, { deadline, signal, attempts: 2 });
+        }, { deadline, signal, attempts: VIDEO_HOSTS.length + 1 });
         if (Number(response.Code || response.code || 0) !== 0) throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });
         const entries = response.data?.video_model_data ?? response.data?.['1004'] ?? response.data;
         const entry = entries?.[vid];
@@ -662,4 +697,4 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
         });
 }
 
-module.exports = { v5Branch, playbackRequest, hashF13, AesV3, V5_SBOX, fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
+module.exports = { v5Branch, playbackRequest, videoTabRequest, signPlaybackV5, VIDEO_HOSTS, hashF13, AesV3, V5_SBOX, fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
