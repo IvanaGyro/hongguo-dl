@@ -115,7 +115,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     const decision = decideMediaRoute({
       bridge: demand.source.bridge, codec: demand.codec, metadata,
       processing: Boolean(capabilities.processing?.[demand.source.bridge]),
-      typeSupport: capabilities.types, eme: demand.eme,
+      typeSupport: capabilities.types, eme: demand.eme, render: demand.render,
       fragmentIndex: entry.layout === undefined ? undefined : entry.layout?.index || null
     });
     if (decision.kind === 'pending-index') {
@@ -128,11 +128,12 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
       if (missing.length) post({ type: 'capability-request', types: missing });
       return null;
     }
-    if (decision.check) stage('mse.codec-check', { codec: demand.source.bridge === 'bvc2' ? 'h264' : demand.codec,
+    if (decision.check) stage('mse.codec-check', { codec: decision.render ? 'aac'
+      : demand.source.bridge === 'bvc2' ? 'h264' : demand.codec,
       codecString: decision.candidates.videoCodec, hasAac: decision.candidates.hasAac, ...decision.check });
     const durationSeconds = metadata.durationSeconds || demand.durationHint || null;
     const route = {
-      kind: decision.kind, reason: decision.reason, code: decision.code,
+      kind: decision.kind, reason: decision.reason, code: decision.code, render: Boolean(decision.render),
       mime: decision.candidates?.mime || null, alternateMime: decision.candidates?.alternateMime || null,
       videoCodec: decision.candidates?.videoCodec || null, hasAac: metadata.hasAac,
       fileSize: metadata.fileSize, durationSeconds,
@@ -207,7 +208,7 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
     const route = routeFor(demand, entry);
     if (!route || !['mse', 'eme'].includes(route.kind)) return;
     if (job && job.demandId === demand.id && job.sourceKey === demand.sourceKey &&
-        job.key === demand.source.key && job.kind === route.kind) {
+        job.key === demand.source.key && job.kind === route.kind && job.render === route.render) {
       const target = clampStreamSeek(demand.positionSeconds, route.durationSeconds) ?? 0;
       job.engine.seek(target, demand.positionRevision);
     } else {
@@ -219,12 +220,14 @@ export function createMediaWorkerCore({ post, fetchImpl = (...args) => fetch(...
       };
       job = {
         demandId: demand.id, sourceKey: demand.sourceKey, key: demand.source.key, reader, kind: route.kind,
+        render: route.render,
         engine: route.kind === 'eme' ? createPassthroughJob({
           reader, fileSize: route.fileSize, layout: entry.layout, position: route.startSeconds,
           generation: demand.positionRevision, post, onStage: stage, onError
         }) : createEngineJob({
           bridge: demand.source.bridge, reader, fileSize: route.fileSize, key: demand.source.key,
           runtime, loadRuntime, position: route.startSeconds, generation: demand.positionRevision,
+          render: route.render,
           processing: demand.processing, post, onStage: stage, after: unwinding, onError
         })
       };

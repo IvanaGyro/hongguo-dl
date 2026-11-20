@@ -41,6 +41,12 @@ await page.addInitScript(() => {
     return url;
   };
   URL.revokeObjectURL = url => { live.delete(url); window.__activeMse = live.size; revoke(url); };
+  // Direct ByteVC2 rendering draws on a canvas over an audio-only <video>;
+  // the H.264 transcode fallback presents pictures in the <video> itself.
+  const canvas = () => { const c = document.querySelector('.bvc2-frame-canvas'); return c && !c.hidden ? c : null; };
+  window.__bvcFrames = () => canvas()?.renderedFrames ??
+    document.querySelector('#player-video').getVideoPlaybackQuality().totalVideoFrames;
+  window.__bvcWidth = () => canvas()?.width ?? document.querySelector('#player-video').videoWidth;
 });
 await context.route(url => url.pathname.startsWith('/api/') || url.hostname.endsWith('.fqnovelvod.com'), async route => {
   const url = new URL(route.request().url());
@@ -96,17 +102,19 @@ try {
   // unrelated second 403, obscuring the same-session rotation assertion.
   await page.waitForFunction(() => {
     const video = document.querySelector('#player-video');
-    return video.videoWidth === 160 && video.currentTime > 0.3 &&
-      video.getVideoPlaybackQuality().totalVideoFrames > 2;
-  }, null, { timeout: 90000 });
+    if (window.__bvcFrames() > 0) window.recordBvcFirstFrame();
+    return window.__bvcWidth() === 160 && video.currentTime > 0.3 && window.__bvcFrames() > 2;
+  }, null, { timeout: 90000, polling: 50 });
   assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, '403 must rotate the visible episode to the other BVC2 CDN');
-  const readyFrames = await page.locator('#player-video').evaluate(video =>
-    video.getVideoPlaybackQuality().totalVideoFrames);
+  const readyFrames = await page.evaluate(() => window.__bvcFrames());
   await page.locator('[data-play-vid="111111111"]').click();
-  await page.waitForFunction(frames => document.querySelector('#player-video')
-    .getVideoPlaybackQuality().totalVideoFrames > frames + 1, readyFrames);
+  await page.waitForFunction(frames => window.__bvcFrames() > frames + 1, readyFrames);
   assert.equal(deniedPaths.filter(path => path === '/play.mp4').length, 1, 'Selecting the healthy current episode must preserve its CDN');
-  assert.match(await page.locator('#player-source-info').textContent(), whole ? /ByteVC2|轉碼/ : /增量轉碼/);
+  const webgl2 = await page.evaluate(() => Boolean(document.createElement('canvas').getContext('webgl2')));
+  assert.match(await page.locator('#player-source-info').textContent(),
+    whole ? /ByteVC2|轉碼/ : webgl2 ? /直接解碼/ : /增量轉碼/);
+  if (!whole && webgl2) assert.equal(await page.locator('#player-video').evaluate(video => video.videoWidth), 0,
+    'Direct rendering must not re-encode video into the MSE stream');
   assert.match(await page.locator('#playback-log').inputValue(),
     whole ? /bvc2\.prepare\.begin mode=whole-file[^\n]*reason=stream-unavailable/ : /bvc2\.prepare\.begin mode=stream/);
   if (!whole) {
@@ -114,9 +122,9 @@ try {
   // long source is delivered, not merely before its last requested offset.
   deliveredAtFirstFrame = firstFrameBytes ?? deliveredBytes;
   assert(deliveredAtFirstFrame < longInput.length,
-    'First decoded H.264 picture must precede full source-body delivery');
+    'First decoded picture must precede full source-body delivery');
   const beforeSeek = await page.locator('#player-video').evaluate(video => ({
-    frames: video.getVideoPlaybackQuality().totalVideoFrames,
+    frames: window.__bvcFrames(),
     alreadyBuffered: Array.from({ length: video.buffered.length },
       (_, i) => video.buffered.start(i) <= 24 && video.buffered.end(i) >= 24)
       .some(Boolean)
@@ -126,8 +134,7 @@ try {
   await page.waitForFunction(previous => {
     const video = document.querySelector('#player-video');
     return video.currentTime > 23.5 && video.currentTime < 31 && !video.seeking &&
-      video.readyState >= 2 &&
-      video.getVideoPlaybackQuality().totalVideoFrames > previous + 2;
+      video.readyState >= 2 && window.__bvcFrames() > previous + 2;
   }, beforeSeek.frames, { timeout: 90000 });
   assert(reads.length > 0);
   assert(reads.every(r => r.last - r.first + 1 <= 8 * 1024 * 1024));
@@ -138,7 +145,7 @@ try {
   console.log(browserName + ' MSE inventory after seek', JSON.stringify(inventory));
   assert.equal(inventory.sources.filter(source => source.attached).length, 1, 'Exactly one MSE must own the visible video');
   assert.equal(inventory.sources.length, 2, 'Visible episode plus one deliberately completed preload');
-  assert.equal(inventory.sources.find(source => source.attached).buffers, 1, 'Visible transcode owns one muxed SourceBuffer');
+  assert.equal(inventory.sources.find(source => source.attached).buffers, 1, 'Visible stream owns one SourceBuffer');
   const speculative = inventory.sources.filter(source => !source.attached);
   assert(speculative.length <= 1, 'At most one next-episode MSE is allowed');
   if (speculative.length) {

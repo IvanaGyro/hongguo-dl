@@ -23,7 +23,7 @@ const valid = value => /^[0-9a-f]{64}$/.test(value || '');
 export function makeBvc2Manifest(directory = BVC2_DIR) {
   return {
     schema: 1,
-    api: 2,
+    api: 3,
     encoders: 'x264+x265-3.4+aom-3.12.1+vvenc-1.13.1',
     kind: 'experimental-bvc2-x264',
     emsdk: '3.1.74',

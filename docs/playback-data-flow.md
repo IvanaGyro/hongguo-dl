@@ -3,7 +3,7 @@
 播放分成三層。下一層提出需求，上一層自行決定快取命中、下載、處理及預取；一次需求不代表一定要新增工作。
 
 1. **下載**：`download-source-session.js` 管理片源查詢、CDN 網址、候選輪替、失敗名單及重新取源；`media-download.js` 負責來源傳輸與原生影片探測；整檔讀取（播放備援與下載佇列的處理工作）一律經由媒體 Worker 的同一個來源與位元組快取（`whole-file-read.js`），主執行緒不再自行整檔下載。串流來源的 HTTP 由媒體 Worker 的下載層（`media-source.js`、`progressive-media-download.js`、`mp4-metadata.js`、`cached-media-reader.js`、`http-stream.js`、`media-byte-cache.js`）負責：開啟唯一的 `Range: bytes=0-` 回應、有界的 MP4 索引探測、位元組範圍、請求排程、快取、重試及網路預取。下載快取配額與省流量策略在這一層決定。
-2. **媒體處理**：`media-session.js` 只以不含網址的媒體參照要求資料，提供可處理的編碼／畫質需求，負責整檔備援，以及下一集預備與交接。串流的 CENC 解密／轉封裝、ByteVC2 解碼及 H.264 轉碼由媒體 Worker 的處理層（`media-engine.js`，Librempeg WASM）執行；`media-processor.js` 是主執行緒端的需求客戶端，管理 Worker 重用、預備片段及消費端 ACK。
+2. **媒體處理**：ByteVC2 預設走直接解碼（`bvc2-render`）：Worker 只輸出 AAC fMP4 與解碼後的 I420 畫面，畫面由 `bvc2-frame-renderer.js` 以 WebGL2 疊在 `<video>` 上，以 `<video>` 的時間為準；不支援時才轉碼為 H.264（見 [ByteVC2 技術說明](bvc2-wasm.md)）。`media-session.js` 只以不含網址的媒體參照要求資料，提供可處理的編碼／畫質需求，負責整檔備援，以及下一集預備與交接。串流的 CENC 解密／轉封裝、ByteVC2 解碼及 H.264 轉碼由媒體 Worker 的處理層（`media-engine.js`，Librempeg WASM）執行；`media-processor.js` 是主執行緒端的需求客戶端，管理 Worker 重用、預備片段及消費端 ACK。
 3. **播放**：`player.js` 負責操作介面、播放進度、切集與觀看紀錄；`cenc-remux.js` 是 MSE 呈現介面，負責追加片段、緩衝清除、時間軸與 seek 的呈現。`clear-key.js` 只保留瀏覽器 EME/CDM 的相容路徑，所需的索引資訊由媒體 Worker 回報。
 
 播放器透過 `media.request()` 要求可播放來源，透過 `media.updateContext()` 提供播放位置、暫停狀態及目前串流狀態。處理層自行決定是否準備下一集、只先下載，或開始產生片段。既有策略保留：接近片尾或目前處理已完成時可準備下一集；正在處理目前集數時，下一集的 CPU 工作等待交接。

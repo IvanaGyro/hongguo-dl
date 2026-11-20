@@ -5,14 +5,18 @@
 // The application-owned WASM remux/transcode budget. Metadata inspection and
 // native EME passthrough deliberately do not apply this limit.
 export const MAX_REMUX_FILE_BYTES = 260 * 1024 * 1024;
+export const BVC2_RENDER_MIME = 'audio/mp4; codecs="mp4a.40.2"';
 const HEVC_CODEC = /^hvc1\.[A-C]?\d{1,2}\.[a-fA-F0-9]{1,8}\.[LH]\d{1,3}(?:\.[a-fA-F0-9]{2}){0,6}$/;
 
 /**
  * Clear fMP4 output MIME candidates. The HEVC input's hvcC is known, but the
  * muxer has not emitted its clear sample entry yet; hvc1 or hev1 may follow.
  */
-export function mseCandidates({ bridge, codec, metadata }) {
+export function mseCandidates({ bridge, codec, metadata, render = false }) {
   const hasAac = Boolean(metadata?.hasAac);
+  // Direct ByteVC2 rendering: MSE carries only the AAC track; it is the clock.
+  if (bridge === 'bvc2' && render) return hasAac
+    ? { videoCodec: null, hasAac, mime: BVC2_RENDER_MIME, alternateMime: null, render: true } : null;
   const videoCodec = bridge === 'bvc2' ? 'avc1.42C01F'
     : codec === 'hevc' ? (HEVC_CODEC.test(metadata?.hevcCodecString || '') ? metadata.hevcCodecString : null)
       : codec === 'h264' ? 'avc1.42E01E' : null;
@@ -26,7 +30,8 @@ export function mseCandidates({ bridge, codec, metadata }) {
 
 /**
  * Returns { kind, reason, ... } where kind is
- *  - 'mse': the Worker produces clear fMP4 for MSE (WASM remux/transcode),
+ *  - 'mse': the Worker produces clear fMP4 for MSE (WASM remux/transcode);
+ *    with `render`, ByteVC2 yields AAC-only fMP4 plus decoded pictures,
  *  - 'eme': the Worker passes already-fragmented CENC through for MSE, and
  *    the browser's CDM decrypts it (native EME; needs a fragment index),
  *  - 'unsupported': no route, the caller falls back or selects another rendition,
@@ -37,7 +42,7 @@ export function mseCandidates({ bridge, codec, metadata }) {
  * decrypt CENC only through MSE.
  */
 export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupport = {},
-  eme = false, fragmentIndex }) {
+  eme = false, fragmentIndex, render = false }) {
   let passthrough = false;
   if (bridge === 'bvc2') {
     if (!metadata.indexed || metadata.fragmented)
@@ -61,7 +66,10 @@ export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupp
         ? (eme ? 'fmp4-index-unavailable' : 'eme-unavailable') : 'remux-unavailable' };
     }
   }
-  const candidates = mseCandidates({ bridge, codec: bridge === 'bvc2' ? 'h264' : codec, metadata });
+  // A ByteVC2 source without AAC has no audio clock: transcode it instead.
+  const renderable = bridge === 'bvc2' && render && Boolean(metadata.hasAac);
+  const candidates = mseCandidates({ bridge, codec: bridge === 'bvc2' ? 'h264' : codec, metadata,
+    render: renderable });
   if (!candidates) return { kind: 'unsupported', reason: 'codec-string' };
   const wanted = [candidates.mime, candidates.alternateMime].filter(Boolean);
   const unknown = wanted.filter(mime => typeof typeSupport[mime] !== 'boolean');
@@ -72,5 +80,6 @@ export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupp
   if (!primarySupported && !alternateSupported)
     return { kind: 'unsupported', reason: 'mse-codec-unsupported', candidates, check };
   if (passthrough) return { kind: 'eme', reason: 'fragmented-eme', candidates, check };
+  if (renderable) return { kind: 'mse', reason: 'bvc2-render', render: true, candidates, check };
   return { kind: 'mse', reason: metadata.fragmented ? 'fragmented-remux' : 'progressive-remux', candidates, check };
 }

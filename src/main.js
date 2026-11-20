@@ -43,6 +43,7 @@ import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditio
 import { readMediaBody } from './media-body.js';
 import { createMediaDownload } from './media-download.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
+import { renderedFrameSize } from './bvc2-frame-renderer.js';
 
 const $ = id => {
   const element = document.getElementById(id);
@@ -982,8 +983,10 @@ void supportsIndependentSourceChannels().catch(() => {});
 const playbackVideo = $('player-video');
 const playbackStage = $('player-stage');
 function syncPlaybackAspectRatio() {
-  const width = playbackVideo.videoWidth;
-  const height = playbackVideo.videoHeight;
+  // Directly rendered ByteVC2 plays audio-only MSE; the picture size is the renderer's.
+  const rendered = renderedFrameSize(playbackVideo);
+  const width = rendered?.width ?? playbackVideo.videoWidth;
+  const height = rendered?.height ?? playbackVideo.videoHeight;
   const isPortrait = width > 0 && height > width;
   playbackStage.dataset.orientation = isPortrait ? 'portrait' : 'landscape';
   if (width > 0 && height > 0)

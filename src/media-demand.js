@@ -56,10 +56,15 @@ export function normalizeDemand(input) {
   // re-decides the route on the same source and cache.
   const eme = input.eme ?? false;
   if (typeof eme !== 'boolean') throw invalid('eme');
+  // ByteVC2 only: whether the page can present decoded pictures itself
+  // (WebGL2). Like `eme`, changing it re-decides the route.
+  const render = input.render ?? false;
+  if (typeof render !== 'boolean') throw invalid('render');
   const maxBytes = input.maxBytes ?? MAX_WHOLE_FILE_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_WHOLE_FILE_BYTES) throw invalid('maxBytes');
   return {
     id, revision, output, codec, positionSeconds, durationHint, priority, processing, maxBytes, eme,
+    render: bridge === 'bvc2' && render,
     source: { url: source.url, proxyUrl: source.proxyUrl || null, bridge, key },
     playback: { paused, bufferedAheadSeconds, bufferTargetSeconds }
   };
@@ -91,7 +96,7 @@ export function createDemandTable({ maxDemands = MAX_DEMANDS } = {}) {
       if (previous && next.revision === previous.revision) return { status: 'unchanged', demand: previous };
       const sourceChanged = !previous || sourceKeyOf(previous.source) !== sourceKeyOf(next.source) ||
         previous.source.key !== next.source.key || previous.output !== next.output ||
-        previous.eme !== next.eme;
+        previous.eme !== next.eme || previous.render !== next.render;
       if (next.output === 'playable-media' && [...demands.values()].some(other =>
           other.id !== next.id && other.output === 'playable-media'))
         throw Object.assign(new Error('Media Worker already serves a playable demand'),

@@ -103,3 +103,16 @@ libaom/VVenC 使用純量版本，WASM C stack 配置 5 MiB，線性記憶體仍
 `synthetic-bvc2.mjs` 的 BVC2 封裝測試只使用標準 VVC picture data，不能代表專有 BTY2 實際 bitstream 已驗收。
 真實紅果 BVC2 片源、目標裝置速度與記憶體高水位仍須另行驗證。上述舊版 whole-file 播放限制只適用 API 1。
 播放一律先使用 `bvc2_stream` 增量串流；`bvc2_stream=whole-file` 網址參數已移除，整集轉碼只在瀏覽器無法使用增量 MSE 路徑時作為備援。
+
+## API 3：直接解碼呈現（WebGL2，不再重新編碼）
+
+新增 `bvc2_play(size,key,start)`：沿用同一套 Asyncify AVIO 讀取、CENC 解密與 ByteVC2 解碼，但**不經 x264**。
+解碼後的畫面以 8-bit I420（必要時才用 swscale 轉成 yuv420p）經 `writeFrame` 逐張送出，AAC 則照舊 stream-copy 為**只有音訊的 fMP4**（每 0.5 秒一個 fragment）經 `writeChunk` 送出。
+兩種輸出共用 Worker 原有的單一 ACK 背壓，因此畫面佇列滿時整個 WASM 迴圈暫停。
+
+- 主執行緒仍把音訊 fMP4 交給原本的 `<video>` + MSE，`<video>` 依舊是 Video.js 10 控制的媒體元素：播放／暫停、時間軸、緩衝條、音量、播放速度（瀏覽器保留音高）與容器全螢幕皆不變。
+- `src/bvc2-frame-renderer.js` 在 `<media-container>` 內、`<video>` 之上放一個 WebGL2 canvas，以三張 R8 材質上傳 Y/U/V、shader 轉 RGB（BT.709／BT.601、limited／full range 由 WASM 回報）。每個 animation frame 選擇 PTS ≤ `video.currentTime` 的最新一張，較晚的丟棄，所以音訊時鐘決定畫面。
+- 解碼後的畫面很大（1080p ≈ 3 MiB），佇列上限約 48 MiB；音訊緩衝不足 1 秒時允許至 160 MiB，避免檔案中音訊交錯落後於影像時互相卡住。頁面隱藏時只丟棄過時畫面。
+- 未緩衝在畫面佇列內的 seek 一律由 Worker 從前一個關鍵影格重新解碼；同時移除已緩衝音訊，讓 `<video>` 等待而不是先播出聲音。
+- 只套用於 ByteVC2：需求帶 `render: true`，Worker 在來源有 AAC 時選 `bvc2-render` 路線；瀏覽器沒有 WebGL2 或來源沒有 AAC 時，沿用原本的 ByteVC2 → H.264 增量轉碼；HEVC／H.264／CENC 路線完全不變。
+- manifest `api` 升為 3（新增匯出函式）；WASM 由 `BVC2 Librempeg WASM feasibility` workflow 重新編譯並發布。

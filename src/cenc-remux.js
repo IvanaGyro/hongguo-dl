@@ -12,6 +12,7 @@ import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 
 import { MAX_REMUX_FILE_BYTES } from './media-route.js';
+import { frameRendererAvailable, frameRendererFor } from './bvc2-frame-renderer.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
 // The Worker's route decision enforces this; metadata and native EME do not.
@@ -140,7 +141,11 @@ export async function openCencProgressiveStream({
   eme = false, prepareEme = null,
   // Continue on a Worker that already holds this source (e.g. retained after
   // a failed route); its demand, HTTP response and byte cache are reused.
-  processor: existingProcessor = null
+  processor: existingProcessor = null,
+  // ByteVC2: decode only and draw pictures with WebGL2 over `video`, which
+  // then plays just the AAC track. Without WebGL2 or AAC the Worker routes
+  // to the H.264 transcode instead.
+  render = false
 }) {
   if (remainingMediaAttempts <= 0) throw Object.assign(errorWith('PLAYBACK_STEP_LIMIT', '影片資料下載已達 20 次嘗試上限'),
     { retryStep: 'media-download', stepAttempt: 20 });
@@ -154,6 +159,7 @@ export async function openCencProgressiveStream({
     await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable());
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
   const outputCodec = bridge === 'bvc2' ? 'h264' : codec;
+  const renderWanted = bridge === 'bvc2' && render && frameRendererAvailable();
   // Step budgets are enforced synchronously before any source is declared,
   // so an exhausted budget never reaches the network.
   onStage('metadata');
@@ -191,7 +197,8 @@ export async function openCencProgressiveStream({
       output: 'playable-media', codec: outputCodec, positionSeconds: startSeconds,
       durationHint: Number.isFinite(durationHint) && durationHint > 0 && durationHint <= 24 * 3600 ? durationHint : null,
       playback: { paused: true, bufferedAheadSeconds: 0, bufferTargetSeconds: 0 },
-      priority: preload ? 'speculative' : 'active', processing: !preload, eme: Boolean(eme && prepareEme)
+      priority: preload ? 'speculative' : 'active', processing: !preload, eme: Boolean(eme && prepareEme),
+      render: renderWanted
     });
   } catch {
     // A synchronous structured-clone/terminated-worker failure must not
@@ -236,6 +243,20 @@ export async function openCencProgressiveStream({
   const toMime = videoTag => 'video/mp4; codecs="' + videoTag +
     (hasAac ? ', mp4a.40.2' : '') + '"';
   let mime = route.mime;
+  // Direct rendering: pictures go to the renderer layered over this element.
+  const rendering = Boolean(route.render);
+  const firstFrameCallbacks = [];
+  let presenter = null;
+  const claimRenderer = () => {
+    if (!rendering || presenter) return;
+    presenter = frameRendererFor(video).claim(() => {
+      onStage('render.first-frame');
+      for (const callback of firstFrameCallbacks.splice(0)) callback();
+    });
+  };
+  const audioAhead = () => {
+    try { return bufferedAround(video.buffered, video.currentTime).bufferedAhead; } catch { return 0; }
+  };
   const policy = streamBufferPolicy({ fileSize, durationSeconds,
     saveData: Boolean(navigator.connection?.saveData), deviceMemory: navigator.deviceMemory });
   onStage('buffer.policy', policy);
@@ -315,6 +336,7 @@ export async function openCencProgressiveStream({
     if (retained) processor.keepSourceOnly();
     else processor.close({ discard: true });
     closeEme();
+    presenter?.release();
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     const endWithError = () => {
       if (closed) return;
@@ -343,6 +365,7 @@ export async function openCencProgressiveStream({
     video.removeEventListener?.('loadedmetadata', alignFirstBuffer);
     if (!retained) processor.close();
     closeEme();
+    presenter?.release();
     revokeObjectUrl();
   };
   const onAbort = () => { void close(); };
@@ -389,10 +412,21 @@ export async function openCencProgressiveStream({
       }).catch(() => fail('finish'));
       return;
     }
-    if (data.type !== 'init' && data.type !== 'media') return;
+    if (data.type !== 'init' && data.type !== 'media' && data.type !== 'frame') return;
     const unitGeneration = generation, outputSignal = outputController.signal;
     queued = queued.then(async () => {
       if (unitGeneration !== generation) return;
+      if (data.type === 'frame') {
+        if (!rendering) throw new Error('Unexpected decoded frame');
+        claimRenderer();
+        presenter.push({ bytes: new Uint8Array(data.bytes), width: data.width, height: data.height,
+          pts: data.pts, flags: data.flags });
+        resolveSeekIfReady();
+        await presenter.waitRoom(outputSignal, audioAhead);
+        if (!closed && !failed && unitGeneration === generation)
+          processor.post({ type: 'ack', id: data.id });
+        return;
+      }
       if (ms.readyState === 'ended' && buffer) buffer.timestampOffset = 0;
       await waitSourceOpen(ms, internal.signal);
       if (closed || failed) return;
@@ -436,13 +470,7 @@ export async function openCencProgressiveStream({
         }
         alignFirstBuffer();
         if (video.paused) setPrefetch();
-        if (seekPending && bufferedIntervals(video.buffered).some(([a, b]) =>
-            a <= seekPending.target + 0.15 && b > seekPending.target + 0.1)) {
-          const pending = seekPending; seekPending = null;
-          onStage('seek.buffer-ready', { target: pending.target, generation,
-            bufferedRanges: bufferedIntervals(video.buffered), ...bufferedAround(video.buffered, pending.target) });
-          pending.resolve(streamHandle);
-        }
+        resolveSeekIfReady();
       } else {
         onStage('mse.init-appended', { bytes: data.bytes.byteLength });
       }
@@ -456,6 +484,15 @@ export async function openCencProgressiveStream({
         ? 'hevc-init-unsupported' : 'source-buffer');
     });
   });
+  function resolveSeekIfReady() {
+    if (!seekPending || rendering && !presenter?.ready) return;
+    if (!bufferedIntervals(video.buffered).some(([a, b]) =>
+      a <= seekPending.target + 0.15 && b > seekPending.target + 0.1)) return;
+    const pending = seekPending; seekPending = null;
+    onStage('seek.buffer-ready', { target: pending.target, generation,
+      bufferedRanges: bufferedIntervals(video.buffered), ...bufferedAround(video.buffered, pending.target) });
+    pending.resolve(streamHandle);
+  }
   // A seek is a demand update: the same Worker, engine and byte cache serve
   // the new position, and output for the previous position is discarded.
   const seekTo = async seconds => {
@@ -464,13 +501,28 @@ export async function openCencProgressiveStream({
     const ready = new Promise((resolve, reject) => { seekPending = { target: seconds, resolve, reject }; });
     finished = false;
     outputController.abort(); outputController = new AbortController();
+    if (rendering) {
+      // Pictures restart at the preceding keyframe. Drop the buffered audio
+      // too, so the element waits instead of playing ahead of the picture.
+      presenter?.reset();
+      queued = queued.then(async () => {
+        if (closed || failed || !buffer?.buffered.length) return;
+        const end = buffer.buffered.end(buffer.buffered.length - 1);
+        await waitBufferUpdate(buffer, () => buffer.remove(0, end), internal.signal);
+      }).catch(() => {});
+    }
     generation = processor.need({ positionSeconds: seconds });
     onStage('seek.request', { target: seconds, generation, workerReused: true,
       bufferedRanges: bufferedIntervals(video.buffered) });
     return ready;
   };
   streamHandle = { url: objectUrl, inPlaceSeek: true,
-    kind: route.kind === 'eme' ? 'eme-mse' : bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
+    kind: route.kind === 'eme' ? 'eme-mse' : rendering ? 'bvc2-render'
+      : bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
+    // Direct rendering: decoded pictures, not the audio buffer, bound seeks.
+    covers: seconds => !rendering || Boolean(presenter?.covers(seconds)),
+    framesReady: () => !rendering || Boolean(presenter?.ready),
+    onFirstFrame: callback => { if (rendering) firstFrameCallbacks.push(callback); },
     close, seekTo, startProcessing: () => processor.startProcessing(),
     pauseProcessing: () => processor.pauseProcessing(),
     // A preloaded EME episode opens its key session only when it becomes the
@@ -483,6 +535,7 @@ export async function openCencProgressiveStream({
         emeSession = await prepareEme(metadata, { onFailure: code => streamHandle?.failEme(code) });
         if (closed || failed) { closeEme(); throw errorWith('CANCELED', '已切換影片'); }
       }
+      claimRenderer();
       processor.activate();
       setPrefetch();
     },

@@ -1,7 +1,7 @@
 name: BVC2 Librempeg WASM feasibility (experimental)
 on:
   push:
-    branches: [main, 'fix/bvc2-stream-download-codecs']
+    branches: [main, 'fix/bvc2-stream-download-codecs', 'claude/bytevc2-direct-rendering-videojs-edbt6v']
     paths:
       - '.github/workflows/bvc2-wasm-probe.yml'
       - 'scripts/build-bvc2-wasm-transcode.sh'

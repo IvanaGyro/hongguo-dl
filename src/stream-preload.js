@@ -12,7 +12,7 @@ export function createStreamPreload({ enabled = false, post, onStage = () => {},
   return {
     get active() { return staging; },
     capture(data) {
-      if (!staging || closed || !['init', 'media', 'done'].includes(data.type)) return false;
+      if (!staging || closed || !['init', 'media', 'frame', 'done'].includes(data.type)) return false;
       units.push(data);
       if (data.type !== 'done') {
         bytes += data.bytes.byteLength;
