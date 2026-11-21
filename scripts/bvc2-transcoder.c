@@ -15,6 +15,7 @@
 #include <libswscale/swscale.h>
 #include <emscripten/emscripten.h>
 #include <libavutil/mem.h>
+#include <libavutil/intreadwrite.h>
 #define AVIO_BUFFER 32768
 #include "bvc2-avio.h"
 
@@ -42,6 +43,7 @@ EM_ASYNC_JS(int, js_frame_out, (const uint8_t *src, int length, int width, int h
 
 
 static char last_error[256];
+static int last_remuxed;
 
 static int fail(int code, const char *where) {
     char reason[AV_ERROR_MAX_STRING_SIZE];
@@ -51,6 +53,8 @@ static int fail(int code, const char *where) {
 }
 
 EMSCRIPTEN_KEEPALIVE const char *bvc2_last_error(void) { return last_error; }
+// 1 when the last bvc2_convert wrote VVC by copying ByteVC2 NAL units.
+EMSCRIPTEN_KEEPALIVE int bvc2_last_remuxed(void) { return last_remuxed; }
 
 EMSCRIPTEN_KEEPALIVE int bvc2_decoder_available(void) {
     const AVCodec *decoder = avcodec_find_decoder_by_name("bvc2");
@@ -70,10 +74,56 @@ typedef struct Context {
     AVIOContext *reader_io, *writer_io;
     Stream reader;
     int mode, streaming;
+    // ByteVC2 slices use H.266 syntax (Librempeg decodes both with the same
+    // VVC decoder); only the bvc2/bv2C framing differs. Remux, don't encode.
+    int remux_vvc, copy, no_remux;
     double start_seconds, last_progress;
     int64_t next_pts;
     int64_t decoded_frames;
 } Context;
+
+// ByteVC2 configuration and samples are always 4-byte length-prefixed NAL
+// units (Librempeg's BVC2 CBS reads them only that way; bv2C records are
+// normalized to this form in JS). Never sniff for start codes: a 256-511
+// byte NAL's length prefix begins with 00 00 01.
+// Rewriting each length as a 4-byte start code keeps the size. movenc treats
+// Annex B VVC extradata as a signal that packets are Annex B too, builds
+// vvcC from it and converts each packet back to length-prefixed NAL units.
+static int nal_lengths_valid(const uint8_t *data, int size) {
+    for (int p = 0; p < size;) {
+        if (size - p < 4) return 0;
+        uint32_t length = AV_RB32(data + p);
+        if (length < 2 || length > (uint32_t)(size - p - 4)) return 0;
+        p += 4 + length;
+    }
+    return size > 0;
+}
+
+static void nal_lengths_to_start_codes(uint8_t *data, int size) {
+    for (int p = 0; p < size;) {
+        uint32_t length = AV_RB32(data + p);
+        AV_WB32(data + p, 1);
+        p += 4 + length;
+    }
+}
+
+static int prepare_vvc_parameters(AVCodecParameters *par) {
+    par->codec_id = AV_CODEC_ID_VVC;
+    if (!par->extradata_size)
+        return 0; // In-band only: movenc reads parameter sets from packet 1.
+    if (!nal_lengths_valid(par->extradata, par->extradata_size))
+        return AVERROR_INVALIDDATA;
+    nal_lengths_to_start_codes(par->extradata, par->extradata_size);
+    return 0;
+}
+
+static int packet_to_annexb(AVPacket *pkt) {
+    if (!nal_lengths_valid(pkt->data, pkt->size)) return AVERROR_INVALIDDATA;
+    int ret = av_packet_make_writable(pkt);
+    if (ret < 0) return ret;
+    nal_lengths_to_start_codes(pkt->data, pkt->size);
+    return 0;
+}
 
 static int write_encoded(Context *c) {
     int ret;
@@ -218,7 +268,10 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->video_in = c->input->streams[vi];
     if (c->mode == 1 && c->video_in->codecpar->codec_id != AV_CODEC_ID_BVC2)
         return fail(AVERROR_INVALIDDATA, "input is not ByteVC2");
-    if (c->mode != 0) {
+    c->remux_vvc = c->mode == 3 && !c->no_remux && !c->streaming &&
+        c->video_in->codecpar->codec_id == AV_CODEC_ID_BVC2;
+    c->copy = c->mode == 0 || c->remux_vvc;
+    if (!c->copy) {
     const AVCodec *dec = avcodec_find_decoder(c->video_in->codecpar->codec_id);
     const AVCodec *enc = c->mode == MODE_RENDER ? NULL : avcodec_find_encoder_by_name(
         c->mode == 5 ? "libx265" : c->mode == 2 ? "libaom-av1" : c->mode == 3 ? "libvvenc" : "libx264");
@@ -281,12 +334,19 @@ static int execute(Context *c, const char *input, const char *output, const char
     if (c->mode != MODE_RENDER) {
     c->video_out = avformat_new_stream(c->output, NULL);
     if (!c->video_out) return fail(AVERROR(ENOMEM), "create video stream");
-    ret = c->mode == 0
+    ret = c->copy
         ? avcodec_parameters_copy(c->video_out->codecpar, c->video_in->codecpar)
         : avcodec_parameters_from_context(c->video_out->codecpar, c->encoder);
     if (ret < 0) return fail(ret, "copy video parameters");
     c->video_out->codecpar->codec_tag = 0;
-    c->video_out->time_base = c->mode == 0 ? c->video_in->time_base : c->encoder->time_base;
+    if (c->remux_vvc) {
+        if ((ret = prepare_vvc_parameters(c->video_out->codecpar)) < 0)
+            return fail(ret, "convert ByteVC2 parameter sets");
+        // vvc1 requires every parameter set in vvcC; vvi1 allows in-band ones.
+        c->video_out->codecpar->codec_tag = c->video_out->codecpar->extradata_size
+            ? MKTAG('v', 'v', 'c', '1') : MKTAG('v', 'v', 'i', '1');
+    }
+    c->video_out->time_base = c->copy ? c->video_in->time_base : c->encoder->time_base;
     }
     for (unsigned i = 0; i < c->input->nb_streams; i++) {
         AVStream *track = c->input->streams[i];
@@ -348,14 +408,29 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->encoded = av_packet_alloc();
     if (!c->decoded || !c->scaled || !c->packet || !c->encoded)
         return fail(AVERROR(ENOMEM), "allocate frames");
-    if (c->mode != 0 && c->mode != MODE_RENDER) {
+    if (!c->copy && c->mode != MODE_RENDER) {
     c->scaled->format = c->encoder->pix_fmt;
     c->scaled->width = c->encoder->width; c->scaled->height = c->encoder->height;
     if ((ret = av_frame_get_buffer(c->scaled, 32)) < 0)
         return fail(ret, "allocate output picture");
     }
     while ((ret = av_read_frame(c->input, c->packet)) >= 0) {
-        if (c->packet->stream_index == vi && c->mode == 0) {
+        if (c->packet->stream_index == vi && c->copy) {
+            if (c->remux_vvc) {
+                int code = packet_to_annexb(c->packet);
+                if (code < 0) { av_packet_unref(c->packet); return fail(code, "convert ByteVC2 packet"); }
+                c->decoded_frames++;
+                double duration = c->video_in->duration > 0
+                    ? c->video_in->duration * av_q2d(c->video_in->time_base) : 0;
+                double seconds = c->packet->pts != AV_NOPTS_VALUE
+                    ? (c->packet->pts - (c->video_in->start_time != AV_NOPTS_VALUE ? c->video_in->start_time : 0))
+                      * av_q2d(c->video_in->time_base) : 0;
+                double progress = duration > 0 ? FFMIN(0.99, FFMAX(0, seconds / duration)) : 0;
+                if (progress >= c->last_progress + 0.005) {
+                    c->last_progress = progress;
+                    report_progress(progress);
+                }
+            }
             av_packet_rescale_ts(c->packet, c->video_in->time_base, c->video_out->time_base);
             c->packet->stream_index = c->video_out->index;
             int code = av_interleaved_write_frame(c->output, c->packet);
@@ -375,7 +450,9 @@ static int execute(Context *c, const char *input, const char *output, const char
         } else av_packet_unref(c->packet);
     }
     if (ret != AVERROR_EOF) return fail(ret, "read MP4 packets");
-    if (c->mode != 0) {
+    if (c->remux_vvc && !c->decoded_frames)
+        return fail(AVERROR_INVALIDDATA, "no ByteVC2 video packets");
+    if (!c->copy) {
     if ((ret = avcodec_send_packet(c->decoder, NULL)) < 0)
         return fail(ret, "flush BVC2 decoder");
     if ((ret = process_frames(c)) < 0) return ret;
@@ -391,12 +468,14 @@ static int execute(Context *c, const char *input, const char *output, const char
     return 0;
 }
 
-static int convert(const char *input, const char *output, const char *key, int mode, int file_size, double start_seconds) {
+static int convert(const char *input, const char *output, const char *key, int mode, int file_size,
+                   double start_seconds, int no_remux, int *remuxed) {
     Context c = {0};
-    c.mode = mode; c.streaming = file_size > 0;
+    c.mode = mode; c.streaming = file_size > 0; c.no_remux = no_remux;
     c.reader.size = file_size; c.start_seconds = start_seconds;
     last_error[0] = 0;
     int ret = execute(&c, input, output, key);
+    if (remuxed) *remuxed = c.remux_vvc ? (ret >= 0 ? 1 : -1) : 0;
     sws_freeContext(c.scale); sws_freeContext(c.render_scale);
     av_frame_free(&c.converted); av_freep(&c.packed);
     av_packet_free(&c.packet); av_packet_free(&c.encoded);
@@ -414,21 +493,30 @@ static int convert(const char *input, const char *output, const char *key, int m
 }
 
 EMSCRIPTEN_KEEPALIVE int bvc2_transcode(const char *in, const char *out, const char *key) {
-    return convert(in, out, key, 1, 0, 0);
+    return convert(in, out, key, 1, 0, 0, 0, NULL);
 }
 EMSCRIPTEN_KEEPALIVE int bvc2_convert(const char *in, const char *out, const char *key, int mode) {
     if (mode != 0 && mode != 2 && mode != 3 && mode != 4 && mode != 5)
         return fail(AVERROR(EINVAL), "invalid output mode");
-    return convert(in, out, key, mode, 0, 0);
+    int remuxed = 0;
+    last_remuxed = 0;
+    int ret = convert(in, out, key, mode, 0, 0, 0, &remuxed);
+    if (remuxed > 0) last_remuxed = 1;
+    // Parameter sets that standard VVC tooling cannot describe: re-encode.
+    else if (remuxed < 0) {
+        remove(out);
+        ret = convert(in, out, key, mode, 0, 0, 1, NULL);
+    }
+    return ret;
 }
 EMSCRIPTEN_KEEPALIVE int bvc2_stream(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, 4, size, start);
+    return convert(NULL, NULL, key, 4, size, start, 0, NULL);
 }
 // Decode only: AAC fMP4 through writeChunk, I420 pictures through writeFrame.
 EMSCRIPTEN_KEEPALIVE int bvc2_play(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, MODE_RENDER, size, start);
+    return convert(NULL, NULL, key, MODE_RENDER, size, start, 0, NULL);
 }

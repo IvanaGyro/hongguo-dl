@@ -88,7 +88,7 @@ Vite 開發模式預設將同來源的 `/api/` 轉發到本機 Worker；`.env` �
 
 - **已通過**：合成 Chromium／Firefox CENC 串流、Seek／續播／背壓；真實紅果 HEVC 的 HTTP 206、WASM 解密轉封裝與 FFmpeg 解碼；macOS WebKit 真實 1080p 首影格及 120 秒遠距 Seek。
 - **尚待驗收**：WebKit 真正 AAC 音訊輸出（Web Audio RMS 為 0 尚不代表實際靜音）、真實 reload／播畢、Windows／Android 解碼及長片資源使用。
-- **ByteVC2**：已整合實驗性 Range/MSE 串流與原編碼、H.264、H.265、AV1、標準 VVC 下載輸出，已以一份真實 720p CENC ByteVC2 樣本驗證全集轉碼及串流片段解碼；播放預設使用增量串流，仍須注意裝置效能與記憶體限制。詳見 [技術說明](docs/bvc2-wasm.md)。
+- **ByteVC2**：已整合實驗性 Range/MSE 串流與原編碼、H.264、H.265、AV1、標準 VVC 下載輸出（ByteVC2 選 VVC 時直接重新封裝成 `vvc1`，不重新編碼），已以一份真實 720p CENC ByteVC2 樣本驗證全集轉碼及串流片段解碼；播放預設使用增量串流，仍須注意裝置效能與記憶體限制。詳見 [技術說明](docs/bvc2-wasm.md)。
 - **公開來源檢測**：真實 CDN 候選可能同時有 HTTP 403／206；腳本只做有界讀取，遇 429 停止。無 DRM 授權、HLS、帳號登入或任意網域代理支援；媒體 URL／金鑰不進日誌。
 - **下載限制**：Blob／FFmpeg 暫存及 ZIP／MP4 合併均有限額；不是所有 60 集都能直接無損併成單一 MP4。仍需 Android Firefox 真實大批次驗收。
 

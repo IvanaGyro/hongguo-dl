@@ -114,20 +114,28 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.equal(url.searchParams.has('registeredAt'), false);
       assert.equal(url.searchParams.get('version_name'), '7.4.5.32');
       for (const key of ['version_code', 'update_version_code']) assert.equal(url.searchParams.get(key), '74532');
-      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
       assert.equal(url.searchParams.has('ts'), false);
-      assert.equal(url.searchParams.has('video_id'), false);
       assert.equal(new URLSearchParams(url.search).has('_rticket'), true);
       assert.ok(options.headers['x-medusa']);
       assert.ok(options.headers['x-helios']);
       assert.equal(options.headers['x-argus'], undefined);
-      assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);
+      if (options.method === 'GET') {
+        // Third step: bodyless signed video_tab recovery for the same episode.
+        assert.equal(url.pathname, '/reading/bookapi/video_tab/multi_video_model/v1/');
+        assert.equal(url.searchParams.get('video_id'), '123');
+        assert.equal(url.searchParams.get('device_level'), '3');
+        assert.equal(options.body, undefined);
+      } else {
+        assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+        assert.equal(url.searchParams.has('video_id'), false);
+        assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);
+      }
       assert.match(options.headers['User-Agent'], /^com\.phoenix\.read\/74532 /);
       return new Response('');
     };
     await assert.rejects(fetchAppPlayUrl('123', { identity: installation, session: {} }), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 2 });
-    assert.equal(calls.length, 2);
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, emptyResponseCount: 3 });
+    assert.deepEqual(calls.map(url => url.hostname.split('.')[0]), ['api5-normal-sinfonlinea', 'api5-normal-sinfonlineb', 'api5-normal-sinfonlineb']);
     assert.ok(calls.every(url => url.pathname.includes('multi_video_model')));
     const response = await worker.fetch(new Request('https://example.workers.dev/api/source?sid=1&vid=123&channel=app', {
       headers: { 'X-Playback-Device': JSON.stringify(installation) }
@@ -135,7 +143,7 @@ test('source empty-200 retries retain the same IDs and never register another de
     assert.equal(response.status, 502);
     assert.deepEqual(await response.json().then(data => ({ code: data.error.code,
       upstreamStatus: data.error.upstreamStatus, count: data.error.emptyResponseCount })), {
-      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 2 });
+      code: 'EMPTY_RESPONSE', upstreamStatus: 200, count: 3 });
   } finally { globalThis.fetch = original; }
 });
 

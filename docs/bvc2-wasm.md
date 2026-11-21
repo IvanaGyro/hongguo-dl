@@ -94,6 +94,23 @@ node scripts/verify-bvc2-fixture.mjs /path/to/authorized-bvc2.mp4
 Worker 使用 256 KiB 讀取快取、完整 fragment assembler 與 ACK 背壓；主執行緒沿用 MSE 緩衝回收、取消與索引跳轉。
 下載使用 `bvc2_convert(in,out,key,mode)`，可保留原編碼或轉 H.264、H.265、AV1、標準 VVC。
 
+### ByteVC2 → VVC：直接重新封裝，不重新編碼
+
+Librempeg 的 `ff_bvc2_decoder` 與 `ff_vvc_decoder` 共用同一套 VVC 解碼流程（`vvc_decode_init`／`vvc_decode_frame`），
+`ff_cbs_type_bvc2` 也沿用 H.266 的 NAL unit 型別與語法樣板；唯一差別是 `cbs_bvc2_split_fragment`
+固定以 4-byte 長度讀取 NAL、不解析 `vvcC`。換言之 ByteVC2 的 slice 資料就是 H.266 語法，差異只在
+`bvc2`／`bv2C` 封裝。因此來源為 ByteVC2 且使用者選擇 VVC 時，`bvc2_convert` 的 mode 3 會：
+
+1. 把 `bv2C`（JS 已正規化為 4-byte 長度 NAL 序列）與每個 sample 的長度欄位原地改寫成 4-byte start code；
+2. 交給 movenc 以 `AV_CODEC_ID_VVC` 輸出：它由 Annex B extradata 建立 `vvcC`（`vvc1`；若沒有設定參數集則用 `vvi1`
+   並從第一個 sample 取得），再把 sample 轉回長度前綴格式；
+3. 不經過解碼器與 VVenC，畫質無損，耗時接近純 I/O。
+
+若 movenc 無法描述該參數集（例如 `vvcC` 建立失敗），會刪除部分輸出並退回 VVenC 重新編碼。
+`bvc2_last_remuxed()` 回傳上一次 `bvc2_convert` 是否走重新封裝路徑；非 ByteVC2 來源選 VVC 仍使用 VVenC。
+`verify-video-outputs.mjs` 以兩種 `bv2C` 佈局的合成來源驗證：必須走重新封裝、輸出只含 `vvc1`／`vvcC`，
+且 Annex B NAL 序列與原始 VVC 逐位元組相同。
+
 此版補齊原 pin 缺少的 `bv2C` MOV 讀取／寫入與 `bvc2` MP4 mux tag；不會將 ByteVC2 冒充 `vvc1`。
 編碼 packet duration 缺失時補上每幀 duration，避免 MP4 edit list 省略最後一幀；進度依來源 track duration 回報。
 x265 改為明確單執行緒同步路徑（無 pool/WPP/lookahead），避免在非 pthread WASM 等待不存在的編碼執行緒。
