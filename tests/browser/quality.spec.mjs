@@ -66,8 +66,10 @@ test('a rendition list that arrives later extends the menu without changing what
 });
 
 test('a manual quality lasts for the session and resets for a new series or a reload', async ({ app, page, context }) => {
+  // Real clear media here: a request held across a reload is reported by
+  // WebKit as an uncaught access-control error, which says nothing about
+  // quality choices.
   await emulate(context);
-  app.fault('media', HELD);
   const two = () => [variant('clear.mp4', { quality: '720p' }), variant('clear.mp4', { quality: '480p' })];
   app.addSeries(42, { title: 'Session quality', episodes: [two(), two()] });
   app.addSeries(43, { title: 'Other series', episodes: [[variant('clear.mp4', { quality: '540p' })]] });

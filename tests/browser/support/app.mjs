@@ -191,7 +191,22 @@ export class App {
     });
   }
 
+  // Wait until `count` queue jobs are finished; on timeout, report what the
+  // queue shows (status, detail and error of each job).
+  async expectQueueCompleted(count, timeout = 60_000) {
+    await expect(this.page.locator('#queue .status.s-completed')).toHaveCount(count, { timeout })
+      .catch(async error => {
+        const jobs = await this.page.locator('#queue .job').evaluateAll(nodes => nodes.map(node =>
+          [node.querySelector('.status')?.textContent, node.querySelector('.job-meta')?.textContent,
+            node.querySelector('.job-error')?.textContent].filter(Boolean).join(' | ')));
+        throw new Error(error.message + '\nqueue: ' + JSON.stringify(jobs) +
+          '\nbulk: ' + await this.page.locator('#bulk-status').textContent().catch(() => ''));
+      });
+  }
+
   async chooseQuality(value) {
+    // The player hides its controls while playing; pointing at it shows them.
+    await this.page.locator('#player-stage').hover();
     await this.page.locator('#player-settings-toggle').click();
     await this.page.locator('#player-settings [data-settings-target="quality"]').click();
     await this.page.locator(`#player-quality-options [data-choice-value="${value}"]`).click();

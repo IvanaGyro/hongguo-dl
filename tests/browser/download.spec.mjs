@@ -39,7 +39,7 @@ test('download a series: queue, reload, save, ZIP and merged MP4', async ({ app,
     await app.open(42);
     await app.mode('download');
     await page.locator('#add-queue').click();
-    await expect(completed(page)).toHaveCount(2, { timeout: 60_000 });
+    await app.expectQueueCompleted(2, 60_000);
     await expect(completed(page)).toHaveText(['可匯出', '可匯出']);
     await expect(page.locator('#queue .job-topline b')).toHaveText(['Download test · 第 1 集', 'Download test · 第 2 集']);
     expect(prompts).toBe(0);
@@ -97,7 +97,7 @@ test('download an encrypted episode: the saved MP4 plays without the key', async
   await app.mode('download');
   await page.locator('#output-mode').selectOption('copy');
   await page.locator('#add-queue').click();
-  await expect(completed(page)).toHaveCount(1, { timeout: 120_000 });
+  await app.expectQueueCompleted(1, 120_000);
   const download = page.waitForEvent('download');
   await page.locator('#queue [data-action="save"]').click();
   const path = await (await download).path();
@@ -128,6 +128,6 @@ test('a job interrupted by leaving the page resumes only when retried', async ({
 
   await test.step('retrying finishes it', async () => {
     await page.locator('#queue [data-action="retry"]').click();
-    await expect(completed(page)).toHaveCount(1, { timeout: 60_000 });
+    await app.expectQueueCompleted(1, 60_000);
   });
 });

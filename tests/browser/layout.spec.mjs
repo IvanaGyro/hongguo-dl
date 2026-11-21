@@ -62,7 +62,7 @@ test('download page fits every width', async ({ app, page }, testInfo) => {
   await page.locator('#select-none').click();
   for (const i of [0, 1, 2]) await page.locator('#episodes input[data-vid]').nth(i).check();
   await page.locator('#add-queue').click();
-  await expect(page.locator('#queue .status.s-completed')).toHaveCount(3, { timeout: 60_000 });
+  await app.expectQueueCompleted(3, 60_000);
   for (const width of WIDTHS) {
     await test.step(`${width}px`, async () => {
       await page.setViewportSize({ width, height: 900 });
