@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Independent test vectors from N3urda/hongguoTV (GPL-3.0-only):
 // kotlin-tv/core/src/test/resources/signing-v5-{f13,carrier}.json
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const { gunzipSync } = require('node:zlib');
-const source = require('../worker/vendor/app-source.js');
-const f13 = require('./fixtures/signing-v5-f13.json');
-const carriers = require('./fixtures/signing-v5-carrier.json');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
+import source from '../worker/vendor/app-source.js';
+import f13 from './fixtures/signing-v5-f13.json' with { type: 'json' };
+import carriers from './fixtures/signing-v5-carrier.json' with { type: 'json' };
 
 test('v5 Medusa F13 matches all 32 independent SDK digest fixtures', () => {
   assert.equal(f13.length, 32);

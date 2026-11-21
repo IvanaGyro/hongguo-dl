@@ -4,12 +4,9 @@
 // blob 89f48bb174f558988807ee3ceab2a6011cfff229 (fqapp rust/testdata/vectors.json provenance).
 // Four field3 values were recovered once from those external ciphertexts by a separate
 // AES/Simon decoder before this implementation existed, then pinned below. No test decrypt/re-sign loop.
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const implementation = __dirname + '/playback-signature.js';
-const api = fs.existsSync(implementation) ? require(implementation) : null;
-const ready = () => assert.ok(api, 'Argus/Ladon implementation is missing');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import api from './playback-signature.js';
 const GOLDEN = [
   {
     "query": "aid=1967&device_id=dev_aaaaaaaa&iid=111",
@@ -38,7 +35,6 @@ const GOLDEN = [
 ];
 
 test('primary ProtoBuf exact bean and signed/overflow uint32 varints', () => {
-  ready();
   const bean = new api.ProtoBuf();
   bean.putVarint(1, 1077940818).putVarint(2, 2).putVarint(3, 305419896)
     .putUtf8(4, '1967').putUtf8(5, 'test_device_id').putUtf8(6, '1611921764')
@@ -53,7 +49,6 @@ test('primary ProtoBuf exact bean and signed/overflow uint32 varints', () => {
 });
 
 test('primary Simon ciphertext and final four expanded round keys', () => {
-  ready();
   const k = [1111111111111111111n, 2222222222222222222n, 3333333333333333333n, 4444444444444444444n];
   const want = [6071150433487837324n, 2027321285990159935n];
   assert.deepEqual(api.Simon.encrypt(1234567890123456789n, 9876543210987654321n, k), want);
@@ -62,12 +57,10 @@ test('primary Simon ciphertext and final four expanded round keys', () => {
 });
 
 test('primary Ladon fixed random four-byte golden', () => {
-  ready();
   assert.equal(api.Ladon.encrypt(1700000000, 1611921764, 1967, Buffer.from('01020304', 'hex')), 'AQIDBKM7Y7bWnOIUXmTybD6/MpGbuge4sBwUJsyHVivhtMsH');
 });
 
 test('primary Argus hash vectors and independently computed raw JSON MD5/SM3', () => {
-  ready();
   assert.equal(api.Argus.bodyHash('').toString('hex'), '106e34a2b8c7');
   assert.equal(api.Argus.queryHash('').toString('hex'), '106e34a2b8c7');
   assert.equal(api.Argus.queryHash('aid=1967&device_id=123').toString('hex'), '925b8d86b20f');
@@ -75,7 +68,6 @@ test('primary Argus hash vectors and independently computed raw JSON MD5/SM3', (
 });
 
 for (const [index, row] of GOLDEN.entries()) test(`primary Argus551 exact ciphertext vector ${index + 1}`, () => {
-  ready();
   const device = new URLSearchParams(row.query).get('device_id');
   assert.equal(api.Argus.sign(row.query, '', row.ts, 1967, 1611921764, device, '', row.randField), row.want);
   assert.equal(api.Argus.sign(row.query, '', row.ts, 1967, 1611921764, device, '', row.randField + 4294967296), row.want, 'nonce truncates uint32');
@@ -83,7 +75,6 @@ for (const [index, row] of GOLDEN.entries()) test(`primary Argus551 exact cipher
 });
 
 test('final query bytes/time and actual raw body bind signatures; iid never becomes field16', () => {
-  ready();
   const input = { query: 'aid=1967&device_id=test_device_id&iid=456&version_name=6.5.1.32', ts: 1700000000,
     randField: 420072733, ladonRandom: Buffer.from('01020304', 'hex') };
   const empty = api.signPlayer(input), zero = api.signPlayer({ ...input, body: Buffer.alloc(0) });

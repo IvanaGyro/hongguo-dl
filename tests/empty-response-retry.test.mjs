@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { retryEmptyResponse } = require('../worker/vendor/empty-response-retry');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import emptyResponseRetry from '../worker/vendor/empty-response-retry.js';
+
+const { retryEmptyResponse } = emptyResponseRetry;
 const empty = (extra) => Object.assign(new Error('Upstream HTTP 200 empty'), {code:'EMPTY_RESPONSE',status:200}, extra);
 const fail = (code,status) => Object.assign(new Error(code),{code,status});
 test('two 200-empty replies move through up to three distinct signed requests without fixed delays', async()=>{

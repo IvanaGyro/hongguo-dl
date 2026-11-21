@@ -1,12 +1,14 @@
 // Exercise the exact Rust-Wasm bridge that runs in Cloudflare workerd.
 // Compare against independent SM3/Argus golden vectors and the legacy JS
 // implementation, so a port cannot silently change signed API payloads.
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
-const { resolve } = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import sm3 from '../worker/vendor/sm3.js';
+import signing from '../worker/vendor/playback-signature.js';
+import appSource from '../worker/vendor/app-source.js';
+import createRustBridge from '../worker/rust-sm3.cjs';
 
-const sm3 = require('../worker/vendor/sm3.js');
 const lengths = [0, 1, 3, 55, 56, 63, 64, 65, 127, 128, 255, 1024, 16384];
 const payloads = lengths.map(len => {
   const input = Buffer.alloc(len);
@@ -17,7 +19,6 @@ const unicode = Buffer.from('繁體中文與 Rust WASM ✨');
 // Capture legacy reference vectors BEFORE installing the Rust implementation.
 const expected = payloads.map(input => sm3(input).toString('hex'));
 const expectedUnicode = sm3(unicode).toString('hex');
-const signing = require('../worker/vendor/playback-signature.js');
 const FIXTURES = [
   { query: 'aid=1967&device_id=dev_aaaaaaaa&iid=111', ts: 1700000000,
     randField: 659662259, ladonRandom: Buffer.from('01020304', 'hex') },
@@ -35,7 +36,6 @@ const FIXTURES = [
     body: Buffer.from('Hello Rust!') }
 ];
 const originalSignatures = FIXTURES.map(data => signing.signPlayer(data));
-const appSource = require('../worker/vendor/app-source.js');
 const GORGON_FIXTURES = [
   ['aid=1967&device_id=123', null, 1700000000, 0x1234],
   ['a=1&url=%2F&timestamp=2026', Buffer.from('hello'), 1700000001, 0],
@@ -73,10 +73,10 @@ const F13_FIXTURES = [
   return { query, body, ts, khronos };
 }));
 const originalF13 = F13_FIXTURES.map(f => appSource.hashF13(f.query, f.body, f.ts, f.khronos));
-const compiled = readFileSync(resolve(__dirname, '../rust/crypto/dist/hongguo_crypto.wasm'));
+const compiled = readFileSync(new URL('../rust/crypto/dist/hongguo_crypto.wasm', import.meta.url));
 const wasmModule = new WebAssembly.Module(compiled);
 const { sm3: rustSm3, simonBlocks, ladonTransform, gorgonTransform,
-  medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5, medusaHashF13 } = require('../worker/rust-sm3.cjs')(wasmModule);
+  medusaXmXor, medusaAesV3, medusaGetIv, medusaSumMd5, medusaHashF13 } = createRustBridge(wasmModule);
 const { Argus, Simon, Ladon } = signing;
 
 test('Rust WebAssembly SM3 official vectors', () => {
@@ -138,7 +138,7 @@ test('Rust signing bridge rejects invalid or unsafe input lengths', () => {
 });
 
 test('Helios uses shared Rust Ladon rounds and matches fixed ciphertext', () => {
-  const { helios } = require('../worker/vendor/app-source.js');
+  const { helios } = appSource;
   const originalRandom = Math.random;
   Math.random = () => 0x12345678 / 0x100000000;
   try {

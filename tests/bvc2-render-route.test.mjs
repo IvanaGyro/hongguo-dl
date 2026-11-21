@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-import { test, expect } from 'bun:test';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import { decideMediaRoute, BVC2_RENDER_MIME } from '../src/media-route.js';
 import { normalizeDemand, createDemandTable } from '../src/media-demand.js';
 
@@ -11,41 +12,41 @@ const bvc2 = (fields = {}) => decideMediaRoute({ bridge: 'bvc2', codec: 'h264', 
 
 test('ByteVC2 render demand uses the AAC-only MSE route', () => {
   const route = bvc2({ render: true });
-  expect(route.kind).toBe('mse');
-  expect(route.render).toBe(true);
-  expect(route.reason).toBe('bvc2-render');
-  expect(route.candidates.mime).toBe(BVC2_RENDER_MIME);
+  assert.equal(route.kind, 'mse');
+  assert.equal(route.render, true);
+  assert.equal(route.reason, 'bvc2-render');
+  assert.equal(route.candidates.mime, BVC2_RENDER_MIME);
 });
 
 test('ByteVC2 keeps the H.264 transcode without render or without AAC', () => {
-  expect(bvc2().render).toBeUndefined();
-  expect(bvc2().candidates.mime).toBe('video/mp4; codecs="avc1.42C01F, mp4a.40.2"');
+  assert.equal(bvc2().render, undefined);
+  assert.equal(bvc2().candidates.mime, 'video/mp4; codecs="avc1.42C01F, mp4a.40.2"');
   const silent = decideMediaRoute({ bridge: 'bvc2', codec: 'h264', metadata: metadata({ hasAac: false }),
     processing: true, typeSupport: { 'video/mp4; codecs="avc1.42C01F"': true }, render: true });
-  expect(silent.kind).toBe('mse');
-  expect(silent.render).toBeUndefined();
-  expect(silent.candidates.mime).toBe('video/mp4; codecs="avc1.42C01F"');
+  assert.equal(silent.kind, 'mse');
+  assert.equal(silent.render, undefined);
+  assert.equal(silent.candidates.mime, 'video/mp4; codecs="avc1.42C01F"');
 });
 
 test('render asks for AAC MSE support before routing', () => {
   const route = decideMediaRoute({ bridge: 'bvc2', codec: 'h264', metadata: metadata(),
     processing: true, typeSupport: {}, render: true });
-  expect(route.kind).toBe('pending');
-  expect(route.types).toEqual([BVC2_RENDER_MIME]);
+  assert.equal(route.kind, 'pending');
+  assert.deepEqual(route.types, [BVC2_RENDER_MIME]);
 });
 
 test('render is a ByteVC2-only demand preference that re-decides the route', () => {
   const base = { id: 'd', source: { url: 'https://cdn.example/a.mp4', bridge: 'bvc2' },
     output: 'playable-media' };
-  expect(normalizeDemand({ ...base, revision: 1, render: true }).render).toBe(true);
-  expect(normalizeDemand({ ...base, revision: 1, source: { url: base.source.url, bridge: 'cenc',
-    key: '0'.repeat(32) }, render: true }).render).toBe(false);
-  expect(() => normalizeDemand({ ...base, revision: 1, render: 'yes' })).toThrow();
+  assert.equal(normalizeDemand({ ...base, revision: 1, render: true }).render, true);
+  assert.equal(normalizeDemand({ ...base, revision: 1, source: { url: base.source.url, bridge: 'cenc',
+    key: '0'.repeat(32) }, render: true }).render, false);
+  assert.throws(() => normalizeDemand({ ...base, revision: 1, render: 'yes' }));
   const table = createDemandTable();
   table.upsert({ ...base, revision: 1, render: false });
   const changed = table.upsert({ ...base, revision: 2, render: true });
-  expect(changed.sourceChanged).toBe(true);
-  expect(changed.positionChanged).toBe(true);
+  assert.equal(changed.sourceChanged, true);
+  assert.equal(changed.positionChanged, true);
 });
 
 test('a repeated seek to the demanded position starts a new output generation', () => {
@@ -54,18 +55,18 @@ test('a repeated seek to the demanded position starts a new output generation', 
   const table = createDemandTable();
   const first = table.upsert({ ...base, revision: 1 }).demand;
   const same = table.upsert({ ...base, revision: 2 });
-  expect(same.positionChanged).toBe(false);
-  expect(same.demand.positionRevision).toBe(first.positionRevision);
+  assert.equal(same.positionChanged, false);
+  assert.equal(same.demand.positionRevision, first.positionRevision);
   const seek = table.upsert({ ...base, revision: 3, seekId: 1 });
-  expect(seek.positionChanged).toBe(true);
-  expect(seek.demand.positionRevision).toBe(3);
-  expect(() => normalizeDemand({ ...base, revision: 4, seekId: -1 })).toThrow();
+  assert.equal(seek.positionChanged, true);
+  assert.equal(seek.demand.positionRevision, 3);
+  assert.throws(() => normalizeDemand({ ...base, revision: 4, seekId: -1 }));
 });
 
 test('render falls back to the H.264 transcode when AAC-only MSE is unsupported', () => {
   const route = bvc2({ render: true, typeSupport: { [BVC2_RENDER_MIME]: false,
     'video/mp4; codecs="avc1.42C01F, mp4a.40.2"': true } });
-  expect(route.kind).toBe('mse');
-  expect(route.render).toBeUndefined();
-  expect(route.candidates.mime).toBe('video/mp4; codecs="avc1.42C01F, mp4a.40.2"');
+  assert.equal(route.kind, 'mse');
+  assert.equal(route.render, undefined);
+  assert.equal(route.candidates.mime, 'video/mp4; codecs="avc1.42C01F, mp4a.40.2"');
 });
