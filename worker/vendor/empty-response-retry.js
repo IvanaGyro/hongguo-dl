@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Only HTTP 200 with an empty upstream body is retryable here.
-// Explicit refusal, 429, invalid responses and network errors are not retried.
-const { setTimeout: delay } = require('node:timers/promises');
+// Only HTTP 200 with an empty upstream body moves to the next request.
+// Explicit refusal, 429, invalid responses and network errors are not retried;
+// an empty body carrying Retry-After is a server backoff and ends recovery.
+// Each attempt is a different signed endpoint, so no fixed delay is inserted.
 const { throwIfAborted } = require('./request-signal');
 
 async function retryEmptyResponse(request, {
     attempts = 3, deadline = Date.now() + 12000, signal,
-    afterEmpty = async () => {}, wait = delay
+    afterEmpty = async () => {}
 } = {}) {
     if (!Number.isInteger(attempts) || attempts < 1 || attempts > 3)
         throw new TypeError('Invalid bounded retry count');
@@ -19,12 +20,11 @@ async function retryEmptyResponse(request, {
                 error.emptyResponseCount = attempt + 1;
                 error.upstreamStatus = 200;
             }
-            if (error?.code !== 'EMPTY_RESPONSE' || attempt + 1 >= attempts ||
+            if (error?.code !== 'EMPTY_RESPONSE' || error.retryAfter || attempt + 1 >= attempts ||
                 deadline - Date.now() < 1500) throw error;
             await afterEmpty(attempt);
             throwIfAborted(signal);
             if (deadline - Date.now() < 1500) throw error;
-            await wait(attempt === 0 ? 300 : 750, undefined, { signal });
         }
     }
     throw new Error('Unreachable retry state');
