@@ -18,7 +18,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   // Long playback runs only on request: `--grep @slow`.
   grepInvert: process.env.HONGGUO_SLOW ? undefined : /@slow/,
-  reporter: process.env.CI ? [['list'], ['github']] : 'list',
+  reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${PORT}/hongguo-dl/`,
     trace: 'retain-on-first-failure',

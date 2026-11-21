@@ -9,7 +9,9 @@
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
     "test": "bun test tests/unit",
-    "check": "bun run test && bun run build && bunx wrangler deploy --dry-run --outdir /tmp/hongguo-worker"
+    "check": "bun run test && bun run build && bunx wrangler deploy --dry-run --outdir /tmp/hongguo-worker",
+    "test:browser": "playwright test",
+    "test:live": "node --test --test-reporter=spec tests/live/pipeline-health.test.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.10",

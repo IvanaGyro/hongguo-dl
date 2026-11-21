@@ -44,9 +44,12 @@ Worker 是**唯一需要執行的服務端運算**。GitHub Pages 沒有反向�
 
 ```sh
 bun ci
-bun run test
+bun run test          # 單元測試（tests/unit）
 bun run build
+bunx playwright test  # 瀏覽器行為測試（tests/browser；需 FFmpeg 與 Playwright 瀏覽器）
 ```
+
+測試分層、各檔案涵蓋範圍與已知問題見 [測試目錄](docs/test-catalog.md)。
 
 FFmpeg.wasm 核心由建置腳本 gzip 壓縮成約 9.8 MiB，避免 Cloudflare Worker Assets 的 25 MiB 限制。此版實際部署在 GitHub Pages，不再需要把此檔案放進 Worker。
 

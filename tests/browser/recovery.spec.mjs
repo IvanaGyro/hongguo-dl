@@ -72,6 +72,27 @@ const FAULTS = [
     message: /請等一分鐘/
   },
   {
+    name: 'a CDN read fails once in the middle of the episode (HTTP 520)',
+    variants: [variant('cenc.mp4')],
+    // A failed CDN URL is not retried; the refreshed source list brings a
+    // fresh signed URL, as the real source API does.
+    setup: ({ app }) => {
+      let failed = false;
+      const { media, ...fresh } = variant('cenc.mp4', { host: 'fresh' });
+      app.fault('source', ({ n }) => n >= 1 && { json: { variants: [fresh] } });
+      app.fault('media', ({ range }) => {
+        const start = Number(/^bytes=(\d+)/.exec(range)?.[1] || 0);
+        if (failed || start < 1024 * 1024) return null;
+        failed = true;
+        return refuse(520);
+      });
+    },
+    after: async ({ app }) => {
+      await app.seek(120);
+      await app.expectPlaying(1, { from: 120, to: 135 });
+    }
+  },
+  {
     name: 'incremental decryption is unavailable (no WASM, no EME)',
     variants: [variant('cenc-medium.mp4')],
     setup: async ({ context }) => {
@@ -105,6 +126,21 @@ for (const fault of FAULTS) {
     } else {
       await app.expectPlaying(1, { from: 0.5, timeout: 60_000 });
     }
+    await fault.after?.({ app, page });
     await fault.check?.({ app, page });
   });
 }
+
+test('the device registered once is reused after a reload', async ({ app, page }) => {
+  withDevices(app);
+  app.addSeries(42, { title: 'Device reuse', episodes: [[variant('clear.mp4')]] });
+  await page.goto('./');
+  await app.open(42);
+  await app.expectPlaying(1, { from: 0.5 });
+  await page.reload();
+  await page.locator('[data-recent-id="42"]').click();
+  await app.expectPlaying(1, { from: 0.5 });
+  expect(app.requestsOf('device')).toHaveLength(1);
+  const ids = new Set(app.requestsOf('source').filter(r => r.device).map(r => r.device.device_id));
+  expect([...ids]).toHaveLength(1);
+});

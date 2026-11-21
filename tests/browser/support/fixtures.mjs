@@ -30,6 +30,8 @@ const RECIPES = {
   'clear.mp4': out => ffmpeg(video(180), out),
   'cenc-short.mp4': out => ffmpeg([...video(4), ...encrypt], out),
   'cenc-medium.mp4': out => ffmpeg([...video(20), ...encrypt], out),
+  'clear-portrait.mp4': out => ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=270x480:rate=12:duration=20',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'], out),
   'cenc.mp4': out => ffmpeg([...video(180), ...encrypt], out),
   'cenc-fmp4-sidx.mp4': out => {
     const clear = join(MEDIA_DIR, 'clear.mp4');
@@ -68,6 +70,18 @@ function shakaPackager() {
   return path;
 }
 
+// Long episodes for the @slow specs only (HONGGUO_SLOW=1).
+const SLOW_RECIPES = {
+  'cenc-300s.mp4': out => ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=480x270:rate=12:duration=300',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=300',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-g', '24', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '48k', '-shortest', ...encrypt], out),
+  'cenc-1800s.mp4': out => ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=480x270:rate=6:duration=1800',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=22050:duration=1800',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-g', '12', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '32k', '-shortest', ...encrypt], out)
+};
+
 export function mediaPath(name) {
   return join(MEDIA_DIR, name);
 }
@@ -76,7 +90,8 @@ export default function globalSetup() {
   mkdirSync(MEDIA_DIR, { recursive: true });
   const stamp = join(MEDIA_DIR, 'version');
   const fresh = existsSync(stamp) && readFileSync(stamp, 'utf8') === VERSION;
-  for (const [name, make] of Object.entries(RECIPES))
+  const recipes = { ...RECIPES, ...(process.env.HONGGUO_SLOW ? SLOW_RECIPES : {}) };
+  for (const [name, make] of Object.entries(recipes))
     if (!fresh || !existsSync(join(MEDIA_DIR, name))) make(join(MEDIA_DIR, name));
   writeFileSync(stamp, VERSION);
 }

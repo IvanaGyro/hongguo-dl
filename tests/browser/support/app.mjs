@@ -12,7 +12,7 @@ import { KEY, mediaPath } from './fixtures.mjs';
 
 export { expect, KEY };
 
-const CDN = 'https://cdn.fqnovelvod.com/';
+const OPEN_RANGE_CAP = 8 * 1024 * 1024;
 const files = new Map();
 const bytesOf = name => {
   if (!files.has(name)) files.set(name, new Uint8Array(readFileSync(mediaPath(name))));
@@ -132,7 +132,10 @@ export class App {
     const bytes = bytesOf(name);
     const match = /^bytes=(\d+)-(\d*)$/.exec(range);
     const first = match ? Number(match[1]) : 0;
-    const last = match?.[2] ? Math.min(Number(match[2]), bytes.length - 1) : bytes.length - 1;
+    // Like real CDNs, answer an open-ended range with a capped part; the app
+    // continues at the boundary. (One huge fulfilled body also fails.)
+    const last = Math.min(match?.[2] ? Number(match[2]) : bytes.length - 1, bytes.length - 1,
+      match && !match[2] ? first + OPEN_RANGE_CAP - 1 : Infinity);
     if (first >= bytes.length) return route.fulfill({ status: 416, headers: {
       'Access-Control-Allow-Origin': '*', 'Content-Range': `bytes */${bytes.length}` } });
     return route.fulfill({ status: match ? 206 : 200, contentType: 'video/mp4', headers: {
