@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Experimental single-threaded ByteVC2 -> H.264/AAC MP4 transcoder.
+// Experimental single-threaded ByteVC2 -> H.264/AAC MP4 transcoder, plus a
+// decode-only render mode (bvc2_play) for direct WebGL2 presentation.
 // This is invoked from Emscripten MEMFS, not from the FFmpeg CLI.
 // Keep this separate from the production player until a real BVC2 fixture passes.
 #include <stdint.h>
@@ -21,6 +22,24 @@
 EM_JS(void, report_progress, (double value), {
     if (Module["onProgress"]) Module["onProgress"](value);
 });
+
+// Render mode: one packed 8-bit I420 picture per call. The awaited consumer
+// applies backpressure exactly like js_output_write does for fMP4 bytes.
+EM_ASYNC_JS(int, js_frame_out, (const uint8_t *src, int length, int width, int height,
+    double pts, int flags), {
+    try {
+        const data = HEAPU8.slice(src, src + length);
+        await Module['writeFrame'](data, { width, height, pts, flags });
+        return 0;
+    } catch (error) {
+        Module['bridgeError'] = error?.name || 'FrameError';
+        return -5;
+    }
+});
+
+#define MODE_RENDER 6
+#define FRAME_BT709 1
+#define FRAME_FULL_RANGE 2
 
 
 static char last_error[256];
@@ -47,9 +66,11 @@ typedef struct Context {
     AVFormatContext *input, *output;
     AVCodecContext *decoder, *encoder;
     AVStream *video_in, *video_out, *audio_in, *audio_out;
-    AVFrame *decoded, *scaled;
+    AVFrame *decoded, *scaled, *converted;
+    uint8_t *packed;
+    int packed_size;
     AVPacket *packet, *encoded;
-    struct SwsContext *scale;
+    struct SwsContext *scale, *render_scale;
     AVIOContext *reader_io, *writer_io;
     Stream reader;
     int mode, streaming;
@@ -124,9 +145,67 @@ static int encode_frame(Context *c, AVFrame *frame) {
     return write_encoded(c);
 }
 
+// Decoded pictures go to the page's WebGL2 renderer without re-encoding.
+// Only non-8-bit-4:2:0 output is converted; 8-bit I420 is copied as is.
+static int render_frame(Context *c) {
+    AVFrame *source = c->decoded;
+    int width = source->width, height = source->height, ret;
+    if (source->format != AV_PIX_FMT_YUV420P && source->format != AV_PIX_FMT_YUVJ420P) {
+        if (!c->converted || c->converted->width != width || c->converted->height != height) {
+            av_frame_free(&c->converted);
+            c->converted = av_frame_alloc();
+            if (!c->converted) return fail(AVERROR(ENOMEM), "allocate render frame");
+            c->converted->format = AV_PIX_FMT_YUV420P;
+            c->converted->width = width; c->converted->height = height;
+            if ((ret = av_frame_get_buffer(c->converted, 32)) < 0)
+                return fail(ret, "allocate render picture");
+        }
+        c->render_scale = sws_getCachedContext(c->render_scale, width, height, source->format,
+            width, height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
+        if (!c->render_scale) return fail(AVERROR(ENOMEM), "initialize render conversion");
+        sws_scale(c->render_scale, (const uint8_t * const *)source->data, source->linesize,
+            0, height, c->converted->data, c->converted->linesize);
+        source = c->converted;
+    }
+    int chroma_width = (width + 1) / 2, chroma_height = (height + 1) / 2;
+    int size = width * height + 2 * chroma_width * chroma_height;
+    if (size > c->packed_size) {
+        av_freep(&c->packed);
+        c->packed = av_malloc(size);
+        if (!c->packed) { c->packed_size = 0; return fail(AVERROR(ENOMEM), "allocate packed frame"); }
+        c->packed_size = size;
+    }
+    uint8_t *out = c->packed;
+    for (int y = 0; y < height; y++, out += width)
+        memcpy(out, source->data[0] + (int64_t)y * source->linesize[0], width);
+    for (int plane = 1; plane <= 2; plane++)
+        for (int y = 0; y < chroma_height; y++, out += chroma_width)
+            memcpy(out, source->data[plane] + (int64_t)y * source->linesize[plane], chroma_width);
+    int flags = 0;
+    if (c->decoded->colorspace == AVCOL_SPC_BT709 ||
+        (c->decoded->colorspace == AVCOL_SPC_UNSPECIFIED && height >= 720)) flags |= FRAME_BT709;
+    if (c->decoded->color_range == AVCOL_RANGE_JPEG || c->decoded->format == AV_PIX_FMT_YUVJ420P)
+        flags |= FRAME_FULL_RANGE;
+    int64_t pts = c->decoded->best_effort_timestamp;
+    double seconds = pts != AV_NOPTS_VALUE ? pts * av_q2d(c->video_in->time_base)
+        : c->decoded_frames / FFMAX(1.0, av_q2d(av_guess_frame_rate(c->input, c->video_in, NULL)));
+    c->decoded_frames++;
+    // A seek restarts at the preceding keyframe; earlier pictures are never shown.
+    if (c->start_seconds > 0.5 && seconds < c->start_seconds - 0.05) return 0;
+    if (js_frame_out(c->packed, size, width, height, seconds, flags) < 0)
+        return fail(AVERROR(EIO), "deliver decoded frame");
+    return 0;
+}
+
 static int process_frames(Context *c) {
     int ret;
     while ((ret = avcodec_receive_frame(c->decoder, c->decoded)) >= 0) {
+        if (c->mode == MODE_RENDER) {
+            ret = render_frame(c);
+            av_frame_unref(c->decoded);
+            if (ret < 0) return ret;
+            continue;
+        }
         c->scale = sws_getCachedContext(c->scale,
             c->decoded->width, c->decoded->height, c->decoded->format,
             c->encoder->width, c->encoder->height, c->encoder->pix_fmt,
@@ -194,12 +273,13 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->copy = c->mode == 0 || c->remux_vvc;
     if (!c->copy) {
     const AVCodec *dec = avcodec_find_decoder(c->video_in->codecpar->codec_id);
-    const AVCodec *enc = avcodec_find_encoder_by_name(
+    const AVCodec *enc = c->mode == MODE_RENDER ? NULL : avcodec_find_encoder_by_name(
         c->mode == 5 ? "libx265" : c->mode == 2 ? "libaom-av1" : c->mode == 3 ? "libvvenc" : "libx264");
-    if (!dec || !enc) return fail(AVERROR_DECODER_NOT_FOUND, "missing BVC2/x264 codec");
+    if (!dec || (!enc && c->mode != MODE_RENDER))
+        return fail(AVERROR_DECODER_NOT_FOUND, "missing BVC2/x264 codec");
     c->decoder = avcodec_alloc_context3(dec);
-    c->encoder = avcodec_alloc_context3(enc);
-    if (!c->decoder || !c->encoder) return fail(AVERROR(ENOMEM), "allocate codecs");
+    c->encoder = enc ? avcodec_alloc_context3(enc) : NULL;
+    if (!c->decoder || (enc && !c->encoder)) return fail(AVERROR(ENOMEM), "allocate codecs");
     if ((ret = avcodec_parameters_to_context(c->decoder, c->video_in->codecpar)) < 0)
         return fail(ret, "read codec parameters");
     c->decoder->thread_count = 1;
@@ -210,6 +290,7 @@ static int execute(Context *c, const char *input, const char *output, const char
     int width = c->decoder->width, height = c->decoder->height;
     if (width < 16 || height < 16 || width > 4096 || height > 4096)
         return fail(AVERROR(EINVAL), "invalid video dimensions");
+    if (c->mode != MODE_RENDER) {
     AVRational fps = av_guess_frame_rate(c->input, c->video_in, NULL);
     if (fps.num <= 0 || fps.den <= 0 || av_q2d(fps) < 1 || av_q2d(fps) > 120)
         fps = (AVRational){25, 1};
@@ -244,10 +325,13 @@ static int execute(Context *c, const char *input, const char *output, const char
     if ((ret = avcodec_open2(c->encoder, enc, NULL)) < 0)
         return fail(ret, "open output encoder");
     }
+    }
 
     if ((ret = avformat_alloc_output_context2(&c->output, NULL, "mp4", output)) < 0)
         return fail(ret, "create MP4 muxer");
     if (!c->output) return fail(AVERROR(ENOMEM), "create output");
+    // Render mode muxes audio only: pictures leave through js_frame_out.
+    if (c->mode != MODE_RENDER) {
     c->video_out = avformat_new_stream(c->output, NULL);
     if (!c->video_out) return fail(AVERROR(ENOMEM), "create video stream");
     ret = c->copy
@@ -263,6 +347,7 @@ static int execute(Context *c, const char *input, const char *output, const char
             ? MKTAG('v', 'v', 'c', '1') : MKTAG('v', 'v', 'i', '1');
     }
     c->video_out->time_base = c->copy ? c->video_in->time_base : c->encoder->time_base;
+    }
     for (unsigned i = 0; i < c->input->nb_streams; i++) {
         AVStream *track = c->input->streams[i];
         if (track->codecpar->codec_type != AVMEDIA_TYPE_AUDIO ||
@@ -276,6 +361,9 @@ static int execute(Context *c, const char *input, const char *output, const char
         c->audio_out->time_base = track->time_base;
         break;
     }
+    // The audio element clock drives the renderer; without AAC there is none.
+    if (c->mode == MODE_RENDER && !c->audio_in)
+        return fail(AVERROR_INVALIDDATA, "render mode requires an AAC track");
     if (c->streaming) {
         if (c->start_seconds > 0.5) {
             int64_t timestamp = av_rescale_q((int64_t)(c->start_seconds * AV_TIME_BASE),
@@ -298,6 +386,14 @@ static int execute(Context *c, const char *input, const char *output, const char
             return fail(ret, "open output MP4");
     }
     AVDictionary *mux_options = NULL;
+    if (c->mode == MODE_RENDER) {
+        // frag_keyframe only splits video tracks; audio-only output is split
+        // into half-second fragments so MSE stays just ahead of decoding.
+        av_dict_set(&mux_options, "movflags", c->start_seconds > 0.5
+            ? "+empty_moov+default_base_moof+delay_moov+frag_discont"
+            : "+empty_moov+default_base_moof", 0);
+        av_dict_set(&mux_options, "frag_duration", "500000", 0);
+    } else
     av_dict_set(&mux_options, "movflags", c->streaming
         ? (c->start_seconds > 0.5
             ? "+frag_keyframe+empty_moov+default_base_moof+delay_moov+frag_discont"
@@ -312,7 +408,7 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->encoded = av_packet_alloc();
     if (!c->decoded || !c->scaled || !c->packet || !c->encoded)
         return fail(AVERROR(ENOMEM), "allocate frames");
-    if (!c->copy) {
+    if (!c->copy && c->mode != MODE_RENDER) {
     c->scaled->format = c->encoder->pix_fmt;
     c->scaled->width = c->encoder->width; c->scaled->height = c->encoder->height;
     if ((ret = av_frame_get_buffer(c->scaled, 32)) < 0)
@@ -364,7 +460,7 @@ static int execute(Context *c, const char *input, const char *output, const char
     // Reject such files rather than returning an AAC-only / empty video MP4.
     if (!c->decoded_frames)
         return fail(AVERROR_INVALIDDATA, "no decoded ByteVC2 frames");
-    if ((ret = encode_frame(c, NULL)) < 0) return ret;
+    if (c->mode != MODE_RENDER && (ret = encode_frame(c, NULL)) < 0) return ret;
     }
     if ((ret = av_write_trailer(c->output)) < 0) return fail(ret, "finalize MP4");
     avio_flush(c->output->pb);
@@ -380,7 +476,8 @@ static int convert(const char *input, const char *output, const char *key, int m
     last_error[0] = 0;
     int ret = execute(&c, input, output, key);
     if (remuxed) *remuxed = c.remux_vvc ? (ret >= 0 ? 1 : -1) : 0;
-    sws_freeContext(c.scale);
+    sws_freeContext(c.scale); sws_freeContext(c.render_scale);
+    av_frame_free(&c.converted); av_freep(&c.packed);
     av_packet_free(&c.packet); av_packet_free(&c.encoded);
     av_frame_free(&c.decoded); av_frame_free(&c.scaled);
     avcodec_free_context(&c.decoder); avcodec_free_context(&c.encoder);
@@ -416,4 +513,10 @@ EMSCRIPTEN_KEEPALIVE int bvc2_stream(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
     return convert(NULL, NULL, key, 4, size, start, 0, NULL);
+}
+// Decode only: AAC fMP4 through writeChunk, I420 pictures through writeFrame.
+EMSCRIPTEN_KEEPALIVE int bvc2_play(int size, const char *key, double start) {
+    if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
+        return fail(AVERROR(EINVAL), "invalid stream input");
+    return convert(NULL, NULL, key, MODE_RENDER, size, start, 0, NULL);
 }

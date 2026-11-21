@@ -173,4 +173,41 @@ try {
     console.log(JSON.stringify({ streaming: true, start, units: units.length, reads: reads.length, firstMediaReadEnd, deliveredAtFirstMedia, sourceBytes: streamBytes.length, framing }));
   }
   }
+  // Decode-only render ABI (direct WebGL2 playback): packed I420 pictures in
+  // presentation order through writeFrame, and AAC-only fMP4 for the clock.
+  for (const start of [0, 5.4]) {
+    const units = [], frames = [];
+    const assembler = createFmp4Assembler({ onInit: b => units.push(b), onMedia: b => units.push(b) });
+    const core = await createModule({ wasmBinary,
+      readRange: async (offset, count) => longBvc.subarray(offset, offset + count),
+      writeChunk: async bytes => { await assembler.push(bytes); },
+      writeFrame: async (bytes, info) => {
+        const chroma = ((info.width + 1) >> 1) * ((info.height + 1) >> 1);
+        assert.equal(bytes.length, info.width * info.height + 2 * chroma, 'Packed I420 size');
+        frames.push(info);
+      }
+    });
+    const ret = await core.ccall('bvc2_play', 'number', ['number', 'string', 'number'],
+      [longBvc.length, '', start], { async: true });
+    assert.equal(ret, 0, core.UTF8ToString(core._bvc2_last_error()));
+    assembler.finish();
+    assert(frames.length > 10, 'Render mode must deliver decoded pictures');
+    assert(frames.every(f => f.width === 160 && f.height === 96));
+    for (let i = 1; i < frames.length; i++)
+      assert(frames[i].pts > frames[i - 1].pts, 'Pictures must arrive in presentation order');
+    // Never a picture before the target. The synthetic fixture's index has no
+    // usable keyframe entry before 5.4 s ("Missing key frame" from the mov
+    // demuxer, also seen by the transcode check above), so decoding resumes at
+    // the next random-access picture; allow up to one such interval.
+    if (start > 0) assert(frames[0].pts >= start - 0.05 && frames[0].pts < start + 1.5,
+      'Render seek starts near the requested picture: ' + frames[0].pts);
+    else assert(frames[0].pts < 0.25, 'Render start begins at the first picture: ' + frames[0].pts);
+    const path = join(dir, 'render-audio-' + start + '.mp4');
+    writeFileSync(path, Buffer.concat(units));
+    const streams = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', path])).streams;
+    assert.deepEqual(streams.map(s => s.codec_type), ['audio'], 'Render output muxes AAC only');
+    ffmpeg(['-xerror', '-i', path, '-f', 'null', '-']);
+    console.log(JSON.stringify({ render: true, start, frames: frames.length, firstPts: frames[0].pts,
+      lastPts: frames.at(-1).pts, audioUnits: units.length }));
+  }
 } finally { rmSync(dir, { recursive: true, force: true }); }

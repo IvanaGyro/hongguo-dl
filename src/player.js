@@ -236,7 +236,7 @@ export function createPlayer({
   // including zero-start playback. Metadata alone does not prove readiness.
   // A delayed seeking event must not start a second Worker during this wait.
   async function waitForCencStartup(seconds, signal, stream) {
-    if (!['cenc-remux', 'bvc2-transcode'].includes(stream?.kind)) return;
+    if (!['cenc-remux', 'bvc2-transcode', 'bvc2-render'].includes(stream?.kind)) return;
     const target = clampStreamSeek(seconds, stream.durationSeconds || video.duration);
     if (target === null) return;
     await new Promise((resolve, reject) => {
@@ -244,7 +244,7 @@ export function createPlayer({
       const events = ['progress', 'loadeddata', 'canplay', 'seeked',
         'timeupdate', 'durationchange', 'playing'];
       const cleanup = () => {
-        clearTimeout(timeout);
+        clearTimeout(timeout); clearInterval(framePoll);
         for (const event of events) video.removeEventListener(event, check);
         video.removeEventListener('error', failed);
         signal.removeEventListener('abort', canceled);
@@ -263,6 +263,8 @@ export function createPlayer({
         if (video.error) return failed();
         const bufferedTarget = seconds > 0.5 ? target : video.currentTime;
         if (!timeIsBuffered(video.buffered, bufferedTarget, 0.15)) return;
+        // Direct ByteVC2 rendering: audio alone is not a playable start.
+        if (stream.framesReady && !stream.framesReady()) return;
         // Some browsers keep currentTime at zero during MSE startup even
         // after we first assigned the target in restoreTime().
         if (seconds > 0.5 && Math.abs(video.currentTime - target) > 0.6) {
@@ -274,6 +276,8 @@ export function createPlayer({
       const timeout = setTimeout(() =>
         finish(errorWith('PLAYBACK_TIMEOUT', 'CENC 首段影片未在時限內準備完成')),
       SESSION_TIMEOUT);
+      // Decoded pictures arrive without media element events.
+      const framePoll = stream.framesReady ? setInterval(check, 100) : 0;
       for (const event of events) video.addEventListener(event, check);
       video.addEventListener('error', failed, { once: true });
       signal.addEventListener('abort', canceled, { once: true });
@@ -306,7 +310,8 @@ export function createPlayer({
       elapsedMs: ageMs()
     });
     if (resolved.native) sourceInfo.textContent +=
-      resolved.native.kind === 'bvc2-transcode' ? ' · ByteVC2 → H.264 增量轉碼（MSE，實驗性）'
+      resolved.native.kind === 'bvc2-render' ? ' · ByteVC2 直接解碼（WebGL2，實驗性）'
+      : resolved.native.kind === 'bvc2-transcode' ? ' · ByteVC2 → H.264 增量轉碼（MSE，實驗性）'
       : resolved.native.kind === 'cenc-remux' ? ' · 增量解密轉封裝（MSE）'
       : ' · 原生 EME 串流解密（MSE）';
     const containerCodec = resolved.source?.outputCodec || codecId(resolved.source?.codec);
@@ -315,7 +320,8 @@ export function createPlayer({
       ? 'video/mp4; codecs="vvc1"' : 'video/mp4; codecs="avc1.42E01E"';
     // The actual complete hvcC profile was already accepted by MSE for a
     // remux stream; bare hvc1 canPlayType must not produce a false warning.
-    if (containerCodec &&
+    // Directly rendered ByteVC2 pictures never reach the browser's decoder.
+    if (containerCodec && resolved.native?.kind !== 'bvc2-render' &&
         !(containerCodec === 'hevc' && resolved.native?.kind === 'cenc-remux') &&
         video.canPlayType(decoder) === '')
       sourceInfo.textContent += ' · 此編碼可能無法在本瀏覽器播放';
@@ -330,7 +336,12 @@ export function createPlayer({
     loading = true;
     // The callback reports a frame submitted for presentation, unlike
     // loadedmetadata/canplay which do not prove a picture was shown.
-    if (typeof video.requestVideoFrameCallback === 'function') {
+    if (resolved.native?.kind === 'bvc2-render') {
+      const frameToken = currentToken;
+      resolved.native.onFirstFrame(() => {
+        if (frameToken === token && !signal.aborted) markStartupStage('first-video-frame');
+      });
+    } else if (typeof video.requestVideoFrameCallback === 'function') {
       const frameToken = currentToken;
       video.requestVideoFrameCallback(() => {
         if (frameToken === token && !signal.aborted) markStartupStage('first-video-frame');
@@ -579,7 +590,9 @@ export function createPlayer({
     const target = clampStreamSeek(video.currentTime,
       nativeStream.durationSeconds || video.duration);
     if (target === null) return;
-    if (timeIsBuffered(video.buffered, target)) {
+    // Directly rendered ByteVC2 keeps only a short picture queue; buffered
+    // audio alone cannot serve a seek.
+    if (timeIsBuffered(video.buffered, target) && (nativeStream.covers?.(target) ?? true)) {
       log('media.seek.buffered', { target, ...mediaSnapshot(), elapsedMs: ageMs() });
       return;
     }

@@ -247,7 +247,7 @@ export function createMediaSession({
         const skipStream = !quiet && processingFailedVid === episode.vid;
         let native = null, fallbackReason = skipStream ? 'processing-failed' : 'stream-unavailable';
         if (!skipStream) {
-          if (!quiet) report('正在準備 ByteVC2 → H.264 增量串流…', 2);
+          if (!quiet) report('正在準備 ByteVC2 增量串流…', 2);
           const { transport } = download.open(source);
           log('bvc2.prepare.begin', { mode: 'stream', codec: 'bytevc2' });
           // The media Worker opens the source, probes its index and chooses
@@ -259,13 +259,16 @@ export function createMediaSession({
               remainingMediaAttempts: 20 - steps.count('media-download'), preload: quiet && options.nativePrefetch,
               durationSeconds: source.duration || null,
               startSeconds: quiet ? 0 : savedResumeSeconds(episode, seriesId) || 0,
-              retainSource: quiet ? undefined : retainFor(source)
+              retainSource: quiet ? undefined : retainFor(source),
+              // Decode-only WebGL2 presentation when possible; else H.264 transcode.
+              render: true
             });
           } catch (error) {
             if (signal.aborted || quiet || !allowsWholeFileFallback(error)) throw error;
             fallbackReason = error.code || 'stream-failed';
           }
-          if (native) return { native, url: native.url, source: { ...source, outputCodec: 'h264' },
+          if (native) return { native, url: native.url,
+            source: native.kind === 'bvc2-render' ? source : { ...source, outputCodec: 'h264' },
             fallbackNotice, variants: quiet ? variants : null };
         }
         // A speculative episode never starts a whole-file transcode.

@@ -51,7 +51,7 @@ export async function loadMediaRuntime({ bridge, signal, onStage, hooks, baseHre
  */
 export function createEngineJob({ bridge, reader, fileSize, key, runtime, loadRuntime,
   position, generation: initialGeneration, processing = true, post, onStage, onError,
-  after = null }) {
+  after = null, render = false }) {
   const controller = new AbortController();
   const failureCode = bridge === 'bvc2' ? 'BVC2_TRANSCODE_FAILED' : 'CENC_REMUX_FAILED';
   let pendingAck = null, seq = 0, generation = initialGeneration;
@@ -60,13 +60,16 @@ export function createEngineJob({ bridge, reader, fileSize, key, runtime, loadRu
   let processingAllowed = processing, processingWake = null;
   let completed = false, engineStarted = false, sourceFailed = false, io = null;
 
-  const sendUnit = (type, data) => new Promise((resolve, reject) => {
+  // fMP4 units and (render mode) decoded pictures share one ACK channel, so
+  // the consumer's backpressure stops the single WASM loop for both.
+  const sendUnit = (type, data, fields = {}) => new Promise((resolve, reject) => {
     if (controller.signal.aborted || activeRun?.signal.aborted) return reject(canceled());
     if (pendingAck) return reject(new Error('Transport already awaiting ACK'));
     const id = ++seq;
     pendingAck = { id, resolve, reject };
-    post({ type, id, generation, bytes: data.buffer }, [data.buffer]);
+    post({ type, id, generation, bytes: data.buffer, ...fields }, [data.buffer]);
   });
+  let frames = 0;
   let rangeRequests = 0;
   const readRange = async (start, wanted) => {
     const fetchStarted = performance.now();
@@ -126,6 +129,14 @@ export function createEngineJob({ bridge, reader, fileSize, key, runtime, loadRu
         if (activeRun?.signal.aborted) throw canceled();
         return assembler.push(data);
       },
+      writeFrame: (data, info) => {
+        if (activeRun?.signal.aborted) throw canceled();
+        const width = info?.width | 0, height = info?.height | 0;
+        if (width < 16 || height < 16 || width > 4096 || height > 4096 || !Number.isFinite(info?.pts))
+          throw new Error('Invalid decoded frame');
+        if (++frames === 1) onStage('render.first-decoded', { width, height });
+        return sendUnit('frame', data, { width, height, pts: info.pts, flags: info.flags | 0 });
+      },
       printErr: message => { if (!activeRun?.signal.aborted) console.error(message); }
     };
     if (runtime.core && runtime.bridge !== bridge) throw new Error('Worker engine mismatch');
@@ -134,13 +145,15 @@ export function createEngineJob({ bridge, reader, fileSize, key, runtime, loadRu
       runtime.core = await loadRuntime(bridge, controller.signal, onStage, {
         readRange: (...args) => runtime.io.readRange(...args),
         writeChunk: data => runtime.io.writeChunk(data),
+        writeFrame: (data, info) => runtime.io.writeFrame(data, info),
         printErr: message => runtime.io?.printErr(message)
       });
       runtime.bridge = bridge;
     }
     if (controller.signal.aborted) return;
     const core = runtime.core;
-    if (bridge === 'bvc2' && (core._bvc2_decoder_available?.() !== 1 || typeof core._bvc2_stream !== 'function'))
+    if (bridge === 'bvc2' && (core._bvc2_decoder_available?.() !== 1 ||
+        typeof (render ? core._bvc2_play : core._bvc2_stream) !== 'function'))
       throw new Error('BVC2 streaming API unavailable');
     if (bridge === 'cenc' && core._cenc_remux_available() !== 1)
       throw new Error('WASM missing MOV demuxer or MP4 muxer');
@@ -161,8 +174,9 @@ export function createEngineJob({ bridge, reader, fileSize, key, runtime, loadRu
         workerReused: generation !== initialGeneration, indexCached: true });
       onStage('first-fragment');
       engineStarted = true; completed = false;
+      frames = 0;
       const ret = bridge === 'bvc2'
-        ? await core.ccall('bvc2_stream', 'number', ['number', 'string', 'number'],
+        ? await core.ccall(render ? 'bvc2_play' : 'bvc2_stream', 'number', ['number', 'string', 'number'],
           [fileSize, key || '', request.seconds], { async: true })
         : request.seconds > 0.5
           ? await core.ccall('cenc_stream_remux_at', 'number',

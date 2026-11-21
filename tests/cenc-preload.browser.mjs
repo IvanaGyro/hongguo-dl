@@ -23,6 +23,11 @@ await page.addInitScript(() => {
   localStorage.setItem('hongguo-dl-playback-history-v1', JSON.stringify({
     '42:1014': { seconds: 4, duration: 8, completed: false, viewedAt: Date.now() }
   }));
+  // Directly rendered ByteVC2 draws on a canvas over an audio-only <video>.
+  const canvas = () => { const c = document.querySelector('.bvc2-frame-canvas'); return c && !c.hidden ? c : null; };
+  const video = () => document.querySelector('#player-video');
+  window.__frames = () => canvas()?.renderedFrames ?? video().getVideoPlaybackQuality().totalVideoFrames;
+  window.__width = () => canvas()?.width ?? video().videoWidth;
 });
 await page.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());
@@ -60,13 +65,15 @@ try {
   const beforeRequests = requests.filter(r => r.vid === '1014').length;
   if (manual) await page.locator('[data-play-vid="1014"]').click();
   await page.waitForFunction(() => document.querySelector('#player-episode')?.textContent.includes('第 14 集') &&
-    document.querySelector('#player-video').currentTime > 0.5 &&
-    document.querySelector('#player-video').getVideoPlaybackQuality().totalVideoFrames > 2, null, { timeout: 25000 });
+    document.querySelector('#player-video').currentTime > 0.5 && window.__frames() > 2, null, { timeout: 25000 });
   const state = await page.locator('#player-video').evaluate(v => ({ time: v.currentTime,
-    width: v.videoWidth, frames: v.getVideoPlaybackQuality().totalVideoFrames, error: v.error?.code }));
+    width: window.__width(), frames: window.__frames(), error: v.error?.code }));
   assert(state.width === (bvc2 ? 160 : 480) && state.frames > 0 && !state.error, JSON.stringify(state));
   const after = await page.locator('#playback-log').inputValue();
   assert.match(after, /prefetch.handoff episode=14 media=true/);
+  if (bvc2 && await page.evaluate(() => Boolean(document.createElement('canvas').getContext('webgl2'))))
+    assert.match(after, /playback.media.selected codec=bytevc2 path=bvc2-render/,
+      'ByteVC2 must render decoded pictures directly when WebGL2 exists');
   assert(state.time >= (manual ? 4 : 0) && state.time < (manual ? 6 : 2),
     'Manual handoff restores history; natural next episode starts at zero: ' + JSON.stringify(state));
   assert.equal(sourceCalls.filter(v => v === '1014').length, 1, 'Handoff must reuse the source list');

@@ -4,7 +4,7 @@
 const HASH = /^[0-9a-f]{64}$/;
 
 export async function verifyBvc2RuntimeBundle(manifest, moduleBytes, wasmBytes) {
-  if (manifest?.schema !== 1 || manifest.api !== 2 ||
+  if (manifest?.schema !== 1 || manifest.api !== 3 ||
       manifest.encoders !== 'x264+x265-3.4+aom-3.12.1+vvenc-1.13.1' || manifest.kind !== 'experimental-bvc2-x264' ||
       manifest.emsdk !== '3.1.74' ||
       manifest.librempegCommit !== 'cb1f8f3eef84999e61b27e2d44664858179bc240' ||
