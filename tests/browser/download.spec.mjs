@@ -60,12 +60,12 @@ test('download a series: queue, reload, save, ZIP and merged MP4', async ({ app,
   });
 
   await test.step('exporting a ZIP holds every selected episode', async () => {
-    // The ZIP is streamed by a Service Worker. Playwright's Chromium captures a
-    // download by requesting its URL again from the network, so it receives
-    // the app page instead of the stream. Firefox and WebKit check this step.
-    if (browserName === 'chromium') {
+    // The ZIP is streamed by a Service Worker. Playwright's Chromium and WebKit
+    // capture a download by requesting its URL again from the network, so they
+    // receive the app page instead of the stream. Firefox checks this step.
+    if (browserName !== 'firefox') {
       test.info().annotations.push({ type: 'step skipped',
-        description: 'ZIP export: Playwright Chromium cannot capture Service Worker downloads' });
+        description: `ZIP export: Playwright ${browserName} cannot capture Service Worker downloads` });
       return;
     }
     const download = page.waitForEvent('download', { timeout: 60_000 });

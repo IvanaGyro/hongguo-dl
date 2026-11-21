@@ -77,9 +77,10 @@ Media and API responses are local:
 
 ### Test-harness limits
 
-- Playwright's Chromium captures a download by requesting its URL again from
-  the network. It therefore cannot capture the ZIP that the Service Worker
-  streams, and the ZIP step is skipped in Chromium with that reason.
+- Playwright's Chromium and WebKit capture a download by requesting its URL
+  again from the network. They therefore cannot capture the ZIP that the
+  Service Worker streams, so the ZIP step is skipped there with that reason;
+  Firefox checks it.
 - Headless Chromium replaces a non-ASCII download name with `download`, so the
   download flow uses an ASCII series title.
 - Playwright contexts are ephemeral, like a private window. WebKit does not
