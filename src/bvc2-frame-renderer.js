@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Direct ByteVC2 presentation: the media Worker decodes pictures (8-bit I420)
 // and this module draws them with WebGL2 over the player's <video>. That
-// <video> keeps playing the AAC track through MSE, so it stays the media
-// element Video.js controls and its clock drives which picture is shown:
-// seeking, speed, volume and fullscreen are unchanged.
+// <video> keeps playing the AAC track through MSE and its clock drives which
+// picture is shown. <bvc2-video> (bvc2-video.js) wraps it for Video.js and
+// reports the pictures' size, coverage and readiness from `state()`.
 
 const VERTEX = `#version 300 es
 in vec2 position;
@@ -33,13 +33,15 @@ void main() {
   color = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }`;
 const FLAG_BT709 = 1, FLAG_FULL_RANGE = 2;
-// Decoded pictures are large (1080p ≈ 3 MiB): keep only a short queue, but
-// let decoding continue while the audio buffer is nearly empty, so audio
-// interleaved behind video in the file can never stall both.
-const QUEUE_BYTES = 48 * 1024 * 1024;
+// Decode about 5.5 seconds of pictures ahead so decoding hiccups do not
+// show as stutter. Decoded pictures are large (1080p ≈ 3 MiB, so 5.5 s at
+// 30 fps ≈ 500 MiB); the byte cap bounds memory for high frame rates. While
+// the audio buffer is nearly empty decoding continues past the time target,
+// so audio interleaved behind video in the file can never stall both.
+const QUEUE_SECONDS = 5.5;
 const MIN_QUEUE_FRAMES = 3;
 const STARVED_AUDIO_SECONDS = 1;
-const MAX_QUEUE_BYTES = 160 * 1024 * 1024;
+const MAX_QUEUE_BYTES = 640 * 1024 * 1024;
 const SHOW_EARLY_SECONDS = 0.004;
 
 let status = null;
@@ -156,6 +158,9 @@ function createGlRenderer(canvas) {
   return renderer;
 }
 
+const NO_RANGES = Object.freeze({ length: 0, start() { throw new RangeError('empty'); },
+  end() { throw new RangeError('empty'); } });
+
 const renderers = new WeakMap();
 /** The single renderer layered over one <video>; streams claim it in turn. */
 export function frameRendererFor(video) {
@@ -171,15 +176,26 @@ export function renderedFrameSize(video) {
 
 function createFrameRenderer(video) {
   let canvas = null, gl = null, owner = null, raf = 0, timer = 0, size = null;
+  // Playback quality across every stream drawn on this element, like a
+  // <video>'s own counters; frame callbacks follow requestVideoFrameCallback.
+  let presented = 0, dropped = 0, callbacks = new Map(), nextCallback = 0;
+  const listeners = new Set();
+  const notify = type => {
+    for (const listener of listeners) try { listener(type); } catch { /* observer only */ }
+  };
   const ensureCanvas = () => {
     if (canvas) return;
-    canvas = document.createElement('canvas');
-    canvas.className = 'bvc2-frame-canvas';
+    // <bvc2-video> keeps the canvas in its shadow root; a bare <video> gets
+    // one beside it.
+    const host = video.parentElement;
+    canvas = typeof host?.createFrameCanvas === 'function' ? host.createFrameCanvas() : null;
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.className = 'bvc2-frame-canvas';
+      canvas.setAttribute('aria-hidden', 'true');
+      video.insertAdjacentElement('afterend', canvas);
+    }
     canvas.hidden = true;
-    canvas.setAttribute('aria-hidden', 'true');
-    // Pictures drawn so far; read by diagnostics and browser tests.
-    canvas.renderedFrames = 0;
-    video.insertAdjacentElement('afterend', canvas);
     gl = createGlRenderer(canvas);
   };
   const setSize = (width, height) => {
@@ -187,6 +203,14 @@ function createFrameRenderer(video) {
     size = width && height ? { width, height } : null;
     // Lets the page follow the picture's aspect ratio (audio-only MSE has none).
     video.dispatchEvent(new Event('resize'));
+  };
+  const runCallbacks = frame => {
+    if (!callbacks.size) return;
+    const pending = callbacks; callbacks = new Map();
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const metadata = { presentationTime: now, expectedDisplayTime: now, width: frame.width,
+      height: frame.height, mediaTime: frame.pts, presentedFrames: presented };
+    for (const callback of pending.values()) try { callback(now, metadata); } catch { /* page callback */ }
   };
   const schedule = () => {
     if (!owner) return;
@@ -208,36 +232,79 @@ function createFrameRenderer(video) {
   }
   return {
     get size() { return owner ? size : null; },
+    /**
+     * What a media element would report for the pictures: `active` while a
+     * stream owns the renderer; `buffered` is the span of queued and shown
+     * pictures; `ready` once that stream delivered a picture for its position.
+     */
+    state() {
+      return owner ? { active: true, ready: owner.ready, buffered: owner.ranges(), size }
+        : { active: false, ready: false, buffered: NO_RANGES, size: null };
+    },
+    quality() {
+      return { creationTime: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        totalVideoFrames: presented + dropped, droppedVideoFrames: dropped, corruptedVideoFrames: 0 };
+    },
+    requestVideoFrameCallback(callback) {
+      if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+      callbacks.set(++nextCallback, callback);
+      return nextCallback;
+    },
+    cancelVideoFrameCallback(handle) { callbacks.delete(handle); },
+    /** Observe picture changes: 'progress', 'canplay' (first picture), 'emptied'. */
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     /** Make a stream the visible one; a previous owner is detached. */
     claim(onFirstFrame = () => {}) {
       ensureCanvas();
       owner?.detach();
       const queue = [];
       let queuedBytes = 0, shownPts = null, received = false, firstShown = false;
+      // The first picture after a start or seek is shown early, from this
+      // position until its own timestamp.
+      let servedFrom = null;
       let waiters = [], audioAhead = () => Infinity;
-      const dropUntil = index => {
+      const dropUntil = (index, late = false) => {
         for (const frame of queue.splice(0, index)) queuedBytes -= frame.bytes.byteLength;
+        if (late) dropped += index;
       };
       const roomy = () => {
-        if (queuedBytes < QUEUE_BYTES || queue.length < MIN_QUEUE_FRAMES) return true;
-        return audioAhead() < STARVED_AUDIO_SECONDS && queuedBytes < MAX_QUEUE_BYTES;
+        if (queue.length < MIN_QUEUE_FRAMES) return true;
+        if (queuedBytes >= MAX_QUEUE_BYTES) return false;
+        const ahead = queue[queue.length - 1].pts - Math.max(video.currentTime, shownPts ?? queue[0].pts);
+        return ahead < QUEUE_SECONDS || audioAhead() < STARVED_AUDIO_SECONDS;
       };
       const presenter = {
         get ready() { return received; },
         get queued() { return queue.length; },
         push(frame) {
           if (owner !== presenter) return;
+          const first = !received;
           received = true;
           queue.push(frame);
           queuedBytes += frame.bytes.byteLength;
           schedule();
           presenter.check();
+          notify(first ? 'canplay' : 'progress');
         },
-        /** Pictures known to cover `seconds` (queued, or the one on screen). */
-        covers(seconds) {
-          const low = shownPts ?? queue[0]?.pts;
+        /** The span of pictures able to serve a position, as TimeRanges. */
+        ranges() {
+          const low = shownPts !== null ? servedFrom ?? shownPts
+            : queue.length ? Math.min(queue[0].pts, video.currentTime) : null;
           const high = queue.length ? queue[queue.length - 1].pts : shownPts;
-          return low !== undefined && low !== null && low <= seconds + 0.05 && seconds <= high + 0.1;
+          if (low === null || !Number.isFinite(low)) return NO_RANGES;
+          // Clip to the audio element's own buffer: the clock cannot pass it.
+          const native = video.buffered;
+          const spans = [];
+          try {
+            for (let i = 0; i < native.length; i++) {
+              const start = Math.max(low, native.start(i)), end = Math.min(high, native.end(i));
+              if (end >= start) spans.push([start, end]);
+            }
+          } catch { /* MediaSource switching */ }
+          return { length: spans.length, start: i => spans[i][0], end: i => spans[i][1] };
         },
         /** Resolve when one more picture may be decoded. */
         waitRoom(signal, ahead) {
@@ -256,7 +323,7 @@ function createFrameRenderer(video) {
             const now = video.currentTime;
             let late = 0;
             while (late < queue.length - 1 && queue[late + 1].pts <= now) late++;
-            if (late) dropUntil(late);
+            if (late) dropUntil(late, true);
           }
           if (waiters.length && roomy()) {
             const pending = waiters; waiters = [];
@@ -270,25 +337,31 @@ function createFrameRenderer(video) {
           for (let i = 0; i < queue.length && queue[i].pts <= now + SHOW_EARLY_SECONDS; i++) pick = i;
           // Show the first picture after a start or seek before its exact
           // instant, so a paused player never displays a stale picture.
-          if (pick < 0 && shownPts === null) pick = 0;
+          const early = pick < 0 && shownPts === null;
+          if (early) pick = 0;
           if (pick >= 0) {
             const frame = queue[pick];
             if (gl.draw(frame)) {
+              servedFrom = early ? Math.min(now, frame.pts) : null;
               shownPts = frame.pts;
-              canvas.renderedFrames++;
+              presented++;
               setSize(frame.width, frame.height);
               canvas.hidden = false;
               if (!firstShown) { firstShown = true; try { onFirstFrame(); } catch { /* diagnostics only */ } }
+              runCallbacks(frame);
             }
-            dropUntil(pick + 1);
+            // Pictures skipped to catch up with the clock count as dropped.
+            dropUntil(pick, true);
+            dropUntil(1);
           }
           presenter.check();
         },
         /** A new position: discard queued pictures, keep showing the last one. */
         reset() {
           dropUntil(queue.length);
-          shownPts = null; received = false;
+          shownPts = null; servedFrom = null; received = false;
           presenter.check();
+          notify('progress');
         },
         detach() {
           if (owner !== presenter) return;
@@ -305,10 +378,12 @@ function createFrameRenderer(video) {
           gl.forget();
           canvas.hidden = true;
           setSize(0, 0);
+          notify('emptied');
         }
       };
       owner = presenter;
       schedule();
+      notify('progress');
       return presenter;
     }
   };

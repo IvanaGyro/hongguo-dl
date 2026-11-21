@@ -127,9 +127,10 @@ libaom/VVenC 使用純量版本，WASM C stack 配置 5 MiB，線性記憶體仍
 解碼後的畫面以 8-bit I420（必要時才用 swscale 轉成 yuv420p）經 `writeFrame` 逐張送出，AAC 則照舊 stream-copy 為**只有音訊的 fMP4**（每 0.5 秒一個 fragment）經 `writeChunk` 送出。
 兩種輸出共用 Worker 原有的單一 ACK 背壓，因此畫面佇列滿時整個 WASM 迴圈暫停。
 
-- 主執行緒仍把音訊 fMP4 交給原本的 `<video>` + MSE，`<video>` 依舊是 Video.js 10 控制的媒體元素：播放／暫停、時間軸、緩衝條、音量、播放速度（瀏覽器保留音高）與容器全螢幕皆不變。
-- `src/bvc2-frame-renderer.js` 在 `<media-container>` 內、`<video>` 之上放一個 WebGL2 canvas，以三張 R8 材質上傳 Y/U/V、shader 轉 RGB（BT.709／BT.601、limited／full range 由 WASM 回報）。每個 animation frame 選擇 PTS ≤ `video.currentTime` 的最新一張，較晚的丟棄，所以音訊時鐘決定畫面。
-- 解碼後的畫面很大（1080p ≈ 3 MiB），佇列上限約 48 MiB；音訊緩衝不足 1 秒時允許至 160 MiB，避免檔案中音訊交錯落後於影像時互相卡住。頁面隱藏時只丟棄過時畫面。
+- 主執行緒仍把音訊 fMP4 交給原本的 `<video>` + MSE，`<video>` 的時鐘就是播放時鐘：播放／暫停、音量、播放速度（瀏覽器保留音高）與容器全螢幕皆不變。
+- Video.js 10 的媒體元素是 `src/bvc2-video.js` 的 `<bvc2-video>`（Video.js `CustomMediaElement` + `HTMLVideoAdapter` + `MediaAttachMixin`，以 `slot="media"` 包住同一個 `<video>`）。平常所有屬性、方法、事件都直接轉給 `<video>`，其他編碼路徑不變；直接解碼期間則改回報畫面的狀態：`buffered` 是已解碼畫面範圍（與音訊緩衝取交集）、`readyState` 在目前時間沒有畫面時只到 `HAVE_METADATA`、`videoWidth`／`videoHeight`、`getVideoPlaybackQuality()`、`requestVideoFrameCallback()` 與 `engineName=bvc2-webgl2`，並為畫面補發 `progress`／`loadeddata`／`canplay`。因此 Video.js 緩衝條與 `player.js` 的 seek／起播判斷都看畫面而不是音訊。這些是 Video.js 10.3 的 `@internal` API，升級 Video.js 時須重新確認。
+- `src/bvc2-frame-renderer.js` 在 `<bvc2-video>` 的 shadow root、`<video>` 之上放一個 WebGL2 canvas（`::part(frame)`），以三張 R8 材質上傳 Y/U/V、shader 轉 RGB（BT.709／BT.601、limited／full range 由 WASM 回報）。每個 animation frame 選擇 PTS ≤ `video.currentTime` 的最新一張，較晚的丟棄，所以音訊時鐘決定畫面。
+- 畫面佇列預先解碼約 5.5 秒（以 PTS 計，避免解碼速度起伏造成卡頓）；解碼後的畫面很大（1080p ≈ 3 MiB，5.5 秒 30 fps ≈ 500 MiB），另有 640 MiB 硬上限。音訊緩衝不足 1 秒時可超過時間目標（仍受硬上限），避免檔案中音訊交錯落後於影像時互相卡住。頁面隱藏時只丟棄過時畫面。
 - 未緩衝在畫面佇列內的 seek 一律由 Worker 從前一個關鍵影格重新解碼；同時移除已緩衝音訊，讓 `<video>` 等待而不是先播出聲音。
 - 只套用於 ByteVC2：需求帶 `render: true`，Worker 在來源有 AAC 時選 `bvc2-render` 路線；瀏覽器沒有 WebGL2 或來源沒有 AAC 時，沿用原本的 ByteVC2 → H.264 增量轉碼；HEVC／H.264／CENC 路線完全不變。
 - manifest `api` 升為 3（新增匯出函式）；WASM 由 `BVC2 Librempeg WASM feasibility` workflow 重新編譯並發布。

@@ -353,19 +353,16 @@ body[data-mode="play"] #series > #download-controls { display: none; }
   position: relative; display: block; isolation: isolate; overflow: visible;
   border: 0; border-radius: var(--r-md); background: var(--night); color: var(--paper);
 }
-.player-stage > #player-video {
+.player-stage #player-video {
   display: block; width: 100%; max-height: 74vh; object-fit: contain;
   aspect-ratio: var(--media-aspect, 16 / 9);
   border-radius: var(--r-md); background: var(--night);
 }
-/* Directly rendered ByteVC2 pictures cover the audio-only <video>; the
-   controls and gestures stay above and receive all pointer input. */
-.player-stage > .bvc2-frame-canvas {
-  position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
-  object-fit: contain; pointer-events: none; border-radius: var(--r-md);
-}
-.player-stage > .bvc2-frame-canvas[hidden] { display: none; }
-.player-stage:fullscreen > .bvc2-frame-canvas { border-radius: 0; }
+/* <bvc2-video> lays out as its <video> (display: contents). Directly
+   rendered ByteVC2 pictures cover the audio-only <video> from its shadow
+   root; the controls and gestures stay above and receive all input. */
+#player-media::part(frame) { border-radius: var(--r-md); }
+.player-stage:fullscreen #player-media::part(frame) { border-radius: 0; }
 .player-stage media-controls { display: block; }
 media-controls-content.player-bottom-controls {
   position: absolute; z-index: 3; inset: auto 0 0 0; display: block;
@@ -607,10 +604,10 @@ media-status-announcer {
     grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   }
   body[data-mode="play"] #series > #episode-navigation:not([hidden]) + #episodes { margin-top: 0; }
-  .player-stage > #player-video { max-height: 67vh; }
+  .player-stage #player-video { max-height: 67vh; }
   /* Portrait short dramas keep a tall, centred canvas on phones and tablets. */
   body[data-mode="play"] .player-stage[data-orientation="portrait"] { width: min(100%, 400px); margin-inline: auto; }
-  body[data-mode="play"] .player-stage[data-orientation="portrait"] > #player-video {
+  body[data-mode="play"] .player-stage[data-orientation="portrait"] #player-video {
     aspect-ratio: var(--media-aspect, 9 / 16); max-height: min(76dvh, 730px);
   }
 }
@@ -631,7 +628,8 @@ media-status-announcer {
   .player-stage:not(:fullscreen) {
     margin-left: calc(-1 * var(--gut)); width: calc(100% + 2 * var(--gut)); border-radius: 0;
   }
-  .player-stage:not(:fullscreen) > #player-video,
+  .player-stage:not(:fullscreen) #player-video,
+  .player-stage:not(:fullscreen) #player-media::part(frame),
   .player-stage:not(:fullscreen) .player-bottom-controls { border-radius: 0; }
   body[data-mode="play"] .player-stage[data-orientation="portrait"]:not(:fullscreen) {
     width: min(100%, 400px); margin-inline: auto;
