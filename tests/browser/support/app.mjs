@@ -7,7 +7,9 @@
 // Faults are injected per request kind, so a spec can say "the first CDN
 // refuses" without knowing which internal route the app takes.
 import { test as base, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { KEY, mediaPath } from './fixtures.mjs';
 
 export { expect, KEY };
@@ -228,6 +230,21 @@ export const test = base.extend({
     await app.install();
     await use(app);
     expect(app.errors, 'uncaught page errors').toEqual([]);
+  }
+});
+
+// The same fixtures in a normal, on-disk browser profile instead of an
+// ephemeral (private-window-like) context. Use it where the app keeps files in
+// IndexedDB: WebKit does not store Blobs there in ephemeral sessions, as in a
+// Safari private window, while normal browsing does.
+export const testWithProfile = test.extend({
+  context: async ({ browserName, playwright, baseURL, viewport, userAgent, acceptDownloads }, use, testInfo) => {
+    const dir = mkdtempSync(join(tmpdir(), 'hongguo-profile-'));
+    const context = await playwright[browserName].launchPersistentContext(dir, {
+      ...testInfo.project.use.launchOptions, baseURL, viewport, userAgent, acceptDownloads });
+    await use(context);
+    await context.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

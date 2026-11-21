@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Layout of the real page at phone, tablet and desktop widths, and a very
 // long series. Screenshots are attached to the report for review.
-import { test, expect, variant } from './support/app.mjs';
+import { test, testWithProfile, expect, variant } from './support/app.mjs';
 
 const WIDTHS = [1440, 1024, 768, 390, 320];
 const HISTORY = id => ({ [id + '001']: { seconds: 100, duration: 100, completed: true, viewedAt: 1 },
@@ -54,7 +54,7 @@ for (const [name, media] of [['landscape', 'clear.mp4'], ['portrait', 'clear-por
   });
 }
 
-test('download page fits every width', async ({ app, page }, testInfo) => {
+testWithProfile('download page fits every width', async ({ app, page }, testInfo) => {
   app.addSeries(42, { title: '版面測試', episodes: Array.from({ length: 60 }, () => [variant('clear-short.mp4')]) });
   await page.goto('./');
   await app.open(42);

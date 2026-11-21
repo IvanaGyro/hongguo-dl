@@ -82,6 +82,11 @@ Media and API responses are local:
   streams, and the ZIP step is skipped in Chromium with that reason.
 - Headless Chromium replaces a non-ASCII download name with `download`, so the
   download flow uses an ASCII series title.
+- Playwright contexts are ephemeral, like a private window. WebKit does not
+  keep Blobs in IndexedDB there, so every finished download fails with the
+  storage-full message. The download specs therefore use `testWithProfile`,
+  a normal on-disk profile. A Safari private window would show the same
+  message.
 
 ## Live pipeline health: `tests/live/pipeline-health.test.mjs`
 

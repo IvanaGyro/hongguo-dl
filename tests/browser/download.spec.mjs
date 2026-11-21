@@ -3,7 +3,7 @@
 // episode, export a ZIP, merge into one MP4, and recover an interrupted job.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { test, expect, variant } from './support/app.mjs';
+import { testWithProfile as test, expect, variant } from './support/app.mjs';
 import { mediaPath } from './support/fixtures.mjs';
 
 const completed = page => page.locator('#queue .status.s-completed');
