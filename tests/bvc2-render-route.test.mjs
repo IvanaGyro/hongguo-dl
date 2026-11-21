@@ -61,3 +61,11 @@ test('a repeated seek to the demanded position starts a new output generation', 
   expect(seek.demand.positionRevision).toBe(3);
   expect(() => normalizeDemand({ ...base, revision: 4, seekId: -1 })).toThrow();
 });
+
+test('render falls back to the H.264 transcode when AAC-only MSE is unsupported', () => {
+  const route = bvc2({ render: true, typeSupport: { [BVC2_RENDER_MIME]: false,
+    'video/mp4; codecs="avc1.42C01F, mp4a.40.2"': true } });
+  expect(route.kind).toBe('mse');
+  expect(route.render).toBeUndefined();
+  expect(route.candidates.mime).toBe('video/mp4; codecs="avc1.42C01F, mp4a.40.2"');
+});

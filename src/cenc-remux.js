@@ -12,7 +12,7 @@ import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
 
 import { MAX_REMUX_FILE_BYTES } from './media-route.js';
-import { frameRendererAvailable, frameRendererFor } from './bvc2-frame-renderer.js';
+import { frameRendererStatus, frameRendererFor } from './bvc2-frame-renderer.js';
 
 const MAX_CORE = 24 * 1024 * 1024;
 // The Worker's route decision enforces this; metadata and native EME do not.
@@ -159,7 +159,10 @@ export async function openCencProgressiveStream({
     await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable());
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
   const outputCodec = bridge === 'bvc2' ? 'h264' : codec;
-  const renderWanted = bridge === 'bvc2' && render && frameRendererAvailable();
+  const renderStatus = bridge === 'bvc2' && render ? frameRendererStatus() : null;
+  const renderWanted = Boolean(renderStatus?.available);
+  // Records why ByteVC2 does or does not use direct WebGL2 rendering.
+  if (renderStatus) onStage('bvc2.render.check', renderStatus);
   // Step budgets are enforced synchronously before any source is declared,
   // so an exhausted budget never reaches the network.
   onStage('metadata');

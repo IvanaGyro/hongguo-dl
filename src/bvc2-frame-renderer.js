@@ -42,17 +42,31 @@ const STARVED_AUDIO_SECONDS = 1;
 const MAX_QUEUE_BYTES = 160 * 1024 * 1024;
 const SHOW_EARLY_SECONDS = 0.004;
 
-let available = null;
+let status = null;
+/**
+ * Whether this browser can create the WebGL2 context the renderer needs, and
+ * why not. `reason` is a fixed code; `message` is the browser's own context
+ * creation error (e.g. a blocklisted GPU), trimmed for the diagnostics log.
+ */
+export function frameRendererStatus() {
+  if (status) return status;
+  try {
+    if (typeof document === 'undefined') return status = { available: false, reason: 'no-document' };
+    const canvas = document.createElement('canvas');
+    let message = '';
+    canvas.addEventListener?.('webglcontextcreationerror', event => { message = event.statusMessage || ''; });
+    const gl = canvas.getContext?.('webgl2');
+    if (!gl) return status = { available: false,
+      reason: typeof WebGL2RenderingContext === 'undefined' ? 'webgl2-unsupported' : 'webgl2-context-failed',
+      ...(message ? { message: String(message).slice(0, 120) } : {}) };
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    status = { available: true, reason: 'ok' };
+  } catch { status = { available: false, reason: 'webgl2-error' }; }
+  return status;
+}
 /** Whether this browser can create the WebGL2 context the renderer needs. */
 export function frameRendererAvailable() {
-  if (available !== null) return available;
-  try {
-    const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-    const gl = canvas?.getContext?.('webgl2');
-    available = Boolean(gl);
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
-  } catch { available = false; }
-  return available;
+  return frameRendererStatus().available;
 }
 
 function compile(gl, type, source) {

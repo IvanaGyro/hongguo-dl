@@ -66,8 +66,10 @@ export function decideMediaRoute({ bridge, codec, metadata, processing, typeSupp
         ? (eme ? 'fmp4-index-unavailable' : 'eme-unavailable') : 'remux-unavailable' };
     }
   }
-  // A ByteVC2 source without AAC has no audio clock: transcode it instead.
-  const renderable = bridge === 'bvc2' && render && Boolean(metadata.hasAac);
+  // A ByteVC2 source without AAC has no audio clock, and a browser without
+  // AAC-only MSE cannot play it: transcode those instead.
+  const renderable = bridge === 'bvc2' && render && Boolean(metadata.hasAac) &&
+    typeSupport[BVC2_RENDER_MIME] !== false;
   const candidates = mseCandidates({ bridge, codec: bridge === 'bvc2' ? 'h264' : codec, metadata,
     render: renderable });
   if (!candidates) return { kind: 'unsupported', reason: 'codec-string' };
