@@ -37,6 +37,10 @@ export function normalizeDemand(input) {
   if (!DEMAND_OUTPUTS.includes(output)) throw invalid('output');
   const positionSeconds = input.positionSeconds ?? 0;
   if (!finite(positionSeconds, 0, 24 * 3600)) throw invalid('position');
+  // Counts explicit seeks, so a seek to the position already demanded (e.g.
+  // back to zero) still restarts output there.
+  const seekId = input.seekId ?? 0;
+  if (!Number.isSafeInteger(seekId) || seekId < 0) throw invalid('seek');
   const durationHint = input.durationHint ?? null;
   if (durationHint !== null && !finite(durationHint, 0, 24 * 3600)) throw invalid('duration');
   const playback = input.playback || {};
@@ -63,7 +67,7 @@ export function normalizeDemand(input) {
   const maxBytes = input.maxBytes ?? MAX_WHOLE_FILE_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_WHOLE_FILE_BYTES) throw invalid('maxBytes');
   return {
-    id, revision, output, codec, positionSeconds, durationHint, priority, processing, maxBytes, eme,
+    id, revision, output, codec, positionSeconds, seekId, durationHint, priority, processing, maxBytes, eme,
     render: bridge === 'bvc2' && render,
     source: { url: source.url, proxyUrl: source.proxyUrl || null, bridge, key },
     playback: { paused, bufferedAheadSeconds, bufferTargetSeconds }
@@ -103,7 +107,8 @@ export function createDemandTable({ maxDemands = MAX_DEMANDS } = {}) {
           { code: 'MEDIA_DEMAND_BUSY' });
       if (!previous && demands.size >= maxDemands)
         throw Object.assign(new Error('Too many media demands'), { code: 'MEDIA_DEMAND_BUSY' });
-      const positionChanged = sourceChanged || previous.positionSeconds !== next.positionSeconds;
+      const positionChanged = sourceChanged || previous.positionSeconds !== next.positionSeconds ||
+        previous.seekId !== next.seekId;
       const demand = { ...next, sourceKey: sourceKeyOf(next.source),
         positionRevision: positionChanged ? next.revision : previous.positionRevision };
       demands.set(demand.id, demand);

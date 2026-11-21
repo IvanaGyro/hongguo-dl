@@ -511,7 +511,7 @@ export async function openCencProgressiveStream({
         await waitBufferUpdate(buffer, () => buffer.remove(0, end), internal.signal);
       }).catch(() => {});
     }
-    generation = processor.need({ positionSeconds: seconds });
+    generation = processor.need({ positionSeconds: seconds, seekId: (processor.demand?.seekId || 0) + 1 });
     onStage('seek.request', { target: seconds, generation, workerReused: true,
       bufferedRanges: bufferedIntervals(video.buffered) });
     return ready;

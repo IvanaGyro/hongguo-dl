@@ -47,3 +47,17 @@ test('render is a ByteVC2-only demand preference that re-decides the route', () 
   expect(changed.sourceChanged).toBe(true);
   expect(changed.positionChanged).toBe(true);
 });
+
+test('a repeated seek to the demanded position starts a new output generation', () => {
+  const base = { id: 'd', source: { url: 'https://cdn.example/a.mp4', bridge: 'bvc2' },
+    output: 'playable-media', positionSeconds: 0 };
+  const table = createDemandTable();
+  const first = table.upsert({ ...base, revision: 1 }).demand;
+  const same = table.upsert({ ...base, revision: 2 });
+  expect(same.positionChanged).toBe(false);
+  expect(same.demand.positionRevision).toBe(first.positionRevision);
+  const seek = table.upsert({ ...base, revision: 3, seekId: 1 });
+  expect(seek.positionChanged).toBe(true);
+  expect(seek.demand.positionRevision).toBe(3);
+  expect(() => normalizeDemand({ ...base, revision: 4, seekId: -1 })).toThrow();
+});
