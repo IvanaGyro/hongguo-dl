@@ -33,13 +33,15 @@ void main() {
   color = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }`;
 const FLAG_BT709 = 1, FLAG_FULL_RANGE = 2;
-// Decoded pictures are large (1080p ≈ 3 MiB): keep only a short queue, but
-// let decoding continue while the audio buffer is nearly empty, so audio
-// interleaved behind video in the file can never stall both.
-const QUEUE_BYTES = 48 * 1024 * 1024;
+// Decode about 5.5 seconds of pictures ahead so decoding hiccups do not
+// show as stutter. Decoded pictures are large (1080p ≈ 3 MiB, so 5.5 s at
+// 30 fps ≈ 500 MiB); the byte cap bounds memory for high frame rates. While
+// the audio buffer is nearly empty decoding continues past the time target,
+// so audio interleaved behind video in the file can never stall both.
+const QUEUE_SECONDS = 5.5;
 const MIN_QUEUE_FRAMES = 3;
 const STARVED_AUDIO_SECONDS = 1;
-const MAX_QUEUE_BYTES = 160 * 1024 * 1024;
+const MAX_QUEUE_BYTES = 640 * 1024 * 1024;
 const SHOW_EARLY_SECONDS = 0.004;
 
 let status = null;
@@ -269,8 +271,10 @@ function createFrameRenderer(video) {
         if (late) dropped += index;
       };
       const roomy = () => {
-        if (queuedBytes < QUEUE_BYTES || queue.length < MIN_QUEUE_FRAMES) return true;
-        return audioAhead() < STARVED_AUDIO_SECONDS && queuedBytes < MAX_QUEUE_BYTES;
+        if (queue.length < MIN_QUEUE_FRAMES) return true;
+        if (queuedBytes >= MAX_QUEUE_BYTES) return false;
+        const ahead = queue[queue.length - 1].pts - Math.max(video.currentTime, shownPts ?? queue[0].pts);
+        return ahead < QUEUE_SECONDS || audioAhead() < STARVED_AUDIO_SECONDS;
       };
       const presenter = {
         get ready() { return received; },
