@@ -29,7 +29,7 @@ jobs:
         with:
           bun-version: '1.3.3'
       - name: Check bounded smoke-test harness without network access
-        run: bun test tests/live-worker-smoke.test.mjs
+        run: bun test tests/unit/tooling/live-worker-smoke.test.mjs
       - name: Probe one or two real episodes (max 256 bytes per CDN)
         env:
           LIVE_EPISODES: ${{ inputs.episodes || '1' }}

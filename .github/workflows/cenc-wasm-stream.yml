@@ -12,8 +12,8 @@ on:
       - 'src/cenc-remux-worker.js'
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
-      - 'tests/fmp4-assembler.test.mjs'
-      - 'tests/cenc-wasm-bundle.test.mjs'
+      - 'tests/unit/app/fmp4-assembler.test.mjs'
+      - 'tests/unit/tooling/cenc-wasm-bundle.test.mjs'
   pull_request:
     paths:
       - '.github/workflows/cenc-wasm-stream.yml'
@@ -26,8 +26,8 @@ on:
       - 'src/cenc-remux-worker.js'
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
-      - 'tests/fmp4-assembler.test.mjs'
-      - 'tests/cenc-wasm-bundle.test.mjs'
+      - 'tests/unit/app/fmp4-assembler.test.mjs'
+      - 'tests/unit/tooling/cenc-wasm-bundle.test.mjs'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -209,7 +209,7 @@ jobs:
             ' "$output" "$cached" "$second"
           done
       - name: Test box assembly and WASM manifest guards
-        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs tests/cenc-wasm-bundle.test.mjs
+        run: node --test tests/unit/app/fmp4-assembler.test.mjs tests/unit/app/clear-key.test.mjs tests/unit/tooling/cenc-wasm-bundle.test.mjs
       - name: Publish verified JS/WASM pair directly to main
         if: success() && github.ref == 'refs/heads/main'
         shell: bash
