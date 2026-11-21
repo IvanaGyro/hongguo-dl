@@ -28,6 +28,8 @@ const ffmpeg = (args, out) => execFileSync('ffmpeg', ['-nostdin', '-hide_banner'
 const RECIPES = {
   'clear-short.mp4': out => ffmpeg(video(4), out),
   'clear.mp4': out => ffmpeg(video(180), out),
+  'cenc-short.mp4': out => ffmpeg([...video(4), ...encrypt], out),
+  'cenc-medium.mp4': out => ffmpeg([...video(20), ...encrypt], out),
   'cenc.mp4': out => ffmpeg([...video(180), ...encrypt], out),
   'cenc-fmp4-sidx.mp4': out => {
     const clear = join(MEDIA_DIR, 'clear.mp4');

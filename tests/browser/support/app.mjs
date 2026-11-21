@@ -48,8 +48,9 @@ export class App {
     return this;
   }
 
-  // fault(request) returns a Playwright fulfill option object to fail that
-  // request, or nothing to let it through. request: { kind, url, range, n }.
+  // decide(request) returns Playwright fulfill options (or { abort: reason }
+  // for a network/CORS failure) to fail that request, or nothing to let it
+  // through. `n` counts the requests of that kind this fault has seen.
   fault(kind, decide) {
     this.faults.push({ kind, decide, count: 0 });
     return this;
@@ -72,6 +73,7 @@ export class App {
     for (const f of this.faults) {
       if (f.kind !== kind) continue;
       const result = await f.decide({ ...info, n: f.count++ });
+      if (result?.abort) { await route.abort(result.abort); return true; }
       if (result) { await route.fulfill(result); return true; }
     }
     return false;
