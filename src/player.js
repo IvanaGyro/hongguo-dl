@@ -29,7 +29,9 @@ function printableSource(source) {
   ].filter(Boolean).join(' · ');
 }
 export function createPlayer({
-  video, status, label, prevButton, nextButton, qualitySelect,
+  // `mediaElement` is the element Video.js plays (<bvc2-video>): the same <video>,
+  // plus directly rendered ByteVC2 pictures' buffered span and readiness.
+  video, mediaElement = video, status, label, prevButton, nextButton, qualitySelect,
   speedSelect, settingsToggle, settingsMenu,
   settingsClose, sourceInfo,
   getSeries, sourceFor, getWorkerOrigin, cache, storage, onProgress,
@@ -244,8 +246,8 @@ export function createPlayer({
       const events = ['progress', 'loadeddata', 'canplay', 'seeked',
         'timeupdate', 'durationchange', 'playing'];
       const cleanup = () => {
-        clearTimeout(timeout); clearInterval(framePoll);
-        for (const event of events) video.removeEventListener(event, check);
+        clearTimeout(timeout);
+        for (const event of events) mediaElement.removeEventListener(event, check);
         video.removeEventListener('error', failed);
         signal.removeEventListener('abort', canceled);
       };
@@ -262,23 +264,23 @@ export function createPlayer({
         if (signal.aborted) return canceled();
         if (video.error) return failed();
         const bufferedTarget = seconds > 0.5 ? target : video.currentTime;
-        if (!timeIsBuffered(video.buffered, bufferedTarget, 0.15)) return;
-        // Direct ByteVC2 rendering: audio alone is not a playable start.
+        if (!timeIsBuffered(mediaElement.buffered, bufferedTarget, 0.15)) return;
+        // Direct ByteVC2 rendering: audio alone is not a playable start, also
+        // before the stream claimed the renderer for its first picture.
         if (stream.framesReady && !stream.framesReady()) return;
         // Some browsers keep currentTime at zero during MSE startup even
         // after we first assigned the target in restoreTime().
         if (seconds > 0.5 && Math.abs(video.currentTime - target) > 0.6) {
           try { video.currentTime = target; } catch { /* retry on canplay */ }
         }
-        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        if (mediaElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
             (seconds <= 0.5 || Math.abs(video.currentTime - target) <= 0.6)) finish();
       };
       const timeout = setTimeout(() =>
         finish(errorWith('PLAYBACK_TIMEOUT', 'CENC 首段影片未在時限內準備完成')),
       SESSION_TIMEOUT);
-      // Decoded pictures arrive without media element events.
-      const framePoll = stream.framesReady ? setInterval(check, 100) : 0;
-      for (const event of events) video.addEventListener(event, check);
+      // <bvc2-video> also fires progress/canplay for decoded pictures.
+      for (const event of events) mediaElement.addEventListener(event, check);
       video.addEventListener('error', failed, { once: true });
       signal.addEventListener('abort', canceled, { once: true });
       check();
@@ -372,7 +374,7 @@ export function createPlayer({
     }
     markStartupStage('loadedmetadata');
     log('playback.metadata', {
-      duration: video.duration, width: video.videoWidth, height: video.videoHeight,
+      duration: video.duration, width: mediaElement.videoWidth, height: mediaElement.videoHeight,
       readyState: video.readyState, elapsedMs: ageMs()
     });
     if (signal.aborted || currentToken !== token) return;
@@ -538,7 +540,7 @@ export function createPlayer({
       time: video.currentTime, bufferedEnd, bufferedRanges: bufferedIntervals(video.buffered),
       ...bufferedAround(video.buffered, video.currentTime), readyState: video.readyState,
       networkState: video.networkState,
-      frames: video.getVideoPlaybackQuality?.().totalVideoFrames || 0
+      frames: mediaElement.getVideoPlaybackQuality?.().totalVideoFrames || 0
     };
   };
   let seekMeasurement = null;
@@ -590,9 +592,9 @@ export function createPlayer({
     const target = clampStreamSeek(video.currentTime,
       nativeStream.durationSeconds || video.duration);
     if (target === null) return;
-    // Directly rendered ByteVC2 keeps only a short picture queue; buffered
-    // audio alone cannot serve a seek.
-    if (timeIsBuffered(video.buffered, target) && (nativeStream.covers?.(target) ?? true)) {
+    // Directly rendered ByteVC2 keeps only a short picture queue; <bvc2-video>
+    // reports that span, not the buffered audio.
+    if (timeIsBuffered(mediaElement.buffered, target)) {
       log('media.seek.buffered', { target, ...mediaSnapshot(), elapsedMs: ageMs() });
       return;
     }

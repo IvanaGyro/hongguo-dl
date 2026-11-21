@@ -522,8 +522,6 @@ export async function openCencProgressiveStream({
   streamHandle = { url: objectUrl, inPlaceSeek: true,
     kind: route.kind === 'eme' ? 'eme-mse' : rendering ? 'bvc2-render'
       : bridge === 'bvc2' ? 'bvc2-transcode' : 'cenc-remux',
-    // Direct rendering: decoded pictures, not the audio buffer, bound seeks.
-    covers: seconds => !rendering || Boolean(presenter?.covers(seconds)),
     framesReady: () => !rendering || Boolean(presenter?.ready),
     onFirstFrame: callback => { if (rendering) firstFrameCallbacks.push(callback); },
     close, seekTo, startProcessing: () => processor.startProcessing(),

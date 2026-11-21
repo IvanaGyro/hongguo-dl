@@ -41,12 +41,12 @@ await page.addInitScript(() => {
     return url;
   };
   URL.revokeObjectURL = url => { live.delete(url); window.__activeMse = live.size; revoke(url); };
-  // Direct ByteVC2 rendering draws on a canvas over an audio-only <video>;
-  // the H.264 transcode fallback presents pictures in the <video> itself.
-  const canvas = () => { const c = document.querySelector('.bvc2-frame-canvas'); return c && !c.hidden ? c : null; };
-  window.__bvcFrames = () => canvas()?.renderedFrames ??
-    document.querySelector('#player-video').getVideoPlaybackQuality().totalVideoFrames;
-  window.__bvcWidth = () => canvas()?.width ?? document.querySelector('#player-video').videoWidth;
+  // Direct ByteVC2 rendering draws over an audio-only <video>; <bvc2-video>
+  // (the Video.js media) reports its pictures, or the <video>'s own for the
+  // H.264 transcode fallback.
+  const media = () => document.querySelector('#player-media');
+  window.__bvcFrames = () => media().getVideoPlaybackQuality().totalVideoFrames;
+  window.__bvcWidth = () => media().videoWidth;
 });
 await context.route(url => url.pathname.startsWith('/api/') || url.hostname.endsWith('.fqnovelvod.com'), async route => {
   const url = new URL(route.request().url());
@@ -94,8 +94,8 @@ try {
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });
   await page.locator('#mode-play').click();
   await page.evaluate(() => {
-    const video = document.querySelector('#player-video');
-    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => window.recordBvcFirstFrame());
+    const media = document.querySelector('#player-media');
+    if (media.requestVideoFrameCallback) media.requestVideoFrameCallback(() => window.recordBvcFirstFrame());
   });
   // Entering playback mode already selects the first episode. Clicking it
   // again before its first frame aborts that CDN attempt and creates an
@@ -113,8 +113,16 @@ try {
   const webgl2 = await page.evaluate(() => Boolean(document.createElement('canvas').getContext('webgl2')));
   assert.match(await page.locator('#player-source-info').textContent(),
     whole ? /ByteVC2|轉碼/ : webgl2 ? /直接解碼/ : /增量轉碼/);
-  if (!whole && webgl2) assert.equal(await page.locator('#player-video').evaluate(video => video.videoWidth), 0,
-    'Direct rendering must not re-encode video into the MSE stream');
+  if (!whole && webgl2) {
+    assert.equal(await page.locator('#player-video').evaluate(video => video.videoWidth), 0,
+      'Direct rendering must not re-encode video into the MSE stream');
+    // Video.js reads the pictures through <bvc2-video>, not the audio.
+    assert.equal(await page.locator('#player-media').evaluate(media => media.engineName), 'bvc2-webgl2');
+    await page.waitForFunction(() => {
+      const media = document.querySelector('#player-media');
+      return media.readyState >= 2 && media.buffered.length === 1;
+    }, null, { timeout: 10000 });
+  }
   assert.match(await page.locator('#playback-log').inputValue(),
     whole ? /bvc2\.prepare\.begin mode=whole-file[^\n]*reason=stream-unavailable/ : /bvc2\.prepare\.begin mode=stream/);
   if (!whole) {

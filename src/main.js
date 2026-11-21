@@ -43,13 +43,15 @@ import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditio
 import { readMediaBody } from './media-body.js';
 import { createMediaDownload } from './media-download.js';
 import { inspectCodecCapabilities } from './codec-diagnostics.js';
-import { renderedFrameSize } from './bvc2-frame-renderer.js';
+import { defineBvc2Video } from './bvc2-video.js';
 
 const $ = id => {
   const element = document.getElementById(id);
   if (!element) throw new Error('Missing required UI control #' + id);
   return element;
 };
+// After the Video.js player element above, so <bvc2-video> registers with it.
+defineBvc2Video();
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
 const DEVICE_LEVEL_STORE = 'hongguo-dl-device-level-v1';
@@ -981,12 +983,12 @@ $('device-level').addEventListener('change', () => {
 void supportsIndependentSourceChannels().catch(() => {});
 // The player follows the source aspect ratio rather than forcing portrait dramas into 16:9.
 const playbackVideo = $('player-video');
+// <bvc2-video> reports directly rendered ByteVC2 picture sizes as well.
+const playbackMedia = $('player-media');
 const playbackStage = $('player-stage');
 function syncPlaybackAspectRatio() {
-  // Directly rendered ByteVC2 plays audio-only MSE; the picture size is the renderer's.
-  const rendered = renderedFrameSize(playbackVideo);
-  const width = rendered?.width ?? playbackVideo.videoWidth;
-  const height = rendered?.height ?? playbackVideo.videoHeight;
+  const width = playbackMedia.videoWidth ?? playbackVideo.videoWidth;
+  const height = playbackMedia.videoHeight ?? playbackVideo.videoHeight;
   const isPortrait = width > 0 && height > width;
   playbackStage.dataset.orientation = isPortrait ? 'portrait' : 'landscape';
   if (width > 0 && height > 0)
@@ -997,7 +999,7 @@ for (const event of ['loadedmetadata', 'resize', 'emptied'])
   playbackVideo.addEventListener(event, syncPlaybackAspectRatio);
 syncPlaybackAspectRatio();
 player = createPlayer({
-  video: $('player-video'), status: $('player-status'), label: $('player-episode'),
+  video: $('player-video'), mediaElement: playbackMedia, status: $('player-status'), label: $('player-episode'),
   prevButton: $('player-prev'), nextButton: $('player-next'),
   qualitySelect: $('player-quality'),
   speedSelect: $('player-speed'),
