@@ -65,7 +65,9 @@ function compile(gl, type, source) {
 }
 
 function createGlRenderer(canvas) {
-  let gl = null, state = null, lost = false;
+  // The last drawn picture is kept so a restored context can show it again
+  // while paused or ended, when no new picture would arrive.
+  let gl = null, state = null, lost = false, last = null;
   const init = () => {
     gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false,
       stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false });
@@ -99,9 +101,13 @@ function createGlRenderer(canvas) {
       fullRange: gl.getUniformLocation(program, 'fullRange') };
   };
   canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; state = null; });
-  canvas.addEventListener('webglcontextrestored', () => { lost = false; try { init(); } catch { state = null; } });
+  canvas.addEventListener('webglcontextrestored', () => {
+    lost = false;
+    try { init(); } catch { state = null; return; }
+    if (last) renderer.draw(last);
+  });
   init();
-  return {
+  const renderer = {
     draw(frame) {
       if (lost || !state) return false;
       const { width, height, bytes } = frame;
@@ -128,9 +134,12 @@ function createGlRenderer(canvas) {
       gl.uniform1i(state.fullRange, frame.flags & FLAG_FULL_RANGE ? 1 : 0);
       gl.viewport(0, 0, width, height);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      last = frame;
       return true;
-    }
+    },
+    forget() { last = null; }
   };
+  return renderer;
 }
 
 const renderers = new WeakMap();
@@ -279,6 +288,7 @@ function createFrameRenderer(video) {
           if (owner !== presenter) return;
           presenter.detach();
           stop();
+          gl.forget();
           canvas.hidden = true;
           setSize(0, 0);
         }
