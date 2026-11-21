@@ -36,6 +36,9 @@ function covered(ranges, seconds) {
 export class Bvc2VideoAdapter extends HTMLVideoAdapter {
   #renderer = null;
   #unsubscribe = null;
+  // Pending frame callbacks by our handle: { native, frames } backend handles.
+  #callbacks = new Map();
+  #nextCallback = 0;
 
   attach(target) {
     if (!target || this.target === target) return;
@@ -50,6 +53,8 @@ export class Bvc2VideoAdapter extends HTMLVideoAdapter {
   }
 
   detach() {
+    for (const entry of this.#callbacks.values()) this.#cancelBoth(entry);
+    this.#callbacks.clear();
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     this.#renderer = null;
@@ -94,15 +99,36 @@ export class Bvc2VideoAdapter extends HTMLVideoAdapter {
   }
 
   requestVideoFrameCallback(callback) {
-    if (this.#frames || !this.target?.requestVideoFrameCallback)
-      return -(this.#renderer?.requestVideoFrameCallback(callback) ?? 0);
-    return this.target.requestVideoFrameCallback(callback);
+    if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+    // Register with both the <video> and the renderer: whichever presents the
+    // next picture runs it, so a callback requested before direct rendering
+    // starts (or before native playback resumes) still fires.
+    const handle = ++this.#nextCallback;
+    const entry = { native: 0, frames: 0 };
+    const run = (now, metadata) => {
+      if (!this.#callbacks.delete(handle)) return;
+      this.#cancelBoth(entry);
+      callback(now, metadata);
+    };
+    const target = this.target;
+    if (typeof target?.requestVideoFrameCallback === 'function')
+      entry.native = target.requestVideoFrameCallback(run);
+    if (this.#renderer) entry.frames = this.#renderer.requestVideoFrameCallback(run);
+    this.#callbacks.set(handle, entry);
+    return handle;
   }
 
   cancelVideoFrameCallback(handle) {
-    // Renderer handles are negative so both kinds can be cancelled later.
-    if (handle < 0) this.#renderer?.cancelVideoFrameCallback(-handle);
-    else this.target?.cancelVideoFrameCallback?.(handle);
+    const entry = this.#callbacks.get(handle);
+    if (!entry) return;
+    this.#callbacks.delete(handle);
+    this.#cancelBoth(entry);
+  }
+
+  #cancelBoth(entry) {
+    if (entry.native) this.target?.cancelVideoFrameCallback?.(entry.native);
+    if (entry.frames) this.#renderer?.cancelVideoFrameCallback(entry.frames);
+    entry.native = entry.frames = 0;
   }
 }
 
