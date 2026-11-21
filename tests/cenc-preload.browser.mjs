@@ -23,11 +23,10 @@ await page.addInitScript(() => {
   localStorage.setItem('hongguo-dl-playback-history-v1', JSON.stringify({
     '42:1014': { seconds: 4, duration: 8, completed: false, viewedAt: Date.now() }
   }));
-  // Directly rendered ByteVC2 draws on a canvas over an audio-only <video>.
-  const canvas = () => { const c = document.querySelector('.bvc2-frame-canvas'); return c && !c.hidden ? c : null; };
-  const video = () => document.querySelector('#player-video');
-  window.__frames = () => canvas()?.renderedFrames ?? video().getVideoPlaybackQuality().totalVideoFrames;
-  window.__width = () => canvas()?.width ?? video().videoWidth;
+  // <bvc2-video> reports directly rendered ByteVC2 pictures like a <video>.
+  const media = () => document.querySelector('#player-media');
+  window.__frames = () => media().getVideoPlaybackQuality().totalVideoFrames;
+  window.__width = () => media().videoWidth;
 });
 await page.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());

@@ -95,7 +95,9 @@
           </div>
           <video-player id="videojs-player" class="videojs-player">
             <media-container id="player-stage" class="player-stage">
-              <video id="player-video" playsinline preload="metadata" aria-label="影集影片播放"></video>
+              <bvc2-video id="player-media">
+                <video id="player-video" slot="media" playsinline preload="metadata" aria-label="影集影片播放"></video>
+              </bvc2-video>
               <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"></media-gesture>
               <media-gesture type="tap" action="toggleControls" pointer="touch"></media-gesture>
               <media-gesture type="doubletap" action="seekStep" value="-10" region="left"></media-gesture>
