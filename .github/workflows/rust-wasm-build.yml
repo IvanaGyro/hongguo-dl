@@ -11,7 +11,7 @@ on:
       - 'worker/rust-sm3.cjs'
       - 'worker/vendor/playback-signature.js'
       - 'worker/vendor/app-source.js'
-      - 'tests/rust-sm3.test.cjs'
+      - 'tests/unit/worker/rust-sm3.test.mjs'
       - '.github/workflows/rust-wasm-build.yml'
   pull_request:
     paths:
@@ -20,7 +20,7 @@ on:
       - 'worker/rust-sm3.cjs'
       - 'worker/vendor/playback-signature.js'
       - 'worker/vendor/app-source.js'
-      - 'tests/rust-sm3.test.cjs'
+      - 'tests/unit/worker/rust-sm3.test.mjs'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}

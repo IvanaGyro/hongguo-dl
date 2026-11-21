@@ -5,3 +5,4 @@ public/ffmpeg/
 .DS_Store
 *.log
 test-results/
+playwright-report/

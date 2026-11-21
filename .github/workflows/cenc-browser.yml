@@ -1,4 +1,4 @@
-name: Progressive CENC MSE real-frame browser acceptance
+name: CENC preload, prefetch recovery and Worker reuse
 on:
   push:
     branches: [main, 'fix/cenc-*', 'fix/player-cdn-*']
@@ -21,8 +21,9 @@ on:
       - 'src/fmp4-passthrough.js'
       - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
-      - 'tests/media-worker-core.test.mjs'
-      - 'tests/cenc-startup.test.mjs'
+      - 'tests/unit/app/media-worker-local.test.mjs'
+      - 'tests/unit/helpers/**'
+      - 'tests/unit/app/cenc-remux.test.mjs'
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
       - 'src/player.js'
@@ -40,12 +41,8 @@ on:
       - 'src/cached-media-reader.js'
       - 'src/media-byte-cache.js'
       - 'src/stream-buffer-policy.js'
-      - 'tests/cenc-seek-cache.browser.mjs'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'src/retry.js'
-      - 'tests/cenc-stream.browser.mjs'
-      - 'tests/playback-cancel.browser.mjs'
-      - 'tests/playback-fallback.browser.mjs'
       - 'public/cenc/**'
   pull_request:
     paths:
@@ -67,8 +64,9 @@ on:
       - 'src/fmp4-passthrough.js'
       - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
-      - 'tests/media-worker-core.test.mjs'
-      - 'tests/cenc-startup.test.mjs'
+      - 'tests/unit/app/media-worker-local.test.mjs'
+      - 'tests/unit/helpers/**'
+      - 'tests/unit/app/cenc-remux.test.mjs'
       - 'src/fmp4-assembler.js'
       - 'src/clear-key.js'
       - 'src/player.js'
@@ -86,12 +84,8 @@ on:
       - 'src/cached-media-reader.js'
       - 'src/media-byte-cache.js'
       - 'src/stream-buffer-policy.js'
-      - 'tests/cenc-seek-cache.browser.mjs'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'src/retry.js'
-      - 'tests/cenc-stream.browser.mjs'
-      - 'tests/playback-cancel.browser.mjs'
-      - 'tests/playback-fallback.browser.mjs'
       - 'public/cenc/**'
   workflow_dispatch:
 concurrency:
@@ -105,8 +99,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Focused CENC fixes run real Chromium/Firefox acceptance; main retains both suites.
-        suite: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["fast","long"]') || fromJSON('["fast"]') }}
+        # Long playback moved to tests/browser/slow.spec.mjs (browser.yml).
+        suite: ['fast']
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -117,10 +111,9 @@ jobs:
         with:
           bun-version: '1.3.3'
       - run: bun ci
-      - run: bun add --dev playwright@1.58.0
       - run: bunx playwright install --with-deps chromium firefox
       - name: Assemble output box regression
-        run: node --test tests/fmp4-assembler.test.mjs tests/clear-key.test.mjs
+        run: node --test tests/unit/app/fmp4-assembler.test.mjs tests/unit/app/clear-key.test.mjs
       - name: Verify WASM assets are published to branch
         run: |
           test -s public/cenc/cenc-core.wasm
@@ -189,17 +182,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$CENC_SUITE" = "fast" ]; then
-            # Firefox headless needs a real audio server even for Web Audio's
-            # in-browser PCM analyser. A null sink is deterministic on CI
-            # without relying on physical sound hardware.
-            sudo apt-get install -y pulseaudio pulseaudio-utils >/dev/null
-            pulseaudio --check || pulseaudio --start --exit-idle-time=-1
-            pactl info >/dev/null
-            pactl load-module module-null-sink sink_name=cenc_ci_audio >/dev/null
-            pactl set-default-sink cenc_ci_audio
-            echo 'CENC browser PCM virtual audio sink ready'
-          fi
           VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
@@ -207,29 +189,11 @@ jobs:
             if curl --fail --silent --max-time 2 http://127.0.0.1:4173/hongguo-dl/ -o /dev/null; then break; fi
             sleep 1
           done
-          if [ "$CENC_SUITE" = "fast" ]; then
-          CENC_BROWSER=chromium CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox CENC_TEST_CDN_RETRY=1 CENC_TEST_AUDIO=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
+          # Watching, seeking, fallback and cancellation are behaviour specs in
+          # tests/browser (browser.yml). These remain until they are ported.
           TEST_APP_URL=http://127.0.0.1:4173/hongguo-dl/ node tests/prefetch-recovery.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=chromium PRELOAD_HANDOFF=manual node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
           CENC_BROWSER=firefox PRELOAD_HANDOFF=manual node tests/cenc-preload.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=160x96:rate=12 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 4 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -movflags +faststart -y /tmp/resume-short.mp4
-          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=160x96:rate=12 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 60 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -movflags +faststart -y /tmp/resume-long.mp4
-          node tests/playback-resume.browser.mjs /tmp/resume-short.mp4 /tmp/resume-long.mp4
-          CENC_BROWSER=chromium node tests/playback-cancel.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox node tests/playback-cancel.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=chromium node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=chromium CENC_FALLBACK=midstream node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=firefox CENC_FALLBACK=midstream node tests/playback-fallback.browser.mjs /tmp/cenc-h264-stream-fixture.mp4
-          CENC_BROWSER=chromium CENC_TEST_AUDIO=1 CENC_TEST_RANGE_RETRY=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
-          CENC_BROWSER=firefox CENC_TEST_AUDIO=1 CENC_TEST_RANGE_RETRY=1 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
           node tests/cenc-worker-reuse.node.mjs /tmp/cenc-h264-seek-fixture.mp4
-          CENC_BROWSER=chromium node tests/cenc-seek-cache.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
-          CENC_BROWSER=firefox node tests/cenc-seek-cache.browser.mjs /tmp/cenc-h264-seek-fixture.mp4
-          else
-          CENC_BROWSER=chromium CENC_TEST_STRESS=1 CENC_TEST_PAUSE=1 CENC_TEST_PAUSE_MS=120000 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-300s-fixture.mp4
-          CENC_BROWSER=chromium CENC_TEST_STRESS=1 CENC_STRESS_SECONDS=1800 node tests/cenc-stream.browser.mjs /tmp/cenc-h264-1800s-fixture.mp4
-          fi

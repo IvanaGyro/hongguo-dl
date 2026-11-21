@@ -37,7 +37,7 @@
 
 0. **P0 — 修復 1080p HEVC 串流起播卡頓與不必要的整集下載 fallback（新增）**：使用者實測「正在取得影片來源…」耗時過長，且 CENC→fMP4/MSE 可能被整片下載取代。先於頁面底部增加可複製的安全診斷 Log，量測來源、Range、WASM、MSE 與媒體事件；接著追查串流為何失敗。將 1080p HEVC 略過無關的 ByteVC2 WASM 探測；來源失敗不轉用全片備援（#23 起整檔備援只在處理失敗時啟用，含 HEVC）。**使用者實機 Log（2026-11-13）已收到**：第 13 集來源 API 約 6.7 秒，6 次 1080p HEVC metadata Range 均 HTTP 403；第 42 集 API 約 4.2 秒，備選來源 206、成功解密並產生 fMP4，1920×1080 首影格與約 13.52 秒 MSE buffer 均成立，但第 3／6 個 Worker 媒體 Range 失敗（舊版只記 `RANGE_ERROR`，尚不知該段 HTTP 狀態），隨後 MSE 報解碼錯誤。已在 `main` 加入精確 Worker Range HTTP 錯誤代碼與可複製記錄、兩次上限的「先有成功 206 才重試中途 403」、僅同畫質 HEVC 官方來源輪替、候選耗盡最多刷新 API 一次、429 禁止重試；1080p 不再檢查無關 ByteVC2 資產，也不再偷偷整集下載。另外定位到 Worker `/api/source` 在 `quality=auto&codec=auto` 時會先檢查網頁版來源（timeout 4.5 秒），再透過 App API 取得多種畫質；與實測 API 耗時 4.2–6.7 秒相符，但仍需新 Log 才能量化各項延遲。**目前所有畫質與編碼查詢統一從 App 取得完整來源清單，篩選由前端處理；同一集跨畫質重用來源快取，不使用任意 30 秒期限，僅媒體失敗／候選耗盡時刷新。** **尚待真實瀏覽器再次驗收，不能宣稱已修復所有 CDN 403 或穩定播畢。** CDN 403／206 根因與重試政策另以 [Issue #11](https://github.com/IvanaGyro/hongguo-dl/issues/11) 追蹤，與端到端驗收 Issue #8 區分。
 1. **P0 — 確認實際可聽的音訊輸出**：已用完全合成的 native MP4／H.264 MSE 對照證實 WebKit `MediaElementAudioSourceNode` 無法可靠量測 MSE AAC；請改用可收聽／OS 音訊 loopback 的真實裝置，驗證聲音及音畫同步。勿因 Web Audio RMS=0 修改 AAC 管線。
-2. **P1 — 修復 Seek 偶發失敗並完成真實 HEVC 播放旅程**：起播與早先的 120 秒 Seek 曾 PASS；最新 [WebKit Journey CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43356037576) 在約 90 秒等候後仍停在 86.65 秒（buffered 只到 115.45 秒），**不得把先前 PASS 當作穩定通過**。先針對 Seek 期間的 HTTP Range／片段請求、WASM 解密與轉封裝耗時、MSE append／buffered／`waiting` 事件做分階段時間戳與失敗分類，再重跑真實 120 秒 Seek；`tests/live-hevc-journey.mjs` 已實作 reload／進度恢復／實際 EOF 驗收，但此次因前置 Seek 斷言失敗而**未執行，不是通過或失敗**。重複切集／取消、音畫同步與資源使用仍待實機驗收。
+2. **P1 — 修復 Seek 偶發失敗並完成真實 HEVC 播放旅程**：起播與早先的 120 秒 Seek 曾 PASS；最新 [WebKit Journey CI](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43356037576) 在約 90 秒等候後仍停在 86.65 秒（buffered 只到 115.45 秒），**不得把先前 PASS 當作穩定通過**。先針對 Seek 期間的 HTTP Range／片段請求、WASM 解密與轉封裝耗時、MSE append／buffered／`waiting` 事件做分階段時間戳與失敗分類，再重跑真實 120 秒 Seek；舊的 `tests/live-hevc-journey.mjs`（reload／進度恢復／實際 EOF）已隨真實來源播放驗收一併移除；live 層現在只檢查外部服務是否接受目前實作（`tests/live/pipeline-health.test.mjs`），播放行為改由合成的瀏覽器行為測試（`tests/browser/`）驗收，其中 fragmented CENC 重新起播後的 Seek 問題已記為已知 bug（見 [測試目錄](test-catalog.md)）。重複切集／取消、音畫同步與資源使用仍待實機驗收。
 3. **P2 — 實際裝置與來源穩健性**：Windows／Android 有 HEVC MSE 能力的瀏覽器實播，沒有能力時正確提示；對來源 403、429、過期、Range 失敗做有限重試與可理解的訊息，測試弱網及記憶體。
 4. **ByteVC2 驗收**：[PR #10](https://github.com/IvanaGyro/hongguo-dl/pull/10) 已合併；[合成長樣本測試](https://github.com/IvanaGyro/hongguo-dl/actions/runs/43355352198) **PASS**：953,299-byte 來源、第一個完整 fMP4 片段於傳輸 96,504 bytes 時產生；瀏覽器首影格於 913,904 bytes 出現（約 96%，性能仍需改進），24 秒未緩衝 Seek、五種輸出、取消清理通過。真實 BTY2、音畫同步、CPU/RAM 仍待驗收。
 
@@ -50,8 +50,8 @@
 
 - 深色與淺色主題（頂列按鈕切換，`src/theme.js`；選擇存於 `localStorage` 的 `hongguo-dl-theme-v1`，未選時跟隨系統），樣式集中於 `src/styles.css`（單一檔案），沒有整條頂列。字體為自架的 Chiron GoRound TC（`@fontsource-variable/chiron-goround-tc`，無第三方請求）。
 - 四個品牌色即狀態語言：橘 `#FD7528`＝主要動作／正在播放，杏 `#F0B16B`＝進行中，梨綠 `#C4E384`＝已選取（原標誌色 `#BEC891` 彩度偏低，於深色底顯得混濁，故保留色相、提高彩度與明度），薄荷 `#9BDFC0`＝已完成。
-- 沒有首頁：開啟即為播放模式，搜尋欄固定在標誌與模式切換之間。既有瀏覽器測試以 `window.__HONGGUO_START_MODE = 'download'`（`addInitScript`）維持原本的下載模式起始條件。
-- `index.html` 只調整排列（搜尋列在橘色區塊、模式切換在頂列、設定與診斷集中於頁尾），所有 id 與控制項不變；版面驗收見 `tests/design-layout.browser.mjs`。
+- 沒有首頁：開啟即為播放模式，搜尋欄固定在標誌與模式切換之間。尚未移植的舊瀏覽器腳本以 `window.__HONGGUO_START_MODE = 'download'`（`addInitScript`）維持原本的下載模式起始條件；`tests/browser/` 的行為測試從預設播放模式開始。
+- `index.html` 只調整排列（搜尋列在橘色區塊、模式切換在頂列、設定與診斷集中於頁尾），所有 id 與控制項不變；版面驗收見 `tests/browser/layout.spec.mjs`。
 
 ## 工作原則與驗收入口
 
@@ -63,7 +63,7 @@
 - **真實 EOF 驗收**：自動下一集永遠開啟；以捕獲階段記錄上一集的可信 `ended` 事件、結尾時間與解碼影格，並檢查該集的完成紀錄，不可假定事件處理後播放器仍停在上一集。不得用人工 `ended` 事件或跳到結尾取代實際播畢。
 
 - 一般改動直接提交 `main`（若使用者特別指定 PR，依當次要求）；變動先跑對應單元、建置與 GitHub Actions，再更新**本文件**。避免同時編輯 ByteVC2 agent 負責的程式。
-- 真實 HEVC：[WebKit 端到端](../.github/workflows/live-hevc-webkit.yml)、[有界 WASM／FFmpeg 驗證](../.github/workflows/live-cenc-wasm-proof.yml)；合成回歸：[CENC Browser CI](../.github/workflows/cenc-browser.yml)。使用者可追蹤 [Issue #8](https://github.com/IvanaGyro/hongguo-dl/issues/8)。
+- 外部服務健康：[Live pipeline health](../.github/workflows/live-pipeline-health.yml)（每日）；行為回歸：[Browser behaviour specs](../.github/workflows/browser.yml)（Chromium／Firefox／WebKit）。測試分層見 [測試目錄](test-catalog.md)。使用者可追蹤 [Issue #8](https://github.com/IvanaGyro/hongguo-dl/issues/8)。
 - **安全與判定**：測試只用有權存取的來源；不保存 signed URL、金鑰、Cookie 或影片片段；PASS、FAIL、NOT TESTED 分開陳述。過往細節由 Git history／Actions 查證，不再累積逐 commit 日誌。
 
 - **520 背景下載與必要讀取交接（2026-11-16）**：背景 HTTP 失敗到達前若已有解碼器等待，保留等待者並以必要讀取流程重連；不把背景錯誤直接傳給解碼器，也不消耗其重試額度。新增固定時序回歸測試，318 個單元通過；Chromium／Firefox 真實 CENC 520 同位置恢復、不重建 MSE 均通過。CI 斷言允許背景下載停止後恢復或必要讀取重試兩種內部路徑。

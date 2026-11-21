@@ -9,7 +9,7 @@
 ### 已有證據
 
 - [獨立 CENC 診斷](../diagnostics/CENC-FINDINGS.md)：直接指定加密 MP4 給 video.src 不成功；合成加密 fragmented MP4 經 MSE 能在 Chromium 與 Firefox 播放。第一集 HEVC 的真實來源是一般 MP4，含 sample tables、tenc、senc、saio、saiz、hvcC，沒有 mvex。
-- [真實來源有界探測](../scripts/live-cenc-layout.mjs)：影集 7699513062054710296 可觀看第 1 集，1080p HEVC，8,277,562 bytes，起始 moov 約 260 KiB，能經其中一個 CDN 206 Range 取得 metadata，未下載全集。
+- 真實來源有界探測（原 `scripts/live-cenc-layout.mjs`，已併入 `tests/live/pipeline-health.test.mjs` 的媒體格式階段）：影集 7699513062054710296 可觀看第 1 集，1080p HEVC，8,277,562 bytes，起始 moov 約 260 KiB，能經其中一個 CDN 206 Range 取得 metadata，未下載全集。
 - [原生實測腳本](../scripts/probe-cenc-remux.py)：合成 CENC HEVC + AAC progressive MP4，透過逐塊節流的 stdin 輸入，FFmpeg 使用 decryption_key + stream-copy + fragmented MOV muxer。114,738 bytes 來源只讀到約 32,768 bytes（28.6%）時已產生第一個 moof，來源尚未 EOF。輸出五個 moof，包含 HEVC + AAC 且可以完整解碼，沒有原來的 tenc/senc。**這是原生可行性測試，不是 WASM 或真實片源效能基準。**
 - H.264 合成片另一輪原生測試在 616,734 bytes 來源中的 98,304 bytes（15.9%）已產生第一個 moof。百分比受 GOP、媒體內容與 I/O 節流影響，不能推定真實播放延遲。
 

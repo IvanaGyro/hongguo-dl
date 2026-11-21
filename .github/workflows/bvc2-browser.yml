@@ -22,8 +22,9 @@ on:
       - 'src/whole-file-read.js'
       - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
-      - 'tests/media-worker-core.test.mjs'
-      - 'tests/cenc-startup.test.mjs'
+      - 'tests/unit/app/media-worker-local.test.mjs'
+      - 'tests/unit/helpers/**'
+      - 'tests/unit/app/cenc-remux.test.mjs'
       - 'src/stream-preload.js'
       - 'src/player-prefetch.js'
       - 'tests/cenc-preload.browser.mjs'
@@ -56,8 +57,9 @@ on:
       - 'src/whole-file-read.js'
       - 'src/fallback-policy.js'
       - 'src/mp4-metadata.js'
-      - 'tests/media-worker-core.test.mjs'
-      - 'tests/cenc-startup.test.mjs'
+      - 'tests/unit/app/media-worker-local.test.mjs'
+      - 'tests/unit/helpers/**'
+      - 'tests/unit/app/cenc-remux.test.mjs'
       - 'src/stream-preload.js'
       - 'src/player-prefetch.js'
       - 'tests/cenc-preload.browser.mjs'
@@ -86,7 +88,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.3'
-      - run: bun ci && bun add --dev playwright@1.58.0
+      - run: bun ci
       - run: bunx playwright install --with-deps chromium firefox
       # GitHub mounts this directory as uid 1001; Firefox rejects it when run as root.
       - run: chown "$(id -u):$(id -g)" "$HOME"
