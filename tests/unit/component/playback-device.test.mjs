@@ -119,14 +119,19 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.equal(new URLSearchParams(url.search).has('_rticket'), true);
       assert.ok(options.headers['x-medusa']);
       assert.ok(options.headers['x-helios']);
-      assert.equal(options.headers['x-argus'], undefined);
       if (options.method === 'GET') {
         // Third step: bodyless signed video_tab recovery for the same episode.
+        // The recovery GET keeps the minimal known-good header set.
+        assert.equal(options.headers['x-argus'], undefined);
         assert.equal(url.pathname, '/reading/bookapi/video_tab/multi_video_model/v1/');
         assert.equal(url.searchParams.get('video_id'), '123');
         assert.equal(url.searchParams.get('device_level'), '3');
         assert.equal(options.body, undefined);
       } else {
+        // The player POST carries the recovered default-route TTNet headers.
+        assert.ok(options.headers['x-argus']);
+        assert.ok(options.headers['x-ladon']);
+        assert.ok(options.headers['x-gorgon']);
         assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
         assert.equal(url.searchParams.has('video_id'), false);
         assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);

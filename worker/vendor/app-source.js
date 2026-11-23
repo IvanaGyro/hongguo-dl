@@ -268,17 +268,29 @@ function buildMedusaV5(url, body, ts, who) {
 // and account signers above are kept intact. Each call signs afresh: the
 // ticket is adjusted to select Medusa branch 12 for this exact query/body.
 const EMPTY_BODY = Buffer.alloc(0);
-function signPlaybackV5(base, values, body = null) {
+function signPlaybackV5(base, values, body = null, { ttnet = false } = {}) {
     const digestBody = body || EMPTY_BODY;
     const now = Date.now(), khronos = Math.floor(now / 1000);
     for (let offset = 0; offset < 1024; offset++) {
         const query = pythonUrlEncode({ ...values, _rticket: String(now + offset) });
         if (v5Branch(query, digestBody, khronos) !== 12) continue;
         const url = `${base}?${query}`;
+        // Default-route TTNet headers recovered for app 8662 (reverse-bytedance
+        // baseline, SHA-256-matched libmetasec_ml.so): Argus = Base64(LE32 ts),
+        // Ladon = Base64(BE32 ts), Gorgon = the recovered RC4 envelope. Attached
+        // only when the caller opts in, to probe whether the player POST accepts
+        // them; the bodyless video_tab GET keeps its known-good minimal set.
+        const ttnetHeaders = ttnet ? {
+            'x-ladon': be32(khronos).toString('base64'),
+            'x-argus': le32(khronos).toString('base64'),
+            'x-gorgon': xGorgon(query, body, khronos, Math.floor(Math.random() * 65536)),
+            'x-tt-dt': '',
+        } : {};
         return { url, headers: {
             'x-khronos': String(khronos),
             'x-helios': Ladon.encrypt(khronos, Number(V5_LICENSE), 8662, le32(random32())),
             'x-medusa': buildMedusaV5(url, digestBody, khronos, values),
+            ...ttnetHeaders,
             // A bodyless GET has no SS-STUB; its Medusa digest covers an empty body.
             ...(body ? { 'x-ss-stub': md5(body) } : {}),
         } };
@@ -298,7 +310,7 @@ function playbackQuery(identity) {
 function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
     if (!VIDEO_HOSTS.includes(host)) throw new TypeError('Unsupported v5 playback host');
     const body = gzipSync(Buffer.from(payload, 'utf8'));
-    const signed = signPlaybackV5(host + PLAYER_PATH, playbackQuery(identity), body);
+    const signed = signPlaybackV5(host + PLAYER_PATH, playbackQuery(identity), body, { ttnet: true });
     return { url: signed.url, body, method: 'POST', headers: {
         'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
         'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
