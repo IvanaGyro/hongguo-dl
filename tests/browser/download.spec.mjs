@@ -132,19 +132,26 @@ test('a job interrupted by leaving the page resumes only when retried', async ({
   });
 });
 
-test('H.264 download uses a single speed-to-size slider and remembers the setting', async ({ page }) => {
+test('H.264 download uses a single speed-to-size slider and remembers the setting', async ({ app, page }) => {
+  app.addSeries(50, { title: 'H264 tradeoff', episodes: [[variant('clear-short.mp4')]] });
   await page.goto('./');
-  await page.locator('#mode-download').click();
+  await app.open(50);
+  await app.mode('download');
   const panel = page.locator('#h264-tradeoff');
   await expect(panel).toBeHidden();
   await page.locator('#output-mode').selectOption('h264');
   await expect(panel).toBeVisible();
-  await expect(panel.locator('input[type=range]')).toHaveCount(1);
+  const slider = page.locator('#h264-speed-size');
+  await expect(slider).toHaveCount(1);
   await expect(page.locator('#h264-speed-size-name')).toHaveText('快速');
-  await page.locator('#h264-speed-size').fill('4');
+  await slider.focus();
+  await slider.press('End');
+  await slider.press('ArrowLeft');
+  await expect(slider).toHaveValue('4');
   await expect(page.locator('#h264-speed-size-name')).toHaveText('省空間');
   await page.reload();
-  await page.locator('#mode-download').click();
+  await app.open(50);
+  await app.mode('download');
   await page.locator('#output-mode').selectOption('h264');
   await expect(page.locator('#h264-speed-size')).toHaveValue('4');
   await page.locator('#output-mode').selectOption('copy');
