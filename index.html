@@ -85,6 +85,15 @@
             <label>輸出 <select id="output-mode"><option value="original">保留原始編碼（加密時須解密／封裝）</option><option value="copy">無損封裝 MP4</option><option value="h264">H.264 MP4</option><option value="hevc">H.265 / HEVC MP4</option><option value="vvc">VVC / H.266 MP4（較慢）</option><option value="av1">AV1 MP4（較慢）</option></select></label>
             <label>同時下載 <select id="concurrency"><option value="1">1 集</option><option value="2" selected>2 集</option><option value="3">3 集</option></select></label>
           </div>
+          <div id="h264-tradeoff" class="h264-tradeoff" hidden>
+            <div class="h264-tradeoff-head">
+              <span>⚡ 速度</span>
+              <output id="h264-speed-size-name" for="h264-speed-size">快速</output>
+              <span>檔案大小 ▪</span>
+            </div>
+            <input id="h264-speed-size" type="range" min="0" max="5" step="1" value="1"
+              aria-label="H.264 下載速度與檔案大小，向右移動可縮小檔案" />
+          </div>
           <div class="toolbar"><button id="choose-folder" type="button">選擇儲存資料夾</button><span id="folder-status" class="subtle"></span><button id="add-queue" type="button" class="primary">加入下載佇列</button></div>
           <div id="browser-note" class="browser-note" role="status" hidden></div>
           </div>

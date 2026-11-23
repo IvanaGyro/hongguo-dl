@@ -74,6 +74,8 @@ typedef struct Context {
     AVIOContext *reader_io, *writer_io;
     Stream reader;
     int mode, streaming;
+    const char *download_h264_preset;
+    int download_h264_crf;
     // ByteVC2 slices use H.266 syntax (Librempeg decodes both with the same
     // VVC decoder); only the bvc2/bv2C framing differs. Remux, don't encode.
     int remux_vvc, copy, no_remux;
@@ -299,7 +301,7 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->encoder->time_base = av_inv_q(fps);
     c->encoder->framerate = fps;
     c->encoder->gop_size = av_q2d(fps) * 2;
-    c->encoder->max_b_frames = 0;
+    c->encoder->max_b_frames = (c->mode == 4 && c->download_h264_preset) ? 2 : 0;
     c->encoder->thread_count = 1;
     c->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     if (c->mode == 5) {
@@ -315,6 +317,13 @@ static int execute(Context *c, const char *input, const char *output, const char
         av_opt_set(c->encoder->priv_data, "preset", "faster", 0);
         av_opt_set(c->encoder->priv_data, "qp", "32", 0);
         av_opt_set(c->encoder->priv_data, "vvenc-params", "Threads=0", 0);
+    } else if (c->download_h264_preset) {
+        // Mirror the x264 coding tools used for the measured preset/CRF
+        // options. Playback and other codecs keep their old defaults.
+        av_opt_set(c->encoder->priv_data, "preset", c->download_h264_preset, 0);
+        av_opt_set(c->encoder->priv_data, "profile", "high", 0);
+        av_opt_set(c->encoder->priv_data, "level", "5.1", 0);
+        av_opt_set_int(c->encoder->priv_data, "crf", c->download_h264_crf, 0);
     } else {
         av_opt_set(c->encoder->priv_data, "preset", "ultrafast", 0);
         av_opt_set(c->encoder->priv_data, "tune", "zerolatency", 0);
@@ -469,9 +478,11 @@ static int execute(Context *c, const char *input, const char *output, const char
 }
 
 static int convert(const char *input, const char *output, const char *key, int mode, int file_size,
-                   double start_seconds, int no_remux, int *remuxed) {
+                   double start_seconds, int no_remux, int *remuxed,
+                   const char *h264_preset, int h264_crf) {
     Context c = {0};
     c.mode = mode; c.streaming = file_size > 0; c.no_remux = no_remux;
+    c.download_h264_preset = h264_preset; c.download_h264_crf = h264_crf;
     c.reader.size = file_size; c.start_seconds = start_seconds;
     last_error[0] = 0;
     int ret = execute(&c, input, output, key);
@@ -493,30 +504,45 @@ static int convert(const char *input, const char *output, const char *key, int m
 }
 
 EMSCRIPTEN_KEEPALIVE int bvc2_transcode(const char *in, const char *out, const char *key) {
-    return convert(in, out, key, 1, 0, 0, 0, NULL);
+    return convert(in, out, key, 1, 0, 0, 0, NULL, NULL, 0);
 }
 EMSCRIPTEN_KEEPALIVE int bvc2_convert(const char *in, const char *out, const char *key, int mode) {
     if (mode != 0 && mode != 2 && mode != 3 && mode != 4 && mode != 5)
         return fail(AVERROR(EINVAL), "invalid output mode");
     int remuxed = 0;
     last_remuxed = 0;
-    int ret = convert(in, out, key, mode, 0, 0, 0, &remuxed);
+    int ret = convert(in, out, key, mode, 0, 0, 0, &remuxed, NULL, 0);
     if (remuxed > 0) last_remuxed = 1;
     // Parameter sets that standard VVC tooling cannot describe: re-encode.
     else if (remuxed < 0) {
         remove(out);
-        ret = convert(in, out, key, mode, 0, 0, 1, NULL);
+        ret = convert(in, out, key, mode, 0, 0, 1, NULL, NULL, 0);
     }
     return ret;
+}
+// Whole-file H.264 download entry point; no global mutable quality settings.
+EMSCRIPTEN_KEEPALIVE int bvc2_convert_h264(const char *in, const char *out,
+    const char *key, const char *preset, int crf) {
+    static const struct { const char *name; int q; } choices[] = {
+        { "ultrafast", 18 }, { "superfast", 19 }, { "faster", 16 },
+        { "fast", 17 }, { "medium", 18 }, { "slow", 18 }
+    };
+    int allowed = 0;
+    for (unsigned i = 0; i < sizeof(choices) / sizeof(choices[0]); i++)
+        if (preset && strcmp(preset, choices[i].name) == 0 && crf == choices[i].q)
+            allowed = 1;
+    if (!allowed) return fail(AVERROR(EINVAL), "invalid H.264 download preset");
+    last_remuxed = 0;
+    return convert(in, out, key, 4, 0, 0, 0, NULL, preset, crf);
 }
 EMSCRIPTEN_KEEPALIVE int bvc2_stream(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, 4, size, start, 0, NULL);
+    return convert(NULL, NULL, key, 4, size, start, 0, NULL, NULL, 0);
 }
 // Decode only: AAC fMP4 through writeChunk, I420 pictures through writeFrame.
 EMSCRIPTEN_KEEPALIVE int bvc2_play(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, MODE_RENDER, size, start, 0, NULL);
+    return convert(NULL, NULL, key, MODE_RENDER, size, start, 0, NULL, NULL, 0);
 }

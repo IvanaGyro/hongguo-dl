@@ -131,3 +131,22 @@ test('a job interrupted by leaving the page resumes only when retried', async ({
     await app.expectQueueCompleted(1, 60_000);
   });
 });
+
+test('H.264 download uses a single speed-to-size slider and remembers the setting', async ({ page }) => {
+  await page.goto('./');
+  await page.locator('#mode-download').click();
+  const panel = page.locator('#h264-tradeoff');
+  await expect(panel).toBeHidden();
+  await page.locator('#output-mode').selectOption('h264');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('input[type=range]')).toHaveCount(1);
+  await expect(page.locator('#h264-speed-size-name')).toHaveText('快速');
+  await page.locator('#h264-speed-size').fill('4');
+  await expect(page.locator('#h264-speed-size-name')).toHaveText('省空間');
+  await page.reload();
+  await page.locator('#mode-download').click();
+  await page.locator('#output-mode').selectOption('h264');
+  await expect(page.locator('#h264-speed-size')).toHaveValue('4');
+  await page.locator('#output-mode').selectOption('copy');
+  await expect(panel).toBeHidden();
+});

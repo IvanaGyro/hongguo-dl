@@ -42,8 +42,8 @@ function extensionFor(source, processed) {
   catch { return '.mp4'; }
 }
 export async function getEpisodeBytes({
-  series, episode, type, quality, codec, outputMode, sourceFor, fetchBytes,
-  cache, signal, onUpdate
+  series, episode, type, quality, codec, outputMode, h264TradeoffIndex,
+  sourceFor, fetchBytes, cache, signal, onUpdate
 }) {
   const key = episodeCacheKey(series.seriesId, episode.vid, quality, codec);
   const cached = outputMode === 'h264' ? null : cache.get(key);
@@ -61,7 +61,8 @@ export async function getEpisodeBytes({
   const process = type === 'concat' || !!source.contentKey || outputMode !== 'original';
   const raw = await fetchBytes(source.url, profile, signal, PER_EPISODE_LIMIT);
   const bytes = process ? await convertBytes(raw, {
-    mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal
+    mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
+    h264TradeoffIndex
   }) : raw;
   if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '第 ' + episode.index + ' 集下載結果為空');
   const ext = extensionFor(source, process);
@@ -70,14 +71,15 @@ export async function getEpisodeBytes({
   return { bytes, ext, codec: source.codec, width: source.width, height: source.height };
 }
 export async function runBulk({
-  type, series, episodes, quality, codec, outputMode, sourceFor, fetchBytes, cache,
+  type, series, episodes, quality, codec, outputMode, h264TradeoffIndex,
+  sourceFor, fetchBytes, cache,
   signal, saveZip, saveOutput, onStatus
 }) {
   if (!episodes.length) throw errorWith('NO_SELECTION', '請至少選擇一集');
   const ordered = orderedEpisodes(episodes);
   const title = safeName(series.title || '影片');
   const request = ep => withDownloadRetries(() => getEpisodeBytes({
-    series, episode: ep, type, quality, codec, outputMode, sourceFor, fetchBytes,
+    series, episode: ep, type, quality, codec, outputMode, h264TradeoffIndex, sourceFor, fetchBytes,
     cache, signal, onUpdate: onStatus
   }), { signal, onRetry: x => onStatus?.('第 ' + ep.index + ' 集重試：' +
     x.message + '（連續相同錯誤 ' + x.streak + '/3）') });
