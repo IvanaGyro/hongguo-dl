@@ -43,7 +43,7 @@ test('v5 player signs the final gzip body and registered identity with recovered
     const signed = source.playbackRequest(payload, identity, source.VIDEO_HOSTS[level % 2]);
     const url = new URL(signed.url);
     assert.equal(url.origin, source.VIDEO_HOSTS[level % 2]);
-    assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+    assert.equal(url.pathname, '/novel/player/multi_video_model/v1/');
     assert.equal(url.searchParams.get('device_id'), identity.device_id);
     assert.equal(url.searchParams.get('iid'), identity.iid);
     assert.equal(url.searchParams.get('cdid'), identity.cdid);

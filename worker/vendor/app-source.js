@@ -28,7 +28,11 @@ function getProcessIdentity() {
 // kotlin-tv/core/src/main/kotlin/com/hongguotv/core/{MobilePlayback,Signer,AesV3,V5Constants}.kt.
 // Primary, then backup official v5 player host; both accept the same request.
 const VIDEO_HOSTS = Object.freeze(['https://api5-normal-sinfonlinea.fqnovel.com', 'https://api5-normal-sinfonlineb.fqnovel.com']);
-const PLAYER_PATH = '/novel/player/multi_video_model/player/v1';
+// APK 74532 ground truth (seriessdk rpc.f / de5.t0.n2): the stock player route
+// is POST /novel/player/multi_video_model/v1/ (AB default); the :dr_scene variant
+// resolves to .../default/v1/. The earlier /player/v1 (no trailing slash) matched
+// neither RpcOperation path.
+const PLAYER_PATH = '/novel/player/multi_video_model/v1/';
 const VIDEO_TAB_HOST = 'https://api5-normal-sinfonlineb.fqnovel.com';
 const VIDEO_TAB_PATH = '/reading/bookapi/video_tab/multi_video_model/v1/';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
@@ -314,6 +318,7 @@ function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
     return { url: signed.url, body, method: 'POST', headers: {
         'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
         'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
+        ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
         ...signed.headers,
     }};
 }
@@ -328,6 +333,7 @@ function videoTabRequest(vid, identity, deviceLevel) {
     });
     return { url: signed.url, body: null, method: 'GET', headers: {
         'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+        ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
         ...signed.headers,
     }};
 }
@@ -489,10 +495,28 @@ function checkedUrl(value, domains) {
     return url.href;
 }
 
+// A minimal cookie jar. The app keeps store-region / ttreq / install_id from
+// device_register and replays them on every subsequent fqnovel.com request.
+// `options.jar` (a plain object) is filled from Set-Cookie and sent back as the
+// Cookie header, matching the real client's TTNet cookie store.
+function mergeSetCookie(jar, response) {
+    if (!jar) return;
+    let list = [];
+    try { list = response.headers.getSetCookie?.() || []; } catch { /* not supported */ }
+    if (!list.length) { const single = response.headers.get('set-cookie'); if (single) list = single.split(/,(?=[^;,]+=)/); }
+    for (const entry of list) {
+        const first = String(entry).split(';')[0]; const eq = first.indexOf('=');
+        if (eq > 0) { const name = first.slice(0, eq).trim(); const value = first.slice(eq + 1).trim(); if (name) jar[name] = value; }
+    }
+}
+function cookieHeader(jar) {
+    return jar ? Object.entries(jar).map(([name, value]) => `${name}=${value}`).join('; ') : '';
+}
 async function requestJson(url, options, deadline, signal) {
     // Worker fetch transport replaces upstream Axios/Node HTTP; the upstream
     // identity, signing, validation and playback parsing remain unchanged.
     const preserveFields = Array.isArray(options?.preserveLargeIntegerFields) ? options.preserveLargeIntegerFields : [];
+    const jarBound = options?.jar && Object.keys(options.jar).length > 0;
     for (let redirects = 0; redirects < 4; redirects++) {
         throwIfAborted(signal);
         url = checkedUrl(url, ['fqnovel.com', 'snssdk.com']);
@@ -503,10 +527,15 @@ async function requestJson(url, options, deadline, signal) {
         signal?.addEventListener('abort', stop, { once: true });
         const timer = setTimeout(() => controller.abort(new DOMException('Timeout', 'TimeoutError')), timeout);
         let response;
+        const headers = { ...(options?.headers || {}) };
+        if (options?.jar && !Object.keys(headers).some(name => name.toLowerCase() === 'cookie')) {
+            const cookie = cookieHeader(options.jar);
+            if (cookie) headers.Cookie = cookie;
+        }
         try {
             response = await fetch(url, {
                 method: options?.method || 'GET',
-                headers: options?.headers || {},
+                headers,
                 body: options?.data ?? undefined,
                 redirect: 'manual',
                 signal: controller.signal,
@@ -520,8 +549,9 @@ async function requestJson(url, options, deadline, signal) {
             signal?.removeEventListener('abort', stop);
         }
         throwIfAborted(signal);
+        mergeSetCookie(options?.jar, response);
         if ([301, 302, 303, 307, 308].includes(response.status)) {
-            const bound = Object.keys(options?.headers || {}).some(name => /^(?:x-argus|x-ladon|x-gorgon|x-medusa|cookie|authorization)$/i.test(name));
+            const bound = jarBound || Object.keys(options?.headers || {}).some(name => /^(?:x-argus|x-ladon|x-gorgon|x-medusa|x-tt-token|cookie|authorization)$/i.test(name));
             if (options?.method === 'POST' || bound || !response.headers.get('location')) throw Object.assign(new Error('App 接口發生不支援的跳轉'), { code: 'SECURITY_BLOCKED' });
             url = checkedUrl(new URL(response.headers.get('location'), url).href, ['fqnovel.com', 'snssdk.com']);
             continue;
@@ -556,12 +586,14 @@ async function fetchAppPlayUrl(vid, options = {}) {
 async function fetchAppPlayUrlFresh(vid, options) {
     const deviceLevel = Number(options.deviceLevel ?? 3);
     if (![1, 2, 3].includes(deviceLevel)) throw Object.assign(new Error('裝置等級必須為 1、2 或 3'), { code: 'INVALID_DEVICE_LEVEL' });
+    // Default-route body (GetVideoModelRequest): the /multi_video_model/v1/ RPC
+    // carries no dr_scene field (that belongs to the :dr_scene variant). biz_param
+    // mirrors the APK's GetVideoBizParam field set.
     const payload = JSON.stringify({
-        biz_param: { detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
-            disable_video_relate_book: false, need_all_video_definition: true, need_mp4_align: false,
-            use_os_player: false, use_server_dns: false, video_platform: 1024 },
+        biz_param: { caller_scene: '', detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
+            disable_video_relate_book: false, from_video_id: '', need_all_video_definition: true, need_mp4_align: false,
+            source: 0, use_os_player: false, use_server_dns: false, video_id_type: 0, video_platform: 1024 },
         mixed_video_id_map: { '1004': [vid] },
-        dr_scene: 'player',
     });
     // Browser installations supply their persisted identity; legacy clients reuse the isolate cache.
     const identity = options.identity || await getPlaybackDevice(requestJson);
@@ -580,7 +612,7 @@ async function fetchAppPlayUrlFresh(vid, options) {
                 ? playbackRequest(payload, identity, VIDEO_HOSTS[attempt])
                 : videoTabRequest(vid, identity, deviceLevel);
             return requestJson(signed.url, {
-                method: signed.method, headers: signed.headers, data: signed.body,
+                method: signed.method, headers: signed.headers, data: signed.body, jar: identity.cookies,
             }, deadline, signal);
         }, { deadline, signal, attempts: VIDEO_HOSTS.length + 1 });
         if (Number(response.Code || response.code || 0) !== 0) throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });
@@ -592,7 +624,7 @@ async function fetchAppPlayUrlFresh(vid, options) {
         const readFallback = async () => {
             const fallback = parseFallback(model.fallback_api);
             if (!fallback) throw Object.assign(new Error('App 接口未返回本集片源地址'), { code: 'MISSING_MODEL' });
-            const outer = await requestJson(fallback, { headers: { 'User-Agent': VIDEO_UA } }, deadline, signal);
+            const outer = await requestJson(fallback, { headers: { 'User-Agent': VIDEO_UA }, jar: identity.cookies }, deadline, signal);
             throwIfAborted(signal);
             if ([outer, outer.video_info].some(value => Number(value?.Code || value?.code || 0) !== 0)) {
                 throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });

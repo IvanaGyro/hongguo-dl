@@ -15,6 +15,17 @@ function validateInstallation(value) {
         if (!id(value.device_id) || !id(value.iid) || !Number.isSafeInteger(value.registeredAt) ||
             value.registeredAt <= 0 || value.registeredAt > Date.now() + 60000) invalid();
         Object.assign(clean, { device_id: value.device_id, iid: value.iid, registeredAt: value.registeredAt });
+        // Trust tokens and the cookie jar the register step issued. Sanitized and
+        // bounded: they are replayed on later fqnovel.com requests, never shown.
+        if (typeof value.device_token === 'string' && value.device_token && value.device_token.length <= 512) clean.device_token = value.device_token;
+        if (typeof value.klink_egdi === 'string' && value.klink_egdi && value.klink_egdi.length <= 256) clean.klink_egdi = value.klink_egdi;
+        if (value.cookies && typeof value.cookies === 'object' && !Array.isArray(value.cookies)) {
+            const jar = {};
+            for (const [name, cookie] of Object.entries(value.cookies)) {
+                if (/^[a-z0-9_-]{1,64}$/i.test(name) && typeof cookie === 'string' && cookie.length <= 256 && !/[\r\n;,]/.test(cookie)) jar[name] = cookie;
+            }
+            if (Object.keys(jar).length) clean.cookies = jar;
+        }
     }
     return clean;
 }
