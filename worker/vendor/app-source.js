@@ -11,6 +11,7 @@ const { gzipSync } = require('node:zlib');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { getPlaybackDevice } = require('./playback-device');
 const { Ladon } = require('./playback-signature');
+const mc = require('./metadata-collector');
 const { abortError, throwIfAborted, boundedSignal, networkFailure, retryAfterMs } = require('./request-signal');
 const sm3 = require('./sm3');
 const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
@@ -237,21 +238,26 @@ function buildMedusaV5(url, body, ts, who) {
     const flags = Buffer.alloc(8);
     const version = who.version_name;
     const process = getProcessIdentity();
-    const deviceInfo = proto([
-        [1, 1, 'sint'], [2, 2, 'sint'], [3, '8662'], [4, who.device_id],
-        [5, process.nonce], [6, '!noperm!'], [12, 'Asia/Shanghai,8'], [13, 'zh_CN'],
-        [22, who.os_version], [25, process.started, 'sint'],
-        [30, who.device_type], [31, 'HONOR'], [32, who.device_type], [34, 'HONOR'],
-    ]);
-    const env = proto([[6, 'v04.10.03.04-bugfix'], [8, who.channel], [12, deviceInfo, 'message'], [14, version]]);
+    // field23 device_profile + field24 diagnostics from the recovered collector
+    // (metadata-collector.js). Static device fields + computable diagnostics are
+    // byte-faithful; runtime-only values are marked placeholders inside the module.
+    const deviceInfo = mc.deviceInfoProto({
+        deviceId: who.device_id, osRelease: who.os_version,
+        model: who.device_type, name: who.device_type, deviceName: who.device_type,
+        fltkMs: process.started, scheduleMs: process.started, requestClockMs: ts * 1000, initMs: process.started,
+    });
+    const env = mc.deviceProfileProto({ ts, info: deviceInfo });
+    const threadMarker = random32();
+    const field24 = mc.diagnosticsJson({ uuid: who.cdid, kd: 0, tsMs: ts * 1000,
+        initTsMs: process.started, threadMarker, unHash: mc.crc32(Buffer.from(String(who.device_id))) });
     const message = proto([
         [1, V5_MAGIC, 'bytes'], [2, 5, 'sint'], [3, random32(), 'sint'],
         [4, '8662'], [5, who.device_id], [6, V5_LICENSE],
         [7, version], [8, 'v04.10.03-ml-android'], [9, 0x040a0300, 'sint'],
         [10, flags, 'bytes'], [12, ts, 'sint'], [13, f13, 'bytes'], [14, query.subarray(0, 6), 'bytes'],
-        [15, proto([[1,1,'sint'],[2,1,'sint'],[3,1,'sint'],[5,1,'sint']]), 'message'],
+        [15, proto([[1,694367,'sint'],[2,694367,'sint'],[3,694367,'sint'],[5,694367,'sint']]), 'message'],
         [17, ts, 'sint'], [20, 'none'], [21, 377, 'sint'], [23, env, 'message'],
-        [24, '{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}'],
+        [24, field24],
     ]);
     const nonce = random32();
     const [hash, seed] = keyHash(V5_SIGN_KEY, nonce);
