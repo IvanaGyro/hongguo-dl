@@ -205,12 +205,22 @@ function xmxor(data, key) {
   return Buffer.from(enc.map(x => x & 255));
 }
 
-// Per-isolate process identity (cold-start nonce + start time), as the official app.
-const processNonce = crypto.randomBytes(18).toString('base64url');
-const deviceToken = (processNonce.length === 25 && processNonce.startsWith('A')) ? processNonce : ('A' + (processNonce + 'A'.repeat(24)).slice(0, 24));
-const processStarted = Date.now();
+// Per-isolate process identity (cold-start nonce + start time), as the official
+// app. Created lazily on first signing: Cloudflare Workers forbid generating
+// random values or reading the clock in module global scope.
+let _proc;
+function processIdentity() {
+  if (_proc) return _proc;
+  const nonce = crypto.randomBytes(18).toString('base64url');
+  _proc = {
+    deviceToken: (nonce.length === 25 && nonce.startsWith('A')) ? nonce : ('A' + (nonce + 'A'.repeat(24)).slice(0, 24)),
+    started: Date.now(),
+  };
+  return _proc;
+}
 
 function medusaV5(url, body, ts, who) {
+  const { deviceToken, started: processStarted } = processIdentity();
   const query = sm3(Buffer.from(url.split('?')[1], 'utf8'));
   const f13 = hashF13(query, body ? md5(body) : Buffer.alloc(16), ts);
   const flags = hex('4480000000000000');
