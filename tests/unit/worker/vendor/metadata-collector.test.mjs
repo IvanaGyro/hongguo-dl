@@ -48,6 +48,6 @@ test('device_profile encodes as valid nested protobuf', () => {
   assert.ok(Buffer.isBuffer(env) && env.length > 50);
   // f6 (SDK build string) present as a length-delimited field
   assert.ok(env.includes(Buffer.from('v04.10.03.04-bugfix')));
-  assert.ok(info.includes(Buffer.from('Asia/Shanghai,8')));
+  assert.ok(info.includes(Buffer.from('Asia/Taipei,8')));
   assert.ok(info.includes(Buffer.from('25053RT47C')));
 });

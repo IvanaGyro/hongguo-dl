@@ -69,7 +69,7 @@ const diagnosticTk = securityId => securityId == null ? true : (s => s.length ==
 // exactly; cmr/cmr2/sts baseline constants; lp/fl partly computed, partly
 // runtime placeholders (see header).
 function diagnosticsJson({ uuid, kd = 0, tsMs, initTsMs, threadMarker, securityId = null,
-    unHash /*runtime*/, lpSeeds /*runtime*/, allocation = 0x5200d7a0 }) {
+    vpn = 0, unHash /*runtime*/, lpSeeds /*runtime*/, allocation = 0x5200d7a0 }) {
     const pd = crc32(Buffer.from(uuid, 'utf8'));
     const fkd = crc32(Buffer.from(crypto.createHash('md5').update(Buffer.concat([Buffer.from(uuid, 'utf8'), Buffer.from(String(kd), 'utf8')])).digest('hex'), 'ascii'));
     const MASK = 0x7943f10b58n;
@@ -79,7 +79,7 @@ function diagnosticsJson({ uuid, kd = 0, tsMs, initTsMs, threadMarker, securityI
     const fl = ['0', '0', String(m2), String(m3), String(m4), '0', '0', '0', '0', String(threadMarker >>> 0)].join('|');
     // key order fixed: cmr, cmr2, un_h, vpn, sts, kd, fkd, pd, lp, fl, dyn, do, tk
     return '{' + [
-        `"cmr":16777216`, `"cmr2":16777216`, `"un_h":${(unHash >>> 0) || 0}`, `"vpn":0`, `"sts":11`, `"kd":${kd}`,
+        `"cmr":16777216`, `"cmr2":16777216`, `"un_h":${(unHash >>> 0) || 0}`, `"vpn":${vpn ? 1 : 0}`, `"sts":11`, `"kd":${kd}`,
         `"fkd":${fkd}`, `"pd":${pd}`, `"lp":"${lp}"`, `"fl":"${fl}"`, `"dyn":""`, `"do":0`, `"tk":${diagnosticTk(securityId)}`,
     ].join(',') + '}';
 }
@@ -88,18 +88,22 @@ function diagnosticsJson({ uuid, kd = 0, tsMs, initTsMs, threadMarker, securityI
 // device: { model, brand, board, name, device, manufacturer, hardware,
 //           osRelease, timezoneId, rawOffsetHours, locale } + plausible runtime.
 function deviceInfoProto({ deviceId, securityId = '!notset!', osRelease = '16',
-    timezone = 'Asia/Shanghai,8', locale = 'zh_CN', cpuCore = 8, wmSize = 'Physical size: 1280x2772',
+    timezone = 'Asia/Taipei,8', locale = 'zh_TW', cpuCore = 8, wmSize = 'Physical size: 1280x2772',
     storageTotal = 128 * 1024 ** 3, storageFree = 96 * 1024 ** 3, ramTotal = 8 * 1024 ** 3, ramFree = 3 * 1024 ** 3,
-    model = '25053RT47C', brand = 'Redmi', board = 'unknown', name = '25053RT47C', deviceName = '25053RT47C',
-    manufacturer = 'Redmi', hardware = 'qcom', features = 0b10111 /* BT|BLE|GPS|Telephony */,
+    dataTotal, dataFree, model = '25053RT47C', brand = 'Redmi', board = 'unknown', name = '25053RT47C', deviceName = '25053RT47C',
+    manufacturer = 'Xiaomi', hardware = 'qcom', features = 0b10111 /* BT|BLE|GPS|Telephony */,
     brightness = 128, volume = 7, usbConnected = 0, fltkMs, scheduleMs, bootDeltaMs = -1, requestClockMs, initMs }) {
+    // f16/f17 = /sdcard total/free; f20/f21 = /data + /sdcard total/free, summed
+    // even on a unified filesystem (recovered collector 0x21d36c) => f20 ~= 2*f16.
+    const dTot = dataTotal == null ? storageTotal : dataTotal;
+    const dFree = dataFree == null ? storageFree : dataFree;
     const total = giB(storageTotal), free = giB(storageFree);
     return proto([
         [1, 1, 'sint'], [2, 2, 'sint'], [3, '8662'], [4, deviceId], [5, securityId], [6, '!noperm!'],
         [7, -888888, 'sint'], [8, 0, 'sint'], [9, -1, 'sint'], [10, -888888, 'sint'], [11, '!notset!'],
         [12, timezone], [13, locale], [14, cpuCore, 'sint'], [15, wmSize],
         [16, total, 'float'], [17, free, 'float'], [18, giB(ramTotal), 'float'], [19, giB(ramFree), 'float'],
-        [20, giB(storageTotal), 'float'], [21, giB(storageFree), 'float'], [22, osRelease],
+        [20, giB(dTot + storageTotal), 'float'], [21, giB(dFree + storageFree), 'float'], [22, osRelease],
         [23, brightness, 'sint'], [24, volume, 'sint'], [25, fltkMs, 'sint'], [26, scheduleMs, 'sint'],
         [27, bootDeltaMs, 'sint'], [28, requestClockMs, 'sint'], [29, usbConnected, 'sint'],
         [30, model], [31, brand], [32, board], [33, name], [34, deviceName], [35, manufacturer], [36, hardware],
@@ -107,14 +111,52 @@ function deviceInfoProto({ deviceId, securityId = '!notset!', osRelease = '16',
     ]);
 }
 
-// Full field23 device_profile message. runtime (f18/f19/f20) placeholders.
-function deviceProfileProto({ pid = 1234, ssVersionName = '!notset!', ts, info }) {
+// ---- per-process plausible runtime profile (indistinguishable, not "real") ----
+// f18/f19/f20, un_h, and the lp middle/last values are live ASLR / TLS / JNI
+// quantities unique to a running process. The server never sees them from any
+// second source, so it cannot verify them — only reject obvious tells (zero,
+// fixed constants, f18==f20). We draw ONE coherent set of plausible AArch64
+// addresses per process and feed them through the recovered formulas, so the
+// emitted fields are statistically indistinguishable from a real device's while
+// staying unverifiable. Deterministic given a seed so one worker stays stable.
+function mulberry32(a) {
+    return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0); };
+}
+function plausibleRuntime(seed = (Math.random() * 2 ** 32) >>> 0) {
+    const r = mulberry32(seed >>> 0);
+    const addr = () => (r() & 0xfffffff8) >>> 0;                 // 8-aligned low32 of a 64-bit address
+    // resolved JNI_OnLoad low32: page-random high bits, but the low 12 bits are
+    // the fixed file offset of JNI_OnLoad in libmetasec (SO VA 0x2a5194 => 0x194),
+    // so f20^ts carries the real offset a page-random value would not.
+    const jniOnLoad = ((r() & 0xfffff000) | 0x194) >>> 0;
+    const tpidr = addr();                                       // TPIDR_EL0 thread pointer low32
+    const unHash = (addr() | 0x8) >>> 0;                        // ART jmethodID low32 (heap, nonzero)
+    const allocation = (0x50000000 | (r() & 0x0ffffff0)) >>> 0; // default; re-rolled per request by the caller
+    const jniGap = 16;                                          // |slot61-slot62| gap; fingerprint checksum requires abs==16
+    const lpA = BigInt(r() & 0xffff);                           // lp middle seed a (small)
+    const lpB = BigInt(addr());                                 // lp middle seed b (32-bit)
+    const pid = (r() % 29000) + 1200;                           // plausible getpid() (field23 f7)
+    const uptimeMs = (r() % (9 * 86400000)) + 3600000;          // 1h..9d uptime, for the boot-epoch (device_info f27)
+    const brightness = (r() % 236) + 20;                        // 20..255, stable per process
+    const volume = r() % 16;                                    // 0..15, stable per process
+    return { seed: seed >>> 0, jniOnLoad, tpidr, unHash, allocation, jniGap, lpA, lpB, pid, uptimeMs, brightness, volume };
+}
+
+// Full field23 device_profile message. With `runtime`, f18/f19/f20 follow the
+// recovered formulas over plausible per-process addresses
+//   f18 = ts ^ JNI_OnLoad ^ TPIDR_EL0,  f20 = ts ^ JNI_OnLoad,  f19 = ts ^ jni_gap
+// so f18 != f20 and neither value XOR-ts is a constant. Without `runtime` the
+// legacy fixed-mask placeholder (f18 == f20 == ts^0x2a5194) is kept unchanged.
+function deviceProfileProto({ pid = 1234, ssVersionName = '!notset!', ts, info, runtime }) {
     const u32 = n => (n >>> 0);
-    const f19 = u32(ts) ^ u32(0x4628b0); // runtime placeholder (needs global 0x4628b0 value)
+    const rt = runtime || { jniOnLoad: 0x2a5194, tpidr: 0, jniGap: 0x4628b0 };
+    const f18 = (BigInt(u32(ts)) ^ BigInt(rt.jniOnLoad >>> 0) ^ BigInt(rt.tpidr >>> 0)) & 0xffffffffn;
+    const f20 = (BigInt(u32(ts)) ^ BigInt(rt.jniOnLoad >>> 0)) & 0xffffffffn;
+    const f19 = u32(ts) ^ u32(rt.jniGap >>> 0);
     return proto([
         [6, 'v04.10.03.04-bugfix'], [7, pid, 'sint'], [12, info, 'message'], [14, ssVersionName],
-        [15, 2, 'sint'], [18, BigInt(u32(ts)) ^ 0x2a5194n, 'sint'], [19, f19, 'sint'], [20, BigInt(u32(ts)) ^ 0x2a5194n, 'sint'],
+        [15, 2, 'sint'], [18, f18, 'sint'], [19, f19, 'sint'], [20, f20, 'sint'],
     ]);
 }
 
-module.exports = { crc32, giB, initialFlMarkers, diagnosticTk, urlBase64HasOutput, diagnosticsJson, deviceInfoProto, deviceProfileProto };
+module.exports = { crc32, giB, initialFlMarkers, diagnosticTk, urlBase64HasOutput, diagnosticsJson, deviceInfoProto, deviceProfileProto, plausibleRuntime };

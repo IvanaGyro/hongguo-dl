@@ -232,24 +232,35 @@ function v5Branch(query, body, khronos) {
     return getIv(getIv(getIv(0x20230928, q), bodyHash), le32(khronos)) & 15;
 }
 function random32() { return crypto.randomBytes(4).readUInt32LE(0); }
+// One coherent plausible-ASLR runtime profile per worker process (stable across
+// this process's requests, as a real device keeps its addresses for the process
+// lifetime). Feeds field23 f18/f19/f20 and field24 un_h/lp via the real formulas.
+let runtimeProfile;
+function getRuntimeProfile() { return runtimeProfile ||= mc.plausibleRuntime(random32()); }
 function buildMedusaV5(url, body, ts, who) {
     const query = sm3(Buffer.from(url.split('?')[1]));
     const f13 = hashF13(query, crypto.createHash('md5').update(body).digest(), le32(ts), ts, true);
     const flags = Buffer.alloc(8);
     const version = who.version_name;
     const process = getProcessIdentity();
+    const runtime = getRuntimeProfile();
     // field23 device_profile + field24 diagnostics from the recovered collector
     // (metadata-collector.js). Static device fields + computable diagnostics are
-    // byte-faithful; runtime-only values are marked placeholders inside the module.
+    // byte-faithful; runtime-only values use one coherent plausible per-process
+    // profile fed through the recovered formulas (see metadata-collector.js).
     const deviceInfo = mc.deviceInfoProto({
         deviceId: who.device_id, osRelease: who.os_version,
         model: who.device_type, name: who.device_type, deviceName: who.device_type,
+        brightness: runtime.brightness, volume: runtime.volume,
+        bootDeltaMs: process.started - runtime.uptimeMs, // f27: real boot-epoch ms, not the -1 failure sentinel
         fltkMs: process.started, scheduleMs: process.started, requestClockMs: ts * 1000, initMs: process.started,
     });
-    const env = mc.deviceProfileProto({ ts, info: deviceInfo });
+    const env = mc.deviceProfileProto({ ts, info: deviceInfo, runtime, pid: runtime.pid });
     const threadMarker = random32();
+    const packetAlloc = (0x50000000 | (random32() & 0x0ffffff0)) >>> 0; // fresh packet-buffer address per request (lp[5])
     const field24 = mc.diagnosticsJson({ uuid: who.cdid, kd: 0, tsMs: ts * 1000,
-        initTsMs: process.started, threadMarker, unHash: mc.crc32(Buffer.from(String(who.device_id))) });
+        initTsMs: process.started, threadMarker, vpn: 1, unHash: runtime.unHash,
+        lpSeeds: { a: runtime.lpA, b: runtime.lpB }, allocation: packetAlloc });
     const message = proto([
         [1, V5_MAGIC, 'bytes'], [2, 5, 'sint'], [3, random32(), 'sint'],
         [4, '8662'], [5, who.device_id], [6, V5_LICENSE],
