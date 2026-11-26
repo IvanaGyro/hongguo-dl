@@ -165,10 +165,11 @@ test('source empty-200 retries retain the same IDs and never register another de
         assert.equal(url.searchParams.get('device_level'), '3');
         assert.equal(options.body, undefined);
       } else {
-        // The player POST carries the recovered default-route TTNet headers.
-        assert.ok(options.headers['x-argus']);
-        assert.ok(options.headers['x-ladon']);
-        assert.ok(options.headers['x-gorgon']);
+        // The player POST (mobile v5) carries only Khronos/Helios/Medusa + SS-STUB;
+        // the TTNet Argus/Ladon/Gorgon headers are not part of the official form.
+        assert.equal(options.headers['x-argus'], undefined);
+        assert.equal(options.headers['x-ladon'], undefined);
+        assert.equal(options.headers['x-gorgon'], undefined);
         assert.equal(url.pathname, '/novel/player/multi_video_model/v1/');
         assert.equal(url.searchParams.has('video_id'), false);
         assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);

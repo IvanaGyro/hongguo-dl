@@ -11,6 +11,7 @@ const { gzipSync } = require('node:zlib');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { getPlaybackDevice } = require('./playback-device');
 const { Ladon } = require('./playback-signature');
+const mobileV5 = require('./mobile-v5');
 const mc = require('./metadata-collector');
 const { abortError, throwIfAborted, boundedSignal, networkFailure, retryAfterMs } = require('./request-signal');
 const sm3 = require('./sm3');
@@ -331,10 +332,14 @@ function playbackQuery(identity) {
 function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
     if (!VIDEO_HOSTS.includes(host)) throw new TypeError('Unsupported v5 playback host');
     const body = gzipSync(Buffer.from(payload, 'utf8'));
-    const signed = signPlaybackV5(host + PLAYER_PATH, playbackQuery(identity), body, { ttnet: true });
+    // Our app-derived endpoint (host + /novel/player/multi_video_model/v1/) signed
+    // with the proven hongguoTV mobile-v5 envelope (see mobile-v5.js). The earlier
+    // hand-assembled buildMedusaV5 (field21=377 / reverse-bytedance field23 layout)
+    // was accepted by the server only as HTTP 200 + empty body; this form returns
+    // code=0 with the video_model. Cookie is attached by requestJson's jar.
+    const signed = mobileV5.signPlayback(host + PLAYER_PATH, mobileV5.playerQuery(identity), body);
     return { url: signed.url, body, method: 'POST', headers: {
-        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
-        'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
+        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf', 'Content-Encoding': 'gzip',
         ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
         ...signed.headers,
     }};
