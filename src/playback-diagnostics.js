@@ -3,6 +3,11 @@
 const MAX_ROWS = 400;
 const SAFE_FIELD = /^[a-zA-Z][a-zA-Z0-9]{0,35}$/;
 const SAFE_TOKEN = /^[a-zA-Z][a-zA-Z0-9_.-]{0,47}$/;
+// Public content identifiers only: series and episode IDs are long decimal
+// strings that exceed Number precision. Other numeric strings (e.g. device
+// IDs) stay redacted, so this is keyed by field name rather than by shape.
+const CONTENT_ID_FIELDS = new Set(['seriesId', 'vid']);
+const CONTENT_ID = /^\d{1,24}$/;
 
 export function createDiagnosticBuffer(now = () => performance.now()) {
   const started = now();
@@ -28,7 +33,8 @@ export function createDiagnosticBuffer(now = () => performance.now()) {
     if (!SAFE_TOKEN.test(event)) return;
     const params = Object.entries(fields || {}).slice(0, 24)
       .filter(([key, item]) => SAFE_FIELD.test(key) && item !== undefined && item !== null)
-      .map(([key, item]) => key + '=' + value(item));
+      .map(([key, item]) => key + '=' + (CONTENT_ID_FIELDS.has(key) &&
+        typeof item === 'string' && CONTENT_ID.test(item) ? item : value(item)));
     const elapsed = Math.max(0, Math.round(now() - started));
     rows.push('+' + elapsed + 'ms ' + event + (params.length ? ' ' + params.join(' ') : ''));
     if (rows.length > MAX_ROWS) rows = rows.slice(-MAX_ROWS);

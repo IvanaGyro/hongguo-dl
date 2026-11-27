@@ -444,7 +444,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
   };
   updateWait('health', 'worker-capabilities');
   const started = performance.now();
-  trace('source.api.request', { deviceLevel });
+  trace('source.api.request', { seriesId: String(seriesId), vid: String(vid), deviceLevel });
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
