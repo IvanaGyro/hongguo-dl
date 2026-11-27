@@ -270,3 +270,28 @@ test('an inline row without a key is completed from fallback_api when it is the 
     assert.deepEqual(variants.map(v => [v.url.split('/').pop(), v.keyMissing]), [['d.mp4', true]]);
   });
 });
+
+test('renditions sort by quality_type, then encoded size, then bitrate; labels come from the encoded size', async () => {
+  const row = (name, fields, meta) => ({ codec_type: 'bytevc2', encrypt: false,
+    main_url: `https://v1.qznovelvod.com/${name}.mp4`, ...fields, video_meta: meta });
+  const body = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_id: 'v', video_duration: 50, video_list: {
+    // Listed worst-first on purpose; the server's own order must not matter.
+    low: row('low', { definition: '360p', quality_type: 40 }, { vwidth: 640, vheight: 360, bitrate: 200000 }),
+    real720: row('real720', { definition: '720p', quality_type: 10 }, { vwidth: 1280, vheight: 720, bitrate: 900000 }),
+    // Same quality_type: the larger frame wins, then the higher bitrate.
+    tie_small: row('tie_small', { definition: '540p', quality_type: 20 }, { vwidth: 960, vheight: 540, bitrate: 900000 }),
+    tie_big_slow: row('tie_big_slow', { definition: '540p', quality_type: 20 }, { vwidth: 1024, vheight: 576, bitrate: 500000 }),
+    tie_big_fast: row('tie_big_fast', { definition: '540p', quality_type: 20 }, { vwidth: 1024, vheight: 576, real_bitrate: 700000 }),
+    // Inflated: claims 1080p and the best tier, but is encoded at 1280x720.
+    inflated: row('inflated', { definition: '1080p', quality_type: 1 }, { vwidth: 1280, vheight: 720, bitrate: 1199790 }),
+    // No size: keeps the server label.
+    sizeless: row('sizeless', { definition: '480p', quality_type: 30 }, {}),
+  } }) } } };
+  await withFetch(() => json(body), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), v.quality]), [
+      ['inflated.mp4', '720p'], ['real720.mp4', '720p'],
+      ['tie_big_fast.mp4', '576p'], ['tie_big_slow.mp4', '576p'], ['tie_small.mp4', '540p'],
+      ['sizeless.mp4', '480p'], ['low.mp4', '360p']]);
+  });
+});

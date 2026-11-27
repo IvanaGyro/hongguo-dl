@@ -752,8 +752,18 @@ function parseAppPlayModel(info, vid, inline = false) {
         const [width, height] = [[item.vwidth, item.vheight], [item.width, item.height], [meta.vwidth, meta.vheight], [meta.width, meta.height]]
             .map(pair => pair.map(Number)).find(pair => pair.every(value => Number.isFinite(value) && value > 0)) || [0, 0];
         const pixels = width && height ? Math.min(width, height) : Number(quality.match(/\d+/)?.[0] || 0);
-        return { item, codec, codecRank, quality, pixels, width, height };
-    }).sort((a, b) => b.pixels - a.pixels || a.codecRank - b.codecRank);
+        // Server tier number: smaller is better (1080p→1, 720p→10, 540p→20, …).
+        const qualityType = Number(item.quality_type);
+        const bitrate = Number(meta.bitrate || meta.real_bitrate || item.bitrate || item.real_bitrate) || 0;
+        // definition/quality_type are server claims and can be inflated together
+        // (a "1080p", quality_type 1 row encoded at 1280x720). Only the encoded
+        // size is honest, so the label comes from it whenever it is known.
+        const label = width && height ? `${Math.min(width, height)}p` : quality;
+        return { item, codec, codecRank, quality: label, pixels, width, height, bitrate,
+            qualityType: Number.isFinite(qualityType) && item.quality_type !== '' && item.quality_type != null ? qualityType : Infinity };
+    // Best first: server tier (quality_type ascending), then encoded size, then bitrate.
+    }).sort((a, b) => (a.qualityType === b.qualityType ? 0 : a.qualityType - b.qualityType)
+        || b.pixels - a.pixels || b.bitrate - a.bitrate || a.codecRank - b.codecRank);
     if (!rows.length) throw Object.assign(new Error('App 接口未返回本集片源地址'), { code: 'MISSING_MODEL' });
     let lastError;
     const variants = [];
