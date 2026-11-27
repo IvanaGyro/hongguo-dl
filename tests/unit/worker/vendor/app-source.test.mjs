@@ -99,6 +99,56 @@ test('video_tab recovery is a bodyless v5 GET signed over an empty-body digest',
     assert.equal(signed.headers[name], undefined, name);
 });
 
+// --- Full episode directory recovery (hongguoTV 615b0c5). ---
+const SERIES = '7704261228037671998';
+const directoryBody = (ids) => ({ code: 0, message: 'SUCCESS',
+  data: { item_data_list: ids.map(id => ({ item_id: id })) } });
+
+test('directory request is a bodyless v5 GET over book_id with the minimal header set', () => {
+  const signed = source.directoryRequest(SERIES, identity, source.VIDEO_HOSTS[0]);
+  const url = new URL(signed.url);
+  assert.equal(signed.method, 'GET');
+  assert.equal(signed.body, null);
+  assert.equal(url.origin, source.VIDEO_HOSTS[0]);
+  assert.equal(url.pathname, '/reading/bookapi/directory/all_items/v/');
+  assert.equal(url.searchParams.get('book_id'), SERIES);
+  assert.equal(url.searchParams.get('need_version'), 'true');
+  for (const key of ['device_id', 'iid', 'cdid']) assert.equal(url.searchParams.get(key), identity[key]);
+  assert.equal([...url.searchParams.keys()].pop(), '_rticket');
+  // Signed by the mobile-v5 player signer (same envelope the live directory accepts).
+  assert.ok(signed.headers['x-khronos'] && signed.headers['x-helios'] && signed.headers['x-medusa']);
+  for (const name of ['x-ss-stub', 'Content-Type', 'Content-Encoding', 'x-argus', 'x-ladon', 'x-gorgon'])
+    assert.equal(signed.headers[name], undefined, name);
+  assert.throws(() => source.directoryRequest(SERIES, identity, 'https://example.com'), TypeError);
+});
+
+test('directory parsing keeps upstream order and rejects obfuscated or incomplete lists', () => {
+  const ids = ['7704261238552792088', '7704261238661860376', '7704261238791867416'];
+  assert.deepEqual(source.parseDirectory(directoryBody(ids), 3), ids);
+  assert.deepEqual(source.parseDirectory(directoryBody([...ids].reverse()), 3), [...ids].reverse());
+  // Fewer IDs than the website's episode_cnt means the directory is still truncated.
+  assert.throws(() => source.parseDirectory(directoryBody(ids), 4), e => e.code === 'INVALID_DIRECTORY');
+  // Obfuscated v1_ preview IDs are not a usable numeric directory.
+  assert.throws(() => source.parseDirectory(directoryBody(['v1_abc', 'v1_def']), 0), e => e.code === 'INVALID_DIRECTORY');
+  assert.throws(() => source.parseDirectory(directoryBody(['111', '111']), 0), e => e.code === 'INVALID_DIRECTORY');
+  assert.throws(() => source.parseDirectory({ code: 0, data: {} }, 0), e => e.code === 'MISSING_DIRECTORY');
+  assert.throws(() => source.parseDirectory({ code: 5, data: { item_data_list: [] } }, 0), e => e.code === 'BUSINESS_REJECTED');
+});
+
+test('episode directory falls back to the backup host and returns the full ordered list', async () => {
+  const ids = Array.from({ length: 12 }, (_, i) => String(7704261238552792088n + BigInt(i)));
+  await withFetch((i, u) => {
+    assert.equal(u.pathname, '/reading/bookapi/directory/all_items/v/');
+    return i === 0 ? emptyOk() : json(directoryBody(ids));
+  }, async calls => {
+    const result = await source.fetchEpisodeDirectory(SERIES, { identity, expectedCount: 12 });
+    assert.deepEqual(result, ids);
+    assert.deepEqual(calls.map(c => c.host), source.VIDEO_HOSTS.map(h => new URL(h).hostname));
+    for (const call of calls) for (const key of ['device_id', 'iid', 'cdid'])
+      assert.equal(call.query.get(key), identity[key]);
+  });
+});
+
 // --- Mocked transport: recovery ordering and boundaries (no network). ---
 function model(vid) {
   return { code: 0, data: { [vid]: { video_model: JSON.stringify({ video_list: { v1: {
