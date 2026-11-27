@@ -6,7 +6,6 @@
 - `worker/vendor/playback-device.js`：匿名裝置註冊。
 - `worker/vendor/playback-signature.js`：Argus 551 / Ladon 簽章。
 - `worker/vendor/request-signal.js`：AbortSignal 與超時。
-- `worker/vendor/download-quality.js`：畫質判定。
 - `worker/vendor/sm3.js`：SM3 哈希。
 - `worker/vendor/playback-signature.test.cjs`：簽章測試向量。
 

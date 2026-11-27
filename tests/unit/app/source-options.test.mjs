@@ -10,7 +10,6 @@ import {
   parseRenditionValue,
   matchingRenditionValue,
   candidateRenditions,
-  sourceQueryForPlayback,
   availableRenditions,
   chooseRendition,
   qualityId,
@@ -186,20 +185,6 @@ describe('rendition menu options', () => {
   });
 });
 
-describe('source query', () => {
-  test('all playback selections fetch complete unfiltered sources', () => {
-    assert.deepEqual(sourceQueryForPlayback('1080p'),
-      { quality: 'auto', codec: 'auto', partial: false });
-  });
-
-  test('auto and unsupported exact quality requests retain full metadata listing', () => {
-    for (const quality of ['auto', '720p', '540p', '480p', '360p']) {
-      assert.deepEqual(sourceQueryForPlayback(quality),
-        { quality: 'auto', codec: 'auto', partial: false });
-    }
-  });
-});
-
 describe('late App candidates', () => {
   const source = label => ({ variants: [{ url: 'https://cdn.example/' + label }] });
 
@@ -291,5 +276,18 @@ describe('CDN and codec choices', () => {
     assert.equal(playbackRendition(variants, pref, canPlay, 0).source, variants[3]);
     assert.equal(playbackRendition(variants, pref, canPlay, 2).source, variants[3]);
     assert.deepEqual(codecsAtQuality(variants, '720p'), ['bytevc2', 'h264']);
+  });
+});
+
+describe('pass-through renditions', () => {
+  test('a rendition without its decryption key or with an unknown named codec is not playable', () => {
+    const yes = () => 'probably';
+    assert.equal(browserCanPlayVariant({ codec: 'h264', contentKey: null }, yes), true);
+    assert.equal(browserCanPlayVariant({ codec: 'h264', contentKey: null, keyMissing: true }, yes), false);
+    assert.equal(browserCanPlayVariant({ codec: 'bytevc2', keyMissing: true }, yes, true), false);
+    assert.equal(browserCanPlayVariant({ codec: 'vp9', contentKey: null }, yes), false);
+    // Public web media has no codec metadata and stays playable.
+    assert.equal(browserCanPlayVariant({ codec: 'unknown', contentKey: null }, yes), true);
+    assert.equal(browserCanPlayVariant({ contentKey: null }, yes), true);
   });
 });

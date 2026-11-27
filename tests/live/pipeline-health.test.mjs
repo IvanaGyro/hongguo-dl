@@ -131,7 +131,7 @@ stage('signed source request: the App player API accepts the signatures', ['iden
   const failures = [];
   for (const episode of state.episodes) {
     try {
-      const source = await json('/api/source?' + new URLSearchParams({ sid: SERIES_ID, vid: episode.vid }),
+      const source = await json('/api/source?' + new URLSearchParams({ sid: SERIES_ID, vid: episode.vid, channel: 'app' }),
         { headers: { 'X-Playback-Device': JSON.stringify(state.identity) } });
       const variants = (source.variants || []).filter(v => /^https:\/\//.test(v.url || ''));
       assert.ok(variants.length, 'episode ' + episode.index + ' returned no HTTPS variants');

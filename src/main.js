@@ -55,12 +55,6 @@ const $ = id => {
 defineBvc2Video();
 const STORE = 'hongguo-dl-queue-v1';
 const API_STORE = 'hongguo-dl-worker-origin-v1';
-const DEVICE_LEVEL_STORE = 'hongguo-dl-device-level-v1';
-let deviceLevel = '3';
-try {
-  const saved = localStorage.getItem(DEVICE_LEVEL_STORE);
-  if (['1', '2', '3'].includes(saved)) deviceLevel = saved;
-} catch { /* Optional browser persistence. */ }
 const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
 const H264_TRADEOFF_STORE = 'hongguo-dl-h264-tradeoff-v1';
 // A deployment URL in .env must not bypass Vite's local /api proxy in dev.
@@ -444,7 +438,7 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
   };
   updateWait('health', 'worker-capabilities');
   const started = performance.now();
-  trace('source.api.request', { deviceLevel });
+  trace('source.api.request', { seriesId: String(seriesId), vid: String(vid) });
   // Expose slow Worker/API resolution while the promise is still pending.
   const heartbeat = setInterval(() => {
     if (signal?.aborted) return;
@@ -452,8 +446,10 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
       elapsedMs: performance.now() - started
     });
   }, 2000);
+  // /api/source takes only sid, vid and channel (app | web); every rendition is
+  // returned and quality/codec are selected locally.
   const endpoint = '/api/source?sid=' + encodeURIComponent(seriesId) +
-    '&vid=' + encodeURIComponent(vid) + '&device_level=' + deviceLevel;
+    '&vid=' + encodeURIComponent(vid);
   const requestChannel = async channel => {
     const begin = performance.now();
     trace('source.channel.request', { channel });
@@ -479,14 +475,6 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
       updateWait('health', null);
       if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
       trace('source.api.independent', { supported });
-      if (!supported) {
-        const data = await apiJson(endpoint, signal, (phase, fields) => updateWait('legacy', phase, fields));
-        trace('source.api.response', {
-          elapsedMs: performance.now() - started, channel: 'legacy',
-          variants: data?.variants?.length || 0
-        });
-        return data;
-      }
       const { winner, later } = await raceSourceQueries([
         { route: 'web', run: () => requestChannel('web') },
         { route: 'app', run: () => requestChannel('app') }
@@ -508,10 +496,8 @@ async function resolveSourceFromNetwork(seriesId, vid, signal = new AbortControl
     clearInterval(heartbeat);
   }
 }
-// Quality and codec arguments remain accepted for older call sites but are
-// intentionally not forwarded: all selection happens in the frontend.
-async function getSource(seriesId, vid, quality = 'auto', codec = 'auto',
-  signal, { refresh = false, complete = false, onStage } = {}) {
+// Sources are always fetched unfiltered; quality and codec are chosen locally.
+async function getSource(seriesId, vid, signal, { refresh = false, complete = false, onStage } = {}) {
   return sourceStore.get(seriesId, vid, { signal, refresh, complete, onStage });
 }
 function renderDownloadQualityChoices(variants) {
@@ -534,7 +520,7 @@ async function loadDownloadQualitySample(target) {
   $('quality').replaceChildren(new Option('最佳可取得', 'auto'));
   if (!episode) return;
   try {
-    const data = await getSource(target.seriesId, episode.vid, 'auto', 'auto');
+    const data = await getSource(target.seriesId, episode.vid);
     if (sequence !== sampleRequestToken || series?.seriesId !== target.seriesId) return;
     renderDownloadQualityChoices(data.variants);
   } catch {
@@ -847,7 +833,7 @@ async function runJob(job, signal) {
     }
     const data = job.vid === 'direct'
       ? { variants: [{ url: job.directUrl, source: 'web', codec: 'unknown', contentKey: null }] }
-      : await getSource(job.seriesId, job.vid, 'auto', 'auto', signal,
+      : await getSource(job.seriesId, job.vid, signal,
         { complete: true, refresh: mediaFailed });
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
     const effective = reconcileRendition(data.variants, { quality: job.quality, codec: job.codec });
@@ -985,17 +971,6 @@ $('codec-diag-copy').addEventListener('click', async () => {
 $('api-settings-form').addEventListener('submit', saveApiSettings);
 $('reset-worker-origin').addEventListener('click', resetApiSettings);
 updateApiSettings();
-$('device-level').value = deviceLevel;
-$('device-level').addEventListener('change', () => {
-  const selected = $('device-level').value;
-  if (!['1', '2', '3'].includes(selected) || selected === deviceLevel) return;
-  deviceLevel = selected;
-  try { localStorage.setItem(DEVICE_LEVEL_STORE, selected); } catch { /* Memory-only choice. */ }
-  // Signed source metadata depends on this tier; never serve cached rows from another tier.
-  sourceStore.abortAll();
-  playbackDiagnostics.log('device.level.changed', { deviceLevel: selected });
-  if (series?.kind === 'series') void loadDownloadQualitySample(series);
-});
 void supportsIndependentSourceChannels().catch(() => {});
 // The player follows the source aspect ratio rather than forcing portrait dramas into 16:9.
 const playbackVideo = $('player-video');

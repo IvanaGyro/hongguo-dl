@@ -37,7 +37,7 @@ are not published yet.
 
 Some modules have no unit test: `media-worker-core`, `mp4-metadata`,
 `media-source`, `playback-attempts`, `fmp4-passthrough`, `download-store`,
-`bulk`, `worker/vendor/request-signal` and `worker/vendor/download-quality`.
+`bulk` and `worker/vendor/request-signal`.
 Others are only covered by the browser specs: `main`, `ffmpeg`, `theme` and
 `bvc2*`.
 

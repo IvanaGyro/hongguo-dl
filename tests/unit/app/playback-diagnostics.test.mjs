@@ -47,3 +47,15 @@ test('diagnostics retain exact HEVC codec declarations and support results', () 
   assert.match(b.text(), /codecString=hvc1\.1\.6\.L186/);
   assert.match(b.text(), /primarySupported=false alternateSupported=true/);
 });
+
+test('diagnostics keep numeric series and episode IDs only in their named fields', () => {
+  const b = createDiagnosticBuffer(() => 0);
+  b.log('source.api.request', { seriesId: '7451234567890123456', vid: '7451234567890999999',
+    deviceId: '1234567890123456789', vidUrl: 'https://cdn.example/7451234567890999999' });
+  assert.match(b.text(), /seriesId=7451234567890123456/);
+  assert.match(b.text(), /vid=7451234567890999999/);
+  assert.match(b.text(), /deviceId=\[redacted\]/);
+  assert.match(b.text(), /vidUrl=\[redacted\]/);
+  b.log('source.api.request', { vid: 'https://cdn.example/private' });
+  assert.doesNotMatch(b.text(), /cdn\.example/);
+});

@@ -140,9 +140,16 @@ test('upstream HTTP 429 is classified as rate limiting without retrying in Worke
 
 test('source channel rejects invalid modes before upstream fetch', async () => {
   const api = 'https://example.workers.dev/api/source?sid=123&vid=456';
-  const bad = await worker.fetch(new Request(api + '&channel=other'), {});
-  assert.equal(bad.status, 400);
-  assert.equal((await bad.json()).error.code, 'INVALID_SOURCE_CHANNEL');
+  const native = globalThis.fetch;
+  globalThis.fetch = async () => assert.fail('invalid channel must not reach upstream');
+  try {
+    // Only app and web exist; the former combined "auto" mode and a missing channel are rejected.
+    for (const suffix of ['&channel=other', '&channel=auto', '']) {
+      const bad = await worker.fetch(new Request(api + suffix), {});
+      assert.equal(bad.status, 400, suffix);
+      assert.equal((await bad.json()).error.code, 'INVALID_SOURCE_CHANNEL');
+    }
+  } finally { globalThis.fetch = native; }
 });
 
 test('health advertises independent source channels for client compatibility gating', async () => {
@@ -151,7 +158,7 @@ test('health advertises independent source channels for client compatibility gat
   assert.equal((await response.json()).sourceChannels, true);
 });
 
-test('quality and codec are ignored by /api/source, including legacy callers', async () => {
+test('/api/source ignores removed quality and codec parameters', async () => {
   const original = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {

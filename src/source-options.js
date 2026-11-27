@@ -84,8 +84,11 @@ export function browserCanPlayVariant(variant, canPlayType, canTranscodeBvc2 = f
   const codec = codecId(variant?.codec);
   // ByteVC2 is not interchangeable with ISO VVC. A native vvc1 capability
   // says nothing about this proprietary bitstream.
+  // The Worker passes every rendition through; one whose decryption key the App
+  // API omitted cannot be played, and an unrecognised named codec has no decoder.
+  if (variant?.keyMissing) return false;
   if (codec === 'bytevc2') return !!canTranscodeBvc2;
-  if (!codec) return !variant?.contentKey;
+  if (!codec) return !variant?.contentKey && ['', 'unknown'].includes(String(variant?.codec || '').toLowerCase());
   const codecs = {
     h264: 'video/mp4; codecs="avc1.42E01E"',
     hevc: 'video/mp4; codecs="hvc1"',
@@ -149,10 +152,6 @@ export function untriedPlaybackRendition(variants, preferences, canPlayType,
   if (!candidates.length) return null;
   return playbackRendition(candidates, preferences, canPlayType, 0,
     canTranscodeBvc2, isMseTypeSupported);
-}
-
-export function sourceQueryForPlayback(quality = 'auto') {
-  return { quality: 'auto', codec: 'auto', partial: false };
 }
 
 // One option per advertised quality/codec pair; duplicate CDN URLs are not

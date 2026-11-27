@@ -63,13 +63,6 @@ test('v5 player signs the final gzip body and registered identity with the minim
   }
 });
 
-test('invalid device level fails before registration or any network call', async () => {
-  await assert.rejects(
-    source.fetchAppPlayUrl('7703906910138813464', { deviceLevel: 4 }),
-    error => error.code === 'INVALID_DEVICE_LEVEL',
-  );
-});
-
 const identity = { device_id: '1234567890123456', iid: '2345678901234567',
   cdid: '0c6c7f17-b3b7-4d3b-bf66-5cb2b1d400d5' };
 const VID = '7703906910138813464';
@@ -235,5 +228,70 @@ test('cancellation during recovery stops before the next signed request', async 
     await assert.rejects(source.fetchAppPlayUrl(VID, { identity, signal: controller.signal }),
       e => e.code === 'ERR_CANCELED');
     assert.equal(calls.length, 2);
+  });
+});
+
+test('every rendition is passed through: unknown codec, sizeless ByteVC2 and missing keys', async () => {
+  const body = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_list: {
+    a: { codec_type: 'h264', vwidth: 720, vheight: 1280, encrypt: false, main_url: 'https://v1.qznovelvod.com/a.mp4' },
+    b: { codec_type: 'vp9', definition: '480p', encrypt: false, main_url: 'https://v1.qznovelvod.com/b.mp4' },
+    c: { codec_type: 'bytevc2', definition: '720p', encrypt: false, main_url: 'https://v1.qznovelvod.com/c.mp4' },
+    d: { codec_type: 'hevc', definition: '1080p', main_url: 'https://v1.qznovelvod.com/d.mp4' },
+  } }) } } };
+  await withFetch(() => json(body), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    const byName = Object.fromEntries(variants.map(v => [v.url.split('/').pop(), v]));
+    assert.deepEqual(Object.keys(byName).sort(), ['a.mp4', 'b.mp4', 'c.mp4', 'd.mp4']);
+    assert.equal(byName['b.mp4'].codec, 'vp9');
+    assert.equal(byName['c.mp4'].width, undefined);
+    assert.equal(byName['a.mp4'].width, 720);
+    // No key and no explicit "clear" flag on an inline row: kept, but flagged.
+    assert.equal(byName['d.mp4'].keyMissing, true);
+    assert.equal(byName['d.mp4'].contentKey, null);
+    assert.equal(byName['a.mp4'].keyMissing, undefined);
+  });
+});
+
+test('an inline row without a key is completed from fallback_api when it is the same episode', async () => {
+  const inline = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_id: 'v', video_duration: 10,
+    fallback_api: 'https://vod.fqnovel.com/fallback?x=1',
+    video_list: { d: { codec_type: 'hevc', definition: '1080p', main_url: 'https://v1.qznovelvod.com/d.mp4' } } }) } } };
+  const fallback = { code: 0, video_info: { code: 0, data: { video_id: 'v', video_duration: 10, video_list: {
+    e: { codec_type: 'hevc', definition: '1080p', encrypt: false, main_url: 'https://v1.qznovelvod.com/e.mp4' } } } } };
+  await withFetch(i => json(i === 0 ? inline : fallback), async calls => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), Boolean(v.keyMissing)]), [['e.mp4', false]]);
+  });
+  // A mismatching fallback is ignored; the flagged inline row is still returned.
+  const other = { code: 0, video_info: { code: 0, data: { ...fallback.video_info.data, video_id: 'other' } } };
+  await withFetch(i => json(i === 0 ? inline : other), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), v.keyMissing]), [['d.mp4', true]]);
+  });
+});
+
+test('renditions sort by quality_type, then encoded size, then bitrate; labels come from the encoded size', async () => {
+  const row = (name, fields, meta) => ({ codec_type: 'bytevc2', encrypt: false,
+    main_url: `https://v1.qznovelvod.com/${name}.mp4`, ...fields, video_meta: meta });
+  const body = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_id: 'v', video_duration: 50, video_list: {
+    // Listed worst-first on purpose; the server's own order must not matter.
+    low: row('low', { definition: '360p', quality_type: 40 }, { vwidth: 640, vheight: 360, bitrate: 200000 }),
+    real720: row('real720', { definition: '720p', quality_type: 10 }, { vwidth: 1280, vheight: 720, bitrate: 900000 }),
+    // Same quality_type: the larger frame wins, then the higher bitrate.
+    tie_small: row('tie_small', { definition: '540p', quality_type: 20 }, { vwidth: 960, vheight: 540, bitrate: 900000 }),
+    tie_big_slow: row('tie_big_slow', { definition: '540p', quality_type: 20 }, { vwidth: 1024, vheight: 576, bitrate: 500000 }),
+    tie_big_fast: row('tie_big_fast', { definition: '540p', quality_type: 20 }, { vwidth: 1024, vheight: 576, real_bitrate: 700000 }),
+    // Inflated: claims 1080p and the best tier, but is encoded at 1280x720.
+    inflated: row('inflated', { definition: '1080p', quality_type: 1 }, { vwidth: 1280, vheight: 720, bitrate: 1199790 }),
+    // No size: keeps the server label.
+    sizeless: row('sizeless', { definition: '480p', quality_type: 30 }, {}),
+  } }) } } };
+  await withFetch(() => json(body), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), v.quality]), [
+      ['inflated.mp4', '720p'], ['real720.mp4', '720p'],
+      ['tie_big_fast.mp4', '576p'], ['tie_big_slow.mp4', '576p'], ['tie_small.mp4', '540p'],
+      ['sizeless.mp4', '480p'], ['low.mp4', '360p']]);
   });
 });
