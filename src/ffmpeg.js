@@ -2,6 +2,7 @@
 // Single-thread FFmpeg.wasm is loaded only when a job actually needs processing.
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { errorWith } from './logic.js';
+import { h264EncoderArgs } from './h264-download-tradeoff.js';
 
 const MAX_FFMPEG_INPUT = 320 * 1024 * 1024;
 let instance = null;
@@ -68,7 +69,7 @@ async function exclusive(task, signal) {
 export function prepareFfmpeg(signal) {
   return exclusive(async () => {}, signal);
 }
-function argsFor(mode, contentKey, input, output) {
+function argsFor(mode, contentKey, input, output, h264TradeoffIndex) {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
   if (contentKey) {
     if (!/^[a-f\d]{32}$/i.test(contentKey)) throw errorWith('INVALID_KEY', '影片來源的解密金鑰格式錯誤');
@@ -76,7 +77,7 @@ function argsFor(mode, contentKey, input, output) {
   }
   // Never mux a separate subtitle/data stream into an output video.
   args.push('-i', input, '-map', '0:v:0', '-map', '0:a?', '-sn', '-dn');
-  if (mode === 'h264') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p');
+  if (mode === 'h264') args.push(...h264EncoderArgs(h264TradeoffIndex));
   else args.push('-c:v', 'copy');
   args.push('-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', output);
   return args;
@@ -97,7 +98,8 @@ async function run(ffmpeg, args, signal, progress) {
   } finally { ffmpeg.off('progress', onProgress); }
 }
 function fileId() { return crypto.randomUUID().replace(/-/g, ''); }
-export async function convertBytes(bytes, { mode = 'copy', contentKey = null, signal, progress } = {}) {
+export async function convertBytes(bytes, { mode = 'copy', contentKey = null, signal, progress,
+  h264TradeoffIndex } = {}) {
   if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '沒有收到影片資料');
   if (bytes.length > MAX_FFMPEG_INPUT) throw errorWith('FFMPEG_LIMIT', '影片超過 FFmpeg.wasm 安全處理上限 320 MiB');
   return exclusive(async ffmpeg => {
@@ -105,7 +107,7 @@ export async function convertBytes(bytes, { mode = 'copy', contentKey = null, si
     const created = [];
     try {
       await ffmpeg.writeFile(source, bytes); created.push(source);
-      await run(ffmpeg, argsFor(mode, contentKey, source, target), signal, progress);
+      await run(ffmpeg, argsFor(mode, contentKey, source, target, h264TradeoffIndex), signal, progress);
       created.push(target);
       return new Uint8Array(await ffmpeg.readFile(target));
     } finally {

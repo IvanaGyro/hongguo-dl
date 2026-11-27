@@ -3,6 +3,7 @@ import { normalizeBvc2Config } from './bvc2-config.js';
 // Single-job worker: canceling playback terminates the entire WASM instance.
 import { readLimitedAsset } from './cenc-bundle.js';
 import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
+import { h264Tradeoff } from './h264-download-tradeoff.js';
 self.onmessage = async ({ data }) => {
   let core = null;
   try {
@@ -43,9 +44,19 @@ self.onmessage = async ({ data }) => {
     const modes = { original: 0, copy: 0, h264: 4, av1: 2, vvc: 3, hevc: 5 };
     if (!Object.hasOwn(modes, data.mode)) throw new Error('不支援的輸出編碼');
     self.postMessage({ type: 'progress', phase: 'transcoding' });
-    const code = await core.ccall('bvc2_convert', 'number',
-      ['string', 'string', 'string', 'number'],
-      [input, output, data.key || '', modes[data.mode]], { async: true });
+    // Playback retains the low-latency bridge. Only a tuned H.264 download
+    // calls the new parameterized entry point.
+    const tuned = data.mode === 'h264' && data.h264TradeoffIndex != null;
+    if (tuned && typeof core._bvc2_convert_h264 !== 'function')
+      throw new Error('目前部署的 ByteVC2 WASM 尚未包含 H.264 下載設定，請更新編碼核心');
+    const profile = tuned ? h264Tradeoff(data.h264TradeoffIndex) : null;
+    const code = tuned
+      ? await core.ccall('bvc2_convert_h264', 'number',
+        ['string', 'string', 'string', 'string', 'number'],
+        [input, output, data.key || '', profile.preset, profile.crf], { async: true })
+      : await core.ccall('bvc2_convert', 'number',
+        ['string', 'string', 'string', 'number'],
+        [input, output, data.key || '', modes[data.mode]], { async: true });
     if (code !== 0) {
       const message = core.UTF8ToString(core._bvc2_last_error());
       throw new Error(message || '轉碼結束碼 ' + code);

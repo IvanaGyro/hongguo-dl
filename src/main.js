@@ -31,6 +31,7 @@ import { createPlaybackDiagnostics } from './playback-diagnostics.js';
 import { createMediaTransportForSource } from './media-transport.js';
 import { createEpisodeSourceStore } from './episode-source-store.js';
 import { initialDownloadQualityEpisode } from './download-quality-options.js';
+import { DEFAULT_H264_TRADEOFF, h264Tradeoff, h264TradeoffIndex } from './h264-download-tradeoff.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -61,6 +62,7 @@ try {
   if (['1', '2', '3'].includes(saved)) deviceLevel = saved;
 } catch { /* Optional browser persistence. */ }
 const EXPORT_STORE = 'hongguo-dl-queue-selected-v1';
+const H264_TRADEOFF_STORE = 'hongguo-dl-h264-tradeoff-v1';
 // A deployment URL in .env must not bypass Vite's local /api proxy in dev.
 // Explicit per-browser overrides remain available through the API settings.
 const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.DEV ? '' : import.meta.env.VITE_API_ORIGIN || '');
@@ -153,10 +155,10 @@ function saveJobs() {
   lastPersisted = Date.now();
   try {
     localStorage.setItem(STORE, JSON.stringify(jobs.map(({ id, seriesId, vid, index, title,
-      quality, codec, mode, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
+      quality, codec, mode, h264TradeoffIndex: jobH264TradeoffIndex, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
       lastErrorKey, errorStreak, failureAttempts, fileName, seriesTitle, seriesTotal,
       sourceWidth, sourceHeight, stored, onDisk }) => ({
-      id, seriesId, vid, index, title, quality, codec, mode, status, bytes, totalBytes, error, errorCode,
+      id, seriesId, vid, index, title, quality, codec, mode, h264TradeoffIndex: jobH264TradeoffIndex, status, bytes, totalBytes, error, errorCode,
       attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts,
       fileName, seriesTitle, seriesTotal, sourceWidth, sourceHeight, stored, onDisk
     }))));
@@ -234,7 +236,8 @@ function renderQueue() {
     const selectedOptions = [
       job.quality !== 'auto' && job.quality,
       job.codec !== 'auto' && job.codec?.toUpperCase(),
-      ({ h264: '轉 H.264', hevc: '轉 H.265', vvc: '轉 VVC', av1: '轉 AV1', copy: '無損封裝' })[job.mode] || ''
+      job.mode === 'h264' ? '轉 H.264 · ' + h264Tradeoff(job.h264TradeoffIndex).label :
+        (({ hevc: '轉 H.265', vvc: '轉 VVC', av1: '轉 AV1', copy: '無損封裝' })[job.mode] || '')
     ].filter(Boolean);
     const displayTitle = episodeDisplayTitle(job);
     let action = '';
@@ -616,13 +619,21 @@ async function chooseFolder() {
     }
   }
 }
+function updateH264Tradeoff() {
+  $('h264-tradeoff').hidden = $('output-mode').value !== 'h264';
+  const index = h264TradeoffIndex($('h264-speed-size').value);
+  $('h264-speed-size').value = String(index);
+  $('h264-speed-size-name').textContent = h264Tradeoff(index).label;
+}
 function queueSelected() {
   if (!series || !selected.size) return;
   const { quality, codec } = parseRenditionValue($('quality').value);
   const mode = $('output-mode').value;
+  const tradeoff = mode === 'h264' ? h264TradeoffIndex($('h264-speed-size').value) : null;
   for (const ep of series.episodes.filter(e => selected.has(e.vid))) {
     const same = jobs.find(j => j.seriesId === series.seriesId && j.vid === ep.vid &&
       j.mode === mode && j.codec === codec && j.quality === quality &&
+      (mode !== 'h264' || h264TradeoffIndex(j.h264TradeoffIndex) === tradeoff) &&
       !['failed', 'canceled'].includes(j.status));
     if (same) {
       same.seriesTotal = series.total;
@@ -633,7 +644,8 @@ function queueSelected() {
       series.title + ' · 第 ' + ep.index + ' 集';
     const job = { id: crypto.randomUUID(), seriesId: series.seriesId || null,
       seriesTitle: series.title || '影集', seriesTotal: series.total, vid: ep.vid,
-      directUrl: ep.url, index: ep.index, title: name, codec, quality, mode, status: 'queued',
+      directUrl: ep.url, index: ep.index, title: name, codec, quality, mode,
+      h264TradeoffIndex: tradeoff, status: 'queued',
       bytes: 0, totalBytes: 0, attempts: 0, error: '', errorCode: '', progress: null,
       lastErrorKey: '', errorStreak: 0, failureAttempts: 0, stored: false, onDisk: false };
     jobs.push(job);
@@ -680,7 +692,9 @@ function pump() {
   }
 }
 function outputFileName(job, source, processed) {
-  return episodeFileName(job, processed ? '.mp4' : originalExtension(source.url));
+  const name = episodeFileName(job, processed ? '.mp4' : originalExtension(source.url));
+  if (job.mode !== 'h264' || !processed) return name;
+  return name.replace(/\.mp4$/i, '.h264-' + h264Tradeoff(job.h264TradeoffIndex).preset + '.mp4');
 }
 function triggerSave(bytes, name) {
   const blob = bytes instanceof Blob ? bytes :
@@ -744,7 +758,8 @@ async function saveOne(job) {
       error: '瀏覽器暫存已失效；請按「重試」重新下載此集', errorCode: 'STORAGE_MISSING' });
     return;
   }
-  triggerSave(file.blob, episodeFileName(job, filenameExtension(file.filename || job.fileName)));
+  triggerSave(file.blob, job.mode === 'h264' && (file.filename || job.fileName)
+    ? (file.filename || job.fileName) : episodeFileName(job, filenameExtension(file.filename || job.fileName)));
 }
 function assertOk(response) {
   if (!response.ok) return response.json().catch(() => null).then(data => {
@@ -850,7 +865,8 @@ async function runJob(job, signal) {
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg ByteVC2 WASM 轉碼器');
       const raw = await readWholeSource(job, source, signal, 260 * 1024 * 1024);
       update(job, { status: 'processing', progress: null });
-      const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode, signal,
+      const out = await transcodeBvc2(raw, { contentKey: source.contentKey, mode: job.mode,
+        h264TradeoffIndex: job.mode === 'h264' ? job.h264TradeoffIndex : null, signal,
         progress: progress => update(job, { progress }) });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
       await saveProcessed(out, outputFileName(job, source, true), job,
@@ -860,7 +876,7 @@ async function runJob(job, signal) {
       update(job, { status: 'processing', progress: 0 });
       const out = await convertBytes(bytes, {
         mode: job.mode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
-        progress: progress => update(job, { progress })
+        h264TradeoffIndex: job.h264TradeoffIndex, progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
       if (['original', 'copy'].includes(job.mode)) {
@@ -1047,6 +1063,15 @@ renderRecentSeries();
 $('lookup-form').addEventListener('submit', lookup);
 $('choose-folder').addEventListener('click', chooseFolder);
 $('add-queue').addEventListener('click', queueSelected);
+try { $('h264-speed-size').value = String(h264TradeoffIndex(localStorage.getItem(H264_TRADEOFF_STORE))); }
+catch { $('h264-speed-size').value = String(DEFAULT_H264_TRADEOFF); }
+$('h264-speed-size').addEventListener('input', () => {
+  updateH264Tradeoff();
+  try { localStorage.setItem(H264_TRADEOFF_STORE, $('h264-speed-size').value); }
+  catch { /* Storage may be disabled. */ }
+});
+$('output-mode').addEventListener('change', updateH264Tradeoff);
+updateH264Tradeoff();
 $('select-all').addEventListener('click', () => {
   if (!series) return;
   selected = new Set(series.episodes.map(e => e.vid)); renderEpisodes();

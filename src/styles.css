@@ -673,3 +673,23 @@ media-status-announcer {
 .episode-range-switch button, .player-settings-chevron, #player-settings-back {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+
+/* A prominent, discrete speed-to-size tradeoff for H.264 downloads. */
+.h264-tradeoff { margin-top: 20px; padding: 18px 22px 22px;
+  border: 1.5px solid var(--line-strong); border-radius: var(--r-md);
+  background: var(--surface); }
+.h264-tradeoff[hidden] { display: none; }
+.h264-tradeoff-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; font-size: 1rem; font-weight: 750; }
+.h264-tradeoff-head output { padding: 7px 14px; border-radius: var(--r-sm);
+  background: var(--brand-sage); color: var(--ink); font-size: 1.05rem; font-weight: 850;
+  white-space: nowrap; text-align: center; min-width: 6.5em; }
+.h264-tradeoff input[type=range] { display: block; width: 100%; margin: 20px 0 0;
+  cursor: pointer; accent-color: var(--brand-orange); height: 24px; }
+.h264-tradeoff input[type=range]:focus-visible {
+  outline: 3px solid var(--brand-orange); outline-offset: 4px; }
+@media (max-width: 500px) {
+  .h264-tradeoff { padding: 15px 14px 18px; }
+  .h264-tradeoff-head { font-size: .92rem; gap: 8px; }
+  .h264-tradeoff-head output { min-width: 5.3em; padding: 6px 9px; }
+}

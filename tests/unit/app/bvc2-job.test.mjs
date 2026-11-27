@@ -128,3 +128,14 @@ test('ByteVC2 late progress from a canceled Worker cannot update the UI', async 
   assert.deepEqual(phases, []);
   assert.equal(worker.terminated, true);
 });
+
+test('H.264 download profile is snapshotted in a transferable Worker message', async () => {
+  const { worker, createWorker } = create();
+  const task = runBvc2WorkerJob(Uint8Array.of(1), {
+    mode: 'h264', h264TradeoffIndex: 4, createWorker
+  });
+  assert.equal(worker.posted[0].data.mode, 'h264');
+  assert.equal(worker.posted[0].data.h264TradeoffIndex, 4);
+  worker.onmessage({ data: { ok: true, bytes: Uint8Array.of(9).buffer } });
+  await task;
+});

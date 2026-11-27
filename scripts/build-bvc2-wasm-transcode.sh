@@ -78,7 +78,7 @@ emcc "$ROOT/scripts/bvc2-transcoder.c" -O3 -msimd128 -I. \
   -lm -s MODULARIZE=1 -s EXPORT_ES6=1 -s ENVIRONMENT=web,worker,node \
   -s ASYNCIFY=1 -s ASYNCIFY_STACK_SIZE=262144 -s FORCE_FILESYSTEM=1 -s ALLOW_MEMORY_GROWTH=1 \
   -s STACK_SIZE=5242880 -s INITIAL_MEMORY=67108864 -s MAXIMUM_MEMORY=1073741824 \
-  -s "EXPORTED_FUNCTIONS=['_bvc2_transcode','_bvc2_decoder_available','_bvc2_last_error','_bvc2_convert','_bvc2_stream','_bvc2_last_remuxed','_bvc2_play']" \
+  -s "EXPORTED_FUNCTIONS=['_bvc2_transcode','_bvc2_decoder_available','_bvc2_last_error','_bvc2_convert','_bvc2_convert_h264','_bvc2_stream','_bvc2_last_remuxed','_bvc2_play']" \
   -s "EXPORTED_RUNTIME_METHODS=['FS','cwrap','ccall','UTF8ToString']" \
   -o "$OUTPUT/dist/bvc2-core.mjs" > "$OUTPUT/link.log" 2>&1 || {
     tail -120 "$OUTPUT/link.log"; exit 1;

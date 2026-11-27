@@ -3,7 +3,8 @@
 // so cancellation, transfer and startup failures can be regression tested.
 import { errorWith } from './logic.js';
 
-export function runBvc2WorkerJob(bytes, { contentKey = '', mode = 'h264', progress, onProgress, signal, createWorker }) {
+export function runBvc2WorkerJob(bytes, { contentKey = '', mode = 'h264', h264TradeoffIndex = null,
+  progress, onProgress, signal, createWorker }) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -55,7 +56,7 @@ export function runBvc2WorkerJob(bytes, { contentKey = '', mode = 'h264', progre
     const owned = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength &&
       bytes.buffer instanceof ArrayBuffer ? bytes : bytes.slice();
     try {
-      worker.postMessage({ bytes: owned.buffer, key: contentKey, mode }, [owned.buffer]);
+      worker.postMessage({ bytes: owned.buffer, key: contentKey, mode, h264TradeoffIndex }, [owned.buffer]);
     } catch {
       // postMessage can throw synchronously (e.g. structured-clone failure).
       // Always terminate the Worker and detach the abort listener on failure.
