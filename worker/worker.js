@@ -113,6 +113,20 @@ export function parseInput(input) {
   if (!ID.test(id || '')) throw httpError(400, 'ID_NOT_FOUND', '網址中找不到劇集 ID；請貼官方劇集或播放頁連結');
   return { kind: 'series', seriesId: id };
 }
+// The website embeds the series total (episode_cnt) even when it withholds the
+// per-episode directory, so it bounds how complete a recovered directory must be.
+export function expectedEpisodeCount(info) {
+  const counts = [info?.episode_cnt, info?.series_episode_info?.episode_cnt, info?.total_episode_cnt]
+    .map(value => (value != null && /^\d+$/.test(String(value))) ? Number(value) : 0);
+  return Math.max(0, ...counts);
+}
+function seriesListing(seriesId, info, ids, accessible) {
+  return {
+    kind: 'series', seriesId, title: String(info.series_name || '未命名短劇').slice(0, 160),
+    total: ids.length, accessible,
+    episodes: ids.map((vid, i) => ({ vid, index: i + 1, available: accessible == null ? null : i < accessible }))
+  };
+}
 export function parseEpisodes(html, seriesId) {
   const data = readRouterData(html).loaderData || {};
   const record = data['player_(series_id)/page'] || data['player_(series_id)/(vid)/page'] || data.detail_page;
@@ -121,21 +135,31 @@ export function parseEpisodes(html, seriesId) {
       (record.series_id != null && String(record.series_id) !== String(seriesId)) ||
       !Array.isArray(info?.vid_list)) throw httpError(502, 'INVALID_SERIES', '官方頁面無法確認劇集 ID 或分集列表');
   const ids = info.vid_list.map(String);
-  if (!ids.length || ids.some(id => !ID.test(id)) || new Set(ids).size !== ids.length)
-    throw httpError(502, 'INVALID_EPISODES', '官方分集列表無效');
-  const available = info.accessible_episode_cnt != null && /^\d+$/.test(String(info.accessible_episode_cnt))
-    ? Math.min(Number(info.accessible_episode_cnt), ids.length) : null;
-  return {
-    kind: 'series', seriesId, title: String(info.series_name || '未命名短劇').slice(0, 160),
-    total: ids.length, accessible: available,
-    episodes: ids.map((vid, i) => ({ vid, index: i + 1, available: available == null ? null : i < available }))
-  };
+  const expected = expectedEpisodeCount(info);
+  // A complete, ordered, numeric vid_list is used directly. Since 2026-11-27 the page
+  // may instead expose only a few obfuscated preview IDs (non-numeric, or far fewer than
+  // episode_cnt); loadSeries then recovers the full directory from the App API.
+  if (ids.length && ids.length >= expected && ids.every(id => ID.test(id)) && new Set(ids).size === ids.length) {
+    const accessible = info.accessible_episode_cnt != null && /^\d+$/.test(String(info.accessible_episode_cnt))
+      ? Math.min(Number(info.accessible_episode_cnt), ids.length) : null;
+    return seriesListing(seriesId, info, ids, accessible);
+  }
+  return { needsDirectory: true, seriesId, info,
+    title: String(info.series_name || '未命名短劇').slice(0, 160), expectedCount: expected };
 }
 async function loadSeries(seriesId) {
   let error;
   for (const path of ['/detail?series_id=' + encodeURIComponent(seriesId), '/player/' + encodeURIComponent(seriesId)]) {
-    try { return parseEpisodes(await fetchLimited(SITE + path), seriesId); }
-    catch (e) { error = e; }
+    try {
+      const parsed = parseEpisodes(await fetchLimited(SITE + path), seriesId);
+      if (!parsed.needsDirectory) return parsed;
+      // Full ordered numeric directory from the App browsing API. Every episode it
+      // returns resolves through the App player path (verified across a 521-episode
+      // series), so none is pre-marked restricted — availability is confirmed per
+      // episode when /api/source is called.
+      const ids = await appModule.fetchEpisodeDirectory(seriesId, { expectedCount: parsed.expectedCount });
+      return seriesListing(seriesId, parsed.info, ids, null);
+    } catch (e) { error = e; }
   }
   throw error;
 }

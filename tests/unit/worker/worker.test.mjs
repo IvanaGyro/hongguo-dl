@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { safeUrl, parseInput, parseEpisodes, readRouterData, findPublicMedia, corsOrigin } from '../../../worker/worker.js';
+import worker, { safeUrl, parseInput, parseEpisodes, readRouterData, findPublicMedia, corsOrigin, expectedEpisodeCount } from '../../../worker/worker.js';
 
 const data = detail => '<script>window._ROUTER_DATA = ' + JSON.stringify({
   loaderData: { 'player_(series_id)/page': { seriesDetail: detail } }
@@ -25,6 +25,31 @@ test('embedded router JSON is parsed as data, not executable JavaScript', () => 
   assert.equal(episodes.total, 2);
   assert.deepEqual(episodes.episodes.map(ep => ep.available), [true, false]);
   assert.throws(() => parseEpisodes(html, '456'), { code: 'INVALID_SERIES' });
+});
+
+test('a truncated or obfuscated preview list defers to the App directory, a complete numeric list does not', () => {
+  // Since 2026-11-27 the page can expose a few obfuscated v1_ preview IDs while still
+  // reporting the real episode_cnt; the full numeric directory comes from the App API.
+  const preview = data({ series_id: '7704261228037671998', series_name: '和离', episode_cnt: 521,
+    vid_list: ['v1_s9Wu4tSX', 'v1_abcDEF12', '7704261238552792088'], accessible_episode_cnt: 5 });
+  const deferred = parseEpisodes(preview, '7704261228037671998');
+  assert.equal(deferred.needsDirectory, true);
+  assert.equal(deferred.expectedCount, 521);
+  assert.equal(deferred.title, '和离');
+  assert.equal(deferred.info.series_id, '7704261228037671998');
+  assert.equal(expectedEpisodeCount({ series_episode_info: { episode_cnt: 60 } }), 60);
+
+  // A complete numeric directory already in the page is used directly (no App call).
+  const full = data({ series_id: '9', series_name: '短劇', episode_cnt: 3,
+    vid_list: ['101', '102', '103'], accessible_episode_cnt: 2 });
+  const listing = parseEpisodes(full, '9');
+  assert.equal(listing.needsDirectory, undefined);
+  assert.equal(listing.total, 3);
+  assert.deepEqual(listing.episodes.map(ep => ep.available), [true, true, false]);
+
+  // A list shorter than episode_cnt is treated as incomplete even when numeric.
+  const short = data({ series_id: '9', series_name: '短劇', episode_cnt: 60, vid_list: ['101', '102'] });
+  assert.equal(parseEpisodes(short, '9').needsDirectory, true);
 });
 
 test('unrelated recommendations cannot supply a video URL', () => {
