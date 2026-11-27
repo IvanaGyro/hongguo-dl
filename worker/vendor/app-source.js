@@ -11,6 +11,8 @@ const { gzipSync } = require('node:zlib');
 const { retryEmptyResponse } = require('./empty-response-retry');
 const { getPlaybackDevice } = require('./playback-device');
 const { Ladon } = require('./playback-signature');
+const mobileV5 = require('./mobile-v5');
+const mc = require('./metadata-collector');
 const { abortError, throwIfAborted, boundedSignal, networkFailure, retryAfterMs } = require('./request-signal');
 const sm3 = require('./sm3');
 const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
@@ -28,7 +30,11 @@ function getProcessIdentity() {
 // kotlin-tv/core/src/main/kotlin/com/hongguotv/core/{MobilePlayback,Signer,AesV3,V5Constants}.kt.
 // Primary, then backup official v5 player host; both accept the same request.
 const VIDEO_HOSTS = Object.freeze(['https://api5-normal-sinfonlinea.fqnovel.com', 'https://api5-normal-sinfonlineb.fqnovel.com']);
-const PLAYER_PATH = '/novel/player/multi_video_model/player/v1';
+// APK 74532 ground truth (seriessdk rpc.f / de5.t0.n2): the stock player route
+// is POST /novel/player/multi_video_model/v1/ (AB default); the :dr_scene variant
+// resolves to .../default/v1/. The earlier /player/v1 (no trailing slash) matched
+// neither RpcOperation path.
+const PLAYER_PATH = '/novel/player/multi_video_model/v1/';
 const VIDEO_TAB_HOST = 'https://api5-normal-sinfonlineb.fqnovel.com';
 const VIDEO_TAB_PATH = '/reading/bookapi/video_tab/multi_video_model/v1/';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
@@ -227,27 +233,43 @@ function v5Branch(query, body, khronos) {
     return getIv(getIv(getIv(0x20230928, q), bodyHash), le32(khronos)) & 15;
 }
 function random32() { return crypto.randomBytes(4).readUInt32LE(0); }
+// One coherent plausible-ASLR runtime profile per worker process (stable across
+// this process's requests, as a real device keeps its addresses for the process
+// lifetime). Feeds field23 f18/f19/f20 and field24 un_h/lp via the real formulas.
+let runtimeProfile;
+function getRuntimeProfile() { return runtimeProfile ||= mc.plausibleRuntime(random32()); }
 function buildMedusaV5(url, body, ts, who) {
     const query = sm3(Buffer.from(url.split('?')[1]));
     const f13 = hashF13(query, crypto.createHash('md5').update(body).digest(), le32(ts), ts, true);
     const flags = Buffer.alloc(8);
     const version = who.version_name;
     const process = getProcessIdentity();
-    const deviceInfo = proto([
-        [1, 1, 'sint'], [2, 2, 'sint'], [3, '8662'], [4, who.device_id],
-        [5, process.nonce], [6, '!noperm!'], [12, 'Asia/Shanghai,8'], [13, 'zh_CN'],
-        [22, who.os_version], [25, process.started, 'sint'],
-        [30, who.device_type], [31, 'HONOR'], [32, who.device_type], [34, 'HONOR'],
-    ]);
-    const env = proto([[6, 'v04.10.03.04-bugfix'], [8, who.channel], [12, deviceInfo, 'message'], [14, version]]);
+    const runtime = getRuntimeProfile();
+    // field23 device_profile + field24 diagnostics from the recovered collector
+    // (metadata-collector.js). Static device fields + computable diagnostics are
+    // byte-faithful; runtime-only values use one coherent plausible per-process
+    // profile fed through the recovered formulas (see metadata-collector.js).
+    const deviceInfo = mc.deviceInfoProto({
+        deviceId: who.device_id, osRelease: who.os_version,
+        model: who.device_type, name: who.device_type, deviceName: who.device_type,
+        brightness: runtime.brightness, volume: runtime.volume,
+        bootDeltaMs: process.started - runtime.uptimeMs, // f27: real boot-epoch ms, not the -1 failure sentinel
+        fltkMs: process.started, scheduleMs: process.started, requestClockMs: ts * 1000, initMs: process.started,
+    });
+    const env = mc.deviceProfileProto({ ts, info: deviceInfo, runtime, pid: runtime.pid });
+    const threadMarker = random32();
+    const packetAlloc = (0x50000000 | (random32() & 0x0ffffff0)) >>> 0; // fresh packet-buffer address per request (lp[5])
+    const field24 = mc.diagnosticsJson({ uuid: who.cdid, kd: 0, tsMs: ts * 1000,
+        initTsMs: process.started, threadMarker, vpn: 1, unHash: runtime.unHash,
+        lpSeeds: { a: runtime.lpA, b: runtime.lpB }, allocation: packetAlloc });
     const message = proto([
         [1, V5_MAGIC, 'bytes'], [2, 5, 'sint'], [3, random32(), 'sint'],
         [4, '8662'], [5, who.device_id], [6, V5_LICENSE],
         [7, version], [8, 'v04.10.03-ml-android'], [9, 0x040a0300, 'sint'],
         [10, flags, 'bytes'], [12, ts, 'sint'], [13, f13, 'bytes'], [14, query.subarray(0, 6), 'bytes'],
-        [15, proto([[1,1,'sint'],[2,1,'sint'],[3,1,'sint'],[5,1,'sint']]), 'message'],
+        [15, proto([[1,694367,'sint'],[2,694367,'sint'],[3,694367,'sint'],[5,694367,'sint']]), 'message'],
         [17, ts, 'sint'], [20, 'none'], [21, 377, 'sint'], [23, env, 'message'],
-        [24, '{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}'],
+        [24, field24],
     ]);
     const nonce = random32();
     const [hash, seed] = keyHash(V5_SIGN_KEY, nonce);
@@ -268,17 +290,29 @@ function buildMedusaV5(url, body, ts, who) {
 // and account signers above are kept intact. Each call signs afresh: the
 // ticket is adjusted to select Medusa branch 12 for this exact query/body.
 const EMPTY_BODY = Buffer.alloc(0);
-function signPlaybackV5(base, values, body = null) {
+function signPlaybackV5(base, values, body = null, { ttnet = false } = {}) {
     const digestBody = body || EMPTY_BODY;
     const now = Date.now(), khronos = Math.floor(now / 1000);
     for (let offset = 0; offset < 1024; offset++) {
         const query = pythonUrlEncode({ ...values, _rticket: String(now + offset) });
         if (v5Branch(query, digestBody, khronos) !== 12) continue;
         const url = `${base}?${query}`;
+        // Default-route TTNet headers recovered for app 8662 (reverse-bytedance
+        // baseline, SHA-256-matched libmetasec_ml.so): Argus = Base64(LE32 ts),
+        // Ladon = Base64(BE32 ts), Gorgon = the recovered RC4 envelope. Attached
+        // only when the caller opts in, to probe whether the player POST accepts
+        // them; the bodyless video_tab GET keeps its known-good minimal set.
+        const ttnetHeaders = ttnet ? {
+            'x-ladon': be32(khronos).toString('base64'),
+            'x-argus': le32(khronos).toString('base64'),
+            'x-gorgon': xGorgon(query, body, khronos, Math.floor(Math.random() * 65536)),
+            'x-tt-dt': '',
+        } : {};
         return { url, headers: {
             'x-khronos': String(khronos),
             'x-helios': Ladon.encrypt(khronos, Number(V5_LICENSE), 8662, le32(random32())),
             'x-medusa': buildMedusaV5(url, digestBody, khronos, values),
+            ...ttnetHeaders,
             // A bodyless GET has no SS-STUB; its Medusa digest covers an empty body.
             ...(body ? { 'x-ss-stub': md5(body) } : {}),
         } };
@@ -298,10 +332,15 @@ function playbackQuery(identity) {
 function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
     if (!VIDEO_HOSTS.includes(host)) throw new TypeError('Unsupported v5 playback host');
     const body = gzipSync(Buffer.from(payload, 'utf8'));
-    const signed = signPlaybackV5(host + PLAYER_PATH, playbackQuery(identity), body);
+    // Our app-derived endpoint (host + /novel/player/multi_video_model/v1/) signed
+    // with the proven hongguoTV mobile-v5 envelope (see mobile-v5.js). The earlier
+    // hand-assembled buildMedusaV5 (field21=377 / reverse-bytedance field23 layout)
+    // was accepted by the server only as HTTP 200 + empty body; this form returns
+    // code=0 with the video_model. Cookie is attached by requestJson's jar.
+    const signed = mobileV5.signPlayback(host + PLAYER_PATH, mobileV5.playerQuery(identity), body);
     return { url: signed.url, body, method: 'POST', headers: {
-        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
-        'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip',
+        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf', 'Content-Encoding': 'gzip',
+        ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
         ...signed.headers,
     }};
 }
@@ -316,6 +355,7 @@ function videoTabRequest(vid, identity, deviceLevel) {
     });
     return { url: signed.url, body: null, method: 'GET', headers: {
         'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+        ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
         ...signed.headers,
     }};
 }
@@ -477,10 +517,28 @@ function checkedUrl(value, domains) {
     return url.href;
 }
 
+// A minimal cookie jar. The app keeps store-region / ttreq / install_id from
+// device_register and replays them on every subsequent fqnovel.com request.
+// `options.jar` (a plain object) is filled from Set-Cookie and sent back as the
+// Cookie header, matching the real client's TTNet cookie store.
+function mergeSetCookie(jar, response) {
+    if (!jar) return;
+    let list = [];
+    try { list = response.headers.getSetCookie?.() || []; } catch { /* not supported */ }
+    if (!list.length) { const single = response.headers.get('set-cookie'); if (single) list = single.split(/,(?=[^;,]+=)/); }
+    for (const entry of list) {
+        const first = String(entry).split(';')[0]; const eq = first.indexOf('=');
+        if (eq > 0) { const name = first.slice(0, eq).trim(); const value = first.slice(eq + 1).trim(); if (name) jar[name] = value; }
+    }
+}
+function cookieHeader(jar) {
+    return jar ? Object.entries(jar).map(([name, value]) => `${name}=${value}`).join('; ') : '';
+}
 async function requestJson(url, options, deadline, signal) {
     // Worker fetch transport replaces upstream Axios/Node HTTP; the upstream
     // identity, signing, validation and playback parsing remain unchanged.
     const preserveFields = Array.isArray(options?.preserveLargeIntegerFields) ? options.preserveLargeIntegerFields : [];
+    const jarBound = options?.jar && Object.keys(options.jar).length > 0;
     for (let redirects = 0; redirects < 4; redirects++) {
         throwIfAborted(signal);
         url = checkedUrl(url, ['fqnovel.com', 'snssdk.com']);
@@ -491,10 +549,15 @@ async function requestJson(url, options, deadline, signal) {
         signal?.addEventListener('abort', stop, { once: true });
         const timer = setTimeout(() => controller.abort(new DOMException('Timeout', 'TimeoutError')), timeout);
         let response;
+        const headers = { ...(options?.headers || {}) };
+        if (options?.jar && !Object.keys(headers).some(name => name.toLowerCase() === 'cookie')) {
+            const cookie = cookieHeader(options.jar);
+            if (cookie) headers.Cookie = cookie;
+        }
         try {
             response = await fetch(url, {
                 method: options?.method || 'GET',
-                headers: options?.headers || {},
+                headers,
                 body: options?.data ?? undefined,
                 redirect: 'manual',
                 signal: controller.signal,
@@ -508,8 +571,9 @@ async function requestJson(url, options, deadline, signal) {
             signal?.removeEventListener('abort', stop);
         }
         throwIfAborted(signal);
+        mergeSetCookie(options?.jar, response);
         if ([301, 302, 303, 307, 308].includes(response.status)) {
-            const bound = Object.keys(options?.headers || {}).some(name => /^(?:x-argus|x-ladon|x-gorgon|x-medusa|cookie|authorization)$/i.test(name));
+            const bound = jarBound || Object.keys(options?.headers || {}).some(name => /^(?:x-argus|x-ladon|x-gorgon|x-medusa|x-tt-token|cookie|authorization)$/i.test(name));
             if (options?.method === 'POST' || bound || !response.headers.get('location')) throw Object.assign(new Error('App 接口發生不支援的跳轉'), { code: 'SECURITY_BLOCKED' });
             url = checkedUrl(new URL(response.headers.get('location'), url).href, ['fqnovel.com', 'snssdk.com']);
             continue;
@@ -544,12 +608,14 @@ async function fetchAppPlayUrl(vid, options = {}) {
 async function fetchAppPlayUrlFresh(vid, options) {
     const deviceLevel = Number(options.deviceLevel ?? 3);
     if (![1, 2, 3].includes(deviceLevel)) throw Object.assign(new Error('裝置等級必須為 1、2 或 3'), { code: 'INVALID_DEVICE_LEVEL' });
+    // Default-route body (GetVideoModelRequest): the /multi_video_model/v1/ RPC
+    // carries no dr_scene field (that belongs to the :dr_scene variant). biz_param
+    // mirrors the APK's GetVideoBizParam field set.
     const payload = JSON.stringify({
-        biz_param: { detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
-            disable_video_relate_book: false, need_all_video_definition: true, need_mp4_align: false,
-            use_os_player: false, use_server_dns: false, video_platform: 1024 },
+        biz_param: { caller_scene: '', detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
+            disable_video_relate_book: false, from_video_id: '', need_all_video_definition: true, need_mp4_align: false,
+            source: 0, use_os_player: false, use_server_dns: false, video_id_type: 0, video_platform: 1024 },
         mixed_video_id_map: { '1004': [vid] },
-        dr_scene: 'player',
     });
     // Browser installations supply their persisted identity; legacy clients reuse the isolate cache.
     const identity = options.identity || await getPlaybackDevice(requestJson);
@@ -568,7 +634,7 @@ async function fetchAppPlayUrlFresh(vid, options) {
                 ? playbackRequest(payload, identity, VIDEO_HOSTS[attempt])
                 : videoTabRequest(vid, identity, deviceLevel);
             return requestJson(signed.url, {
-                method: signed.method, headers: signed.headers, data: signed.body,
+                method: signed.method, headers: signed.headers, data: signed.body, jar: identity.cookies,
             }, deadline, signal);
         }, { deadline, signal, attempts: VIDEO_HOSTS.length + 1 });
         if (Number(response.Code || response.code || 0) !== 0) throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });
@@ -580,7 +646,7 @@ async function fetchAppPlayUrlFresh(vid, options) {
         const readFallback = async () => {
             const fallback = parseFallback(model.fallback_api);
             if (!fallback) throw Object.assign(new Error('App 接口未返回本集片源地址'), { code: 'MISSING_MODEL' });
-            const outer = await requestJson(fallback, { headers: { 'User-Agent': VIDEO_UA } }, deadline, signal);
+            const outer = await requestJson(fallback, { headers: { 'User-Agent': VIDEO_UA }, jar: identity.cookies }, deadline, signal);
             throwIfAborted(signal);
             if ([outer, outer.video_info].some(value => Number(value?.Code || value?.code || 0) !== 0)) {
                 throw Object.assign(new Error('App 接口暂未提供本集播放信息'), { code: 'BUSINESS_REJECTED' });

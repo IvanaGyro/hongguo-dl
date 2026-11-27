@@ -9,6 +9,7 @@ import worker from '../../../worker/worker.js';
 const require = createRequire(import.meta.url);
 const { PROFILE, prepareInstallation, installationSession, validateInstallation } = require('../../../worker/vendor/playback-installation.js');
 const { fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest } = require('../../../worker/vendor/app-source.js');
+const { registerPlaybackDevice } = require('../../../worker/vendor/playback-device.js');
 const seed = () => ({ profile: PROFILE, clientId: randomUUID(), cdid: randomUUID(), clientudid: randomUUID(),
   openudid: '0123456789abcdef', firstInstallAt: Date.now() });
 const registered = value => ({ ...value, device_id: '7123456789012345678', iid: '7987654321098765432', registeredAt: Date.now() });
@@ -105,6 +106,42 @@ test('registration refusal stays isolated between browsers', async () => {
   assert.throws(() => validateInstallation({ ...seed(), device_id: 123, iid: '456' }), { status: 400 });
 });
 
+test('register keeps device_token, klink_egdi and the cookie jar; player requests replay them', async () => {
+  // The transport fills options.jar from Set-Cookie and the response carries the
+  // device token; emulate both, then confirm they round-trip and are replayed.
+  const register = async (_url, options) => {
+    Object.assign(options.jar, { 'store-region': 'cn', ttreq: '1$abcdef', install_id: '456' });
+    return { device_id_str: '7123456789012345678', install_id_str: '7987654321098765432',
+      device_token: 'AAATOKEN123', klink_egdi: 'AAEGDI456' };
+  };
+  const identity = await registerPlaybackDevice(register, {});
+  assert.equal(identity.device_token, 'AAATOKEN123');
+  assert.equal(identity.klink_egdi, 'AAEGDI456');
+  assert.deepEqual(identity.cookies, { 'store-region': 'cn', ttreq: '1$abcdef', install_id: '456' });
+
+  // Persists across the browser round-trip.
+  const clean = validateInstallation({ ...seed(), device_id: identity.device_id, iid: identity.iid,
+    registeredAt: identity.registeredAt, device_token: identity.device_token, klink_egdi: identity.klink_egdi, cookies: identity.cookies });
+  assert.equal(clean.device_token, 'AAATOKEN123');
+  assert.equal(clean.klink_egdi, 'AAEGDI456');
+  assert.deepEqual(clean.cookies, identity.cookies);
+  // A malformed cookie value is dropped, not trusted.
+  const sanitized = validateInstallation({ ...seed(), device_id: identity.device_id, iid: identity.iid,
+    registeredAt: identity.registeredAt, cookies: { ok: 'v', bad: 'x\r\ny', 'na me': 'v' } });
+  assert.deepEqual(sanitized.cookies, { ok: 'v' });
+
+  // The player POST replays X-Tt-Token and the cookie jar on the request itself.
+  const original = globalThis.fetch;
+  try {
+    let seen;
+    globalThis.fetch = async (_raw, options) => { seen = options; return new Response('', { status: 429 }); };
+    await assert.rejects(fetchAppPlayUrl('123', { identity, session: {} }));
+    assert.equal(seen.headers['X-Tt-Token'], 'AAATOKEN123');
+    assert.match(seen.headers.Cookie, /store-region=cn/);
+    assert.match(seen.headers.Cookie, /ttreq=1\$abcdef/);
+  } finally { globalThis.fetch = original; }
+});
+
 test('source empty-200 retries retain the same IDs and never register another device', async () => {
   const original = globalThis.fetch; const installation = registered(seed()); const calls = [];
   try {
@@ -119,15 +156,21 @@ test('source empty-200 retries retain the same IDs and never register another de
       assert.equal(new URLSearchParams(url.search).has('_rticket'), true);
       assert.ok(options.headers['x-medusa']);
       assert.ok(options.headers['x-helios']);
-      assert.equal(options.headers['x-argus'], undefined);
       if (options.method === 'GET') {
         // Third step: bodyless signed video_tab recovery for the same episode.
+        // The recovery GET keeps the minimal known-good header set.
+        assert.equal(options.headers['x-argus'], undefined);
         assert.equal(url.pathname, '/reading/bookapi/video_tab/multi_video_model/v1/');
         assert.equal(url.searchParams.get('video_id'), '123');
         assert.equal(url.searchParams.get('device_level'), '3');
         assert.equal(options.body, undefined);
       } else {
-        assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+        // The player POST (mobile v5) carries only Khronos/Helios/Medusa + SS-STUB;
+        // the TTNet Argus/Ladon/Gorgon headers are not part of the official form.
+        assert.equal(options.headers['x-argus'], undefined);
+        assert.equal(options.headers['x-ladon'], undefined);
+        assert.equal(options.headers['x-gorgon'], undefined);
+        assert.equal(url.pathname, '/novel/player/multi_video_model/v1/');
         assert.equal(url.searchParams.has('video_id'), false);
         assert.equal(JSON.parse(gunzipSync(options.body)).biz_param.device_level, 3);
       }
@@ -268,7 +311,7 @@ test('Worker forwards each device level into the signed v5 gzip model body', asy
   try {
     globalThis.fetch = async (raw, options) => {
       const url = new URL(raw);
-      assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+      assert.equal(url.pathname, '/novel/player/multi_video_model/v1/');
       assert.equal(url.searchParams.get('device_id'), installation.device_id);
       assert.ok(options.headers['x-medusa']);
       levels.push(JSON.parse(gunzipSync(options.body)).biz_param.device_level);

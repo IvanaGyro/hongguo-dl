@@ -53,8 +53,13 @@ async function registerPlaybackDevice(requestJson, { signal, previous = {}, sess
             const cipher = crypto.createCipheriv('aes-128-cbc', derived.subarray(0, 16), derived.subarray(16, 32));
             const plaintext = Buffer.concat([crypto.createHash('sha512').update(compressed).digest(), compressed]);
             const data = Buffer.concat([Buffer.from('746305100000', 'hex'), random, cipher.update(plaintext), cipher.final()]);
+            // The real client keeps the cookie jar (store-region / ttreq / install_id)
+            // and the device_token the register call returns, replaying them on every
+            // later fqnovel.com request. Seed the jar from any prior identity.
+            const cookies = { ...(previous.cookies || {}) };
             const response = await requestJson(REGISTER_URL, {
                 method: 'POST',
+                jar: cookies,
                 headers: {
                     'User-Agent': APP_UA,
                     Accept: 'application/json', 'Content-Type': 'application/octet-stream;tt-data=a',
@@ -70,9 +75,13 @@ async function registerPlaybackDevice(requestJson, { signal, previous = {}, sess
             const iid = responseId(response, 'install_id');
             if (Number(response?.code ?? response?.Code ?? 0) !== 0) throw Object.assign(new Error('Registration rejected'), { code: 'BUSINESS_REJECTED' });
             if (!device_id || !iid) throw Object.assign(new Error('Invalid registration'), { code: 'INVALID_RESPONSE' });
+            const token = typeof response?.device_token === 'string' && response.device_token ? response.device_token : (previous.device_token || '');
+            const klink = typeof response?.klink_egdi === 'string' && response.klink_egdi ? response.klink_egdi : (previous.klink_egdi || '');
         session.registrationRetryAfter = 0;
         return Object.freeze({ ...previous, device_id, iid, cdid, clientudid: header.clientudid,
-            openudid: header.openudid, firstInstallAt: header.apk_first_install_time, registeredAt: now });
+            openudid: header.openudid, firstInstallAt: header.apk_first_install_time, registeredAt: now,
+            ...(token ? { device_token: token } : {}), ...(klink ? { klink_egdi: klink } : {}),
+            ...(Object.keys(cookies).length ? { cookies } : {}) });
     } catch (error) {
         if (request.signal.aborted) error = abortError(request.signal);
         if (error?.code === 'ERR_CANCELED') throw abortError();

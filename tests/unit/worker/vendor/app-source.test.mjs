@@ -32,7 +32,7 @@ test('v5 Medusa carrier matches independent timestamp-variant fixtures', () => {
   }
 });
 
-test('v5 player signs the final gzip body and registered identity, without legacy transport headers', () => {
+test('v5 player signs the final gzip body and registered identity with the minimal official player header set', () => {
   const identity = { device_id: '1234567890123456', iid: '2345678901234567',
     cdid: '0c6c7f17-b3b7-4d3b-bf66-5cb2b1d400d5' };
   for (const level of [1, 2, 3]) {
@@ -43,7 +43,7 @@ test('v5 player signs the final gzip body and registered identity, without legac
     const signed = source.playbackRequest(payload, identity, source.VIDEO_HOSTS[level % 2]);
     const url = new URL(signed.url);
     assert.equal(url.origin, source.VIDEO_HOSTS[level % 2]);
-    assert.equal(url.pathname, '/novel/player/multi_video_model/player/v1');
+    assert.equal(url.pathname, '/novel/player/multi_video_model/v1/');
     assert.equal(url.searchParams.get('device_id'), identity.device_id);
     assert.equal(url.searchParams.get('iid'), identity.iid);
     assert.equal(url.searchParams.get('cdid'), identity.cdid);
@@ -56,10 +56,10 @@ test('v5 player signs the final gzip body and registered identity, without legac
       Number(signed.headers['x-khronos'])), 12);
     assert.ok(signed.headers['x-helios']);
     assert.ok(signed.headers['x-medusa']);
-    assert.equal(signed.headers['x-argus'], undefined);
-    assert.equal(signed.headers['x-ladon'], undefined);
-    assert.equal(signed.headers['x-gorgon'], undefined);
-    assert.equal(signed.headers['x-ss-req-ticket'], undefined);
+    // The official-app player POST (mobile v5) carries only Khronos/Helios/Medusa
+    // plus the body SS-STUB; the TTNet Argus/Ladon/Gorgon/Dt headers are not sent.
+    for (const name of ['x-argus', 'x-ladon', 'x-gorgon', 'x-tt-dt', 'x-ss-req-ticket'])
+      assert.equal(signed.headers[name], undefined, name);
   }
 });
 

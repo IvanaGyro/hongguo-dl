@@ -3,10 +3,10 @@
 // Hardware and SDK protocol fields retain the existing adapter configuration;
 // they are not a claim that a captured APK request used this exact device/SDK.
 const APP = Object.freeze({ version: '7.4.5.32', code: 74532, package: 'com.phoenix.read', aid: 8662,
-    channel: 'update_64', model: '25053RT47C', brand: 'Redmi', manufacturer: 'Redmi',
+    channel: 'update_64', model: '25053RT47C', brand: 'Redmi', manufacturer: 'Xiaomi',
     os: '16', api: 36, build: 'BP2A.250605.031.A3', width: 1280, height: 2772, dpi: 520, abi: 'arm64-v8a' });
 const PROFILE = `android-${APP.code}-redmi-v1`;
-const APP_UA = `${APP.package}/${APP.code} (Linux; U; Android ${APP.os}; zh_CN; ${APP.model}; Build/${APP.build})`;
+const APP_UA = `${APP.package}/${APP.code} (Linux; U; Android ${APP.os}; zh_TW; ${APP.model}; Build/${APP.build})`;
 const DEVICE_QUERY = Object.freeze({
     ac: 'wifi', channel: APP.channel, aid: String(APP.aid), app_name: 'novelread',
     version_code: String(APP.code), version_name: APP.version, device_platform: 'android', os: 'android',
@@ -24,10 +24,10 @@ function registrationHeader() {
         device_model: APP.model, device_brand: APP.brand, device_manufacturer: APP.manufacturer,
         cpu_abi: APP.abi, release_build: 'b5e187f', density_dpi: APP.dpi, display_density: 'mdpi',
         resolution: `${APP.width}x${APP.height}`, language: 'zh', timezone: 8, access: 'wifi', not_request_sender: 0,
-        carrier: 'CHINA MOBILE', mcc_mnc: '46000', rom: 'eng.root.20231116.160340', rom_version: 'W528JS release-keys',
-        sig_hash: '56a962410c494bbaf0b58dba20cae56f', ipv6_list: [], region: 'CN', tz_name: 'Asia/Shanghai',
-        tz_offset: 28800, sim_region: 'cn', sim_serial_number: [], oaid_may_support: false, device_platform: 'android',
-        custom: { account_region_src: 'fallback', account_region: 'cn', host_bit: 64, dragon_device_type: 'phone' },
+        carrier: 'Chunghwa Telecom', mcc_mnc: '46692', rom: 'eng.root.20231116.160340', rom_version: 'W528JS release-keys',
+        sig_hash: '56a962410c494bbaf0b58dba20cae56f', ipv6_list: [], region: 'TW', tz_name: 'Asia/Taipei',
+        tz_offset: 28800, sim_region: 'tw', sim_serial_number: [], oaid_may_support: false, device_platform: 'android',
+        custom: { account_region_src: 'fallback', account_region: 'tw', host_bit: 64, dragon_device_type: 'phone' },
         pre_installed_channel: '', is_system_app: 0, sdk_flavor: 'china', guest_mode: 0,
     };
 }
