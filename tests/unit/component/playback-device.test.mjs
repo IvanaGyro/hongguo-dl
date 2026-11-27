@@ -305,7 +305,7 @@ test('scheduled registration can stall while normal source callers immediately r
   assert.equal(typeof release, 'function'); release();
 });
 
-test('Worker always sends device level 3 upstream and ignores a device_level parameter', async () => {
+test('Worker forwards each device level into the signed v5 gzip model body', async () => {
   const oldFetch = globalThis.fetch, installation = registered(seed());
   const levels = [];
   try {
@@ -317,14 +317,31 @@ test('Worker always sends device level 3 upstream and ignores a device_level par
       levels.push(JSON.parse(gunzipSync(options.body)).biz_param.device_level);
       return new Response('rate limited', { status: 429 });
     };
-    for (const suffix of ['', '&device_level=1', '&device_level=4']) {
+    for (const level of ['1', '2', '3']) {
       const response = await worker.fetch(new Request(
-        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app' + suffix, {
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
           headers: { 'X-Playback-Device': JSON.stringify(installation) }
         }), {});
       assert.equal(response.status, 429);
     }
-    assert.deepEqual(levels, [3, 3, 3]);
+    assert.deepEqual(levels, [1, 2, 3]);
+    // Without the parameter (playback) the App default tier 3 is used.
+    const response = await worker.fetch(new Request(
+      'https://example.workers.dev/api/source?sid=1&vid=123&channel=app', {
+        headers: { 'X-Playback-Device': JSON.stringify(installation) }
+      }), {});
+    assert.equal(response.status, 429);
+    assert.deepEqual(levels, [1, 2, 3, 3]);
+    levels.pop();
+    for (const level of ['0', '4', '1.0', 'NaN']) {
+      const response = await worker.fetch(new Request(
+        'https://example.workers.dev/api/source?sid=1&vid=123&channel=app&device_level=' + level, {
+          headers: { 'X-Playback-Device': JSON.stringify(installation) }
+        }), {});
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.code, 'INVALID_DEVICE_LEVEL');
+    }
+    assert.deepEqual(levels, [1, 2, 3], 'invalid tiers never contact upstream');
   } finally { globalThis.fetch = oldFetch; }
 });
 

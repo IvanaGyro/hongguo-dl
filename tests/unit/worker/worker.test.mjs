@@ -158,7 +158,7 @@ test('health advertises independent source channels for client compatibility gat
   assert.equal((await response.json()).sourceChannels, true);
 });
 
-test('/api/source ignores removed quality, codec and device_level parameters', async () => {
+test('/api/source ignores removed quality and codec parameters', async () => {
   const original = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -170,7 +170,7 @@ test('/api/source ignores removed quality, codec and device_level parameters', a
   try {
     const api = 'https://example.workers.dev/api/source?sid=123&vid=456&channel=web';
     const fresh = await worker.fetch(new Request(api), {});
-    const old = await worker.fetch(new Request(api + '&codec=not-a-codec&quality=unrecognized&device_level=9'), {});
+    const old = await worker.fetch(new Request(api + '&codec=not-a-codec&quality=unrecognized'), {});
     assert.equal(fresh.status, 404);
     assert.equal(old.status, 404);
     assert.equal((await fresh.json()).error.code, 'PUBLIC_SOURCE_UNAVAILABLE');

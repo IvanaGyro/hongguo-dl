@@ -278,3 +278,16 @@ describe('CDN and codec choices', () => {
     assert.deepEqual(codecsAtQuality(variants, '720p'), ['bytevc2', 'h264']);
   });
 });
+
+describe('pass-through renditions', () => {
+  test('a rendition without its decryption key or with an unknown named codec is not playable', () => {
+    const yes = () => 'probably';
+    assert.equal(browserCanPlayVariant({ codec: 'h264', contentKey: null }, yes), true);
+    assert.equal(browserCanPlayVariant({ codec: 'h264', contentKey: null, keyMissing: true }, yes), false);
+    assert.equal(browserCanPlayVariant({ codec: 'bytevc2', keyMissing: true }, yes, true), false);
+    assert.equal(browserCanPlayVariant({ codec: 'vp9', contentKey: null }, yes), false);
+    // Public web media has no codec metadata and stays playable.
+    assert.equal(browserCanPlayVariant({ codec: 'unknown', contentKey: null }, yes), true);
+    assert.equal(browserCanPlayVariant({ contentKey: null }, yes), true);
+  });
+});

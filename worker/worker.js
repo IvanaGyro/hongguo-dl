@@ -190,9 +190,11 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-// /api/source takes only sid, vid and channel (app | web). It returns every
-// rendition unfiltered; quality and codec are chosen in the browser.
-async function loadSource(sid, vid, channel, installation = null) {
+// /api/source takes sid, vid, channel (app | web) and an optional App device_level
+// (1-3, default 3). It returns every rendition unfiltered; the browser chooses.
+async function loadSource(sid, vid, channel, installation = null, deviceLevel = '3') {
+  if (!['1', '2', '3'].includes(String(deviceLevel)))
+    throw httpError(400, 'INVALID_DEVICE_LEVEL', '裝置等級只支援 1、2、3');
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
   if (!['web', 'app'].includes(channel))
     throw httpError(400, 'INVALID_SOURCE_CHANNEL', '來源查詢方式只支援 app 或 web');
@@ -209,12 +211,12 @@ async function loadSource(sid, vid, channel, installation = null) {
   try {
     const session = installation ? installationSession(installation) : null;
     if (session && !session.identity.device_id) throw httpError(409, 'DEVICE_REQUIRED', '請先初始化播放裝置');
-    const result = await fetchAppPlayUrl(vid, session ? { identity: session.identity, session } : {});
+    const result = await fetchAppPlayUrl(vid, { ...(session ? { identity: session.identity, session } : {}), deviceLevel: Number(deviceLevel) });
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
       contentKey: v.contentKey || null, source: v.source, userAgent: v.userAgent || null, width: v.width || null,
-      height: v.height || null, duration: v.duration || null })), sourceChannel: 'app' };
+      height: v.height || null, duration: v.duration || null, ...(v.keyMissing ? { keyMissing: true } : {}) })), sourceChannel: 'app' };
   } catch (e) {
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
     const message = String(e.message || 'App 取源失敗').slice(0, 250);
@@ -385,7 +387,7 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
-          url.searchParams.get('channel') || '', parseDeviceHeader(request)));
+          url.searchParams.get('channel') || '', parseDeviceHeader(request), url.searchParams.get('device_level') || '3'));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request, mediaTiming);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');

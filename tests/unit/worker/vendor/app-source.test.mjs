@@ -230,3 +230,43 @@ test('cancellation during recovery stops before the next signed request', async 
     assert.equal(calls.length, 2);
   });
 });
+
+test('every rendition is passed through: unknown codec, sizeless ByteVC2 and missing keys', async () => {
+  const body = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_list: {
+    a: { codec_type: 'h264', vwidth: 720, vheight: 1280, encrypt: false, main_url: 'https://v1.qznovelvod.com/a.mp4' },
+    b: { codec_type: 'vp9', definition: '480p', encrypt: false, main_url: 'https://v1.qznovelvod.com/b.mp4' },
+    c: { codec_type: 'bytevc2', definition: '720p', encrypt: false, main_url: 'https://v1.qznovelvod.com/c.mp4' },
+    d: { codec_type: 'hevc', definition: '1080p', main_url: 'https://v1.qznovelvod.com/d.mp4' },
+  } }) } } };
+  await withFetch(() => json(body), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    const byName = Object.fromEntries(variants.map(v => [v.url.split('/').pop(), v]));
+    assert.deepEqual(Object.keys(byName).sort(), ['a.mp4', 'b.mp4', 'c.mp4', 'd.mp4']);
+    assert.equal(byName['b.mp4'].codec, 'vp9');
+    assert.equal(byName['c.mp4'].width, undefined);
+    assert.equal(byName['a.mp4'].width, 720);
+    // No key and no explicit "clear" flag on an inline row: kept, but flagged.
+    assert.equal(byName['d.mp4'].keyMissing, true);
+    assert.equal(byName['d.mp4'].contentKey, null);
+    assert.equal(byName['a.mp4'].keyMissing, undefined);
+  });
+});
+
+test('an inline row without a key is completed from fallback_api when it is the same episode', async () => {
+  const inline = { code: 0, data: { [VID]: { video_model: JSON.stringify({ video_id: 'v', video_duration: 10,
+    fallback_api: 'https://vod.fqnovel.com/fallback?x=1',
+    video_list: { d: { codec_type: 'hevc', definition: '1080p', main_url: 'https://v1.qznovelvod.com/d.mp4' } } }) } } };
+  const fallback = { code: 0, video_info: { code: 0, data: { video_id: 'v', video_duration: 10, video_list: {
+    e: { codec_type: 'hevc', definition: '1080p', encrypt: false, main_url: 'https://v1.qznovelvod.com/e.mp4' } } } } };
+  await withFetch(i => json(i === 0 ? inline : fallback), async calls => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), Boolean(v.keyMissing)]), [['e.mp4', false]]);
+  });
+  // A mismatching fallback is ignored; the flagged inline row is still returned.
+  const other = { code: 0, video_info: { code: 0, data: { ...fallback.video_info.data, video_id: 'other' } } };
+  await withFetch(i => json(i === 0 ? inline : other), async () => {
+    const { variants } = await source.fetchAppPlayUrl(VID, { identity });
+    assert.deepEqual(variants.map(v => [v.url.split('/').pop(), v.keyMissing]), [['d.mp4', true]]);
+  });
+});

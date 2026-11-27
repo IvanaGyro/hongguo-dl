@@ -71,7 +71,7 @@ Beta 提示進一步列出 POST /api/device 的初始化註冊、/api/source 的
 
 網頁／App 候選查詢次數以瀏覽器發出的 /api/source 請求計算；Worker 同輪最多 3 次空白回應重試仍在該請求內，UI 不冒稱能即時觀察這些內部子請求。
 
-`GET /api/source` 只接受 `sid`、`vid` 與 `channel`（`app` 或 `web`，缺少或其他值回 400 `INVALID_SOURCE_CHANNEL`）。Worker 不再接受畫質、編碼或 `device_level` 參數，App 取源固定以裝置等級 3 查詢上游，並回傳全部候選；畫質與編碼一律由瀏覽器選擇。
+`GET /api/source` 接受 `sid`、`vid`、`channel`（`app` 或 `web`，缺少或其他值回 400 `INVALID_SOURCE_CHANNEL`），以及選用的 App `device_level`（1–3，預設 3；其他值回 400 `INVALID_DEVICE_LEVEL`）。播放不送 `device_level`，網頁上也沒有選單；下載模式可另行指定。Worker 不接受畫質或編碼參數，也不再過濾候選：未知編碼、缺尺寸的 ByteVC2 等都原樣回傳；App 內嵌模型缺少解密金鑰的候選會先嘗試以 `fallback_api` 補齊，補不到則標記 `keyMissing: true` 回傳。能否播放或下載一律由瀏覽器判斷（`keyMissing` 與無法辨識的編碼不會被選來播放）。
 
 App 取源的空白 HTTP 200 另依目前裝置累計連續次數；Worker 在 EMPTY_RESPONSE 回傳 upstreamStatus／emptyResponseCount，瀏覽器達 3 次就更換安裝識別及 did／iid，重新註冊後再取源。舊 Worker 未提供次數時，每個 EMPTY_RESPONSE 保守計為 1 次；一般 502、403／429 或 CDN 錯誤不觸發此機制，成功或其他取源錯誤會清空連續空白次數。這是恢復策略，不表示已確認裝置被封。
 
