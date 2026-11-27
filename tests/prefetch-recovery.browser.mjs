@@ -23,10 +23,15 @@ try {
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length' };
       const json = value => { response.writeHead(200, { ...cors, 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
       if (request.method === 'OPTIONS') { response.writeHead(204, cors); return response.end(); }
-      if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: false });
+      if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: true });
       if (url.pathname === '/api/series') return json({ kind: 'series', seriesId: '42', title: 'Slow source fixture',
         total: episodes.length, episodes });
       if (url.pathname === '/api/source') {
+        // Like the real Worker: no public web source, so only App lookups count.
+        if (url.searchParams.get('channel') === 'web') {
+          response.writeHead(404, { ...cors, 'Content-Type': 'application/json' });
+          return response.end(JSON.stringify({ error: { code: 'PUBLIC_SOURCE_UNAVAILABLE', message: 'fixture' } }));
+        }
         const vid = url.searchParams.get('vid'); sourceCalls.set(vid, (sourceCalls.get(vid) || 0) + 1);
         const revision = sourceCalls.get(vid);
         const choices = mode === 'preload-budget' ? [source(vid, 'a-r' + revision), source(vid, 'b-r' + revision)]

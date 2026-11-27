@@ -51,10 +51,13 @@ await page.addInitScript(() => {
 await context.route(url => url.pathname.startsWith('/api/') || url.hostname.endsWith('.fqnovelvod.com'), async route => {
   const url = new URL(route.request().url());
   const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-  if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: false });
+  if (url.pathname === '/api/health') return json({ ok: true, sourceChannels: true });
   if (url.pathname === '/api/series') return json({ kind: 'series', seriesId: '123456789',
     title: 'Synthetic ByteVC2 framing', total: 2, accessible: 2,
     episodes: [{ index: 1, vid: '111111111', available: true }, { index: 2, vid: '222222222', available: true }] });
+  if (url.pathname === '/api/source' && url.searchParams.get('channel') === 'web')
+    return route.fulfill({ status: 404, contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'PUBLIC_SOURCE_UNAVAILABLE', message: 'fixture' } }) });
   if (url.pathname === '/api/source') return json({ variants: ['denied', 'alternate'].map(host => ({
     codec: 'bytevc2', quality: '720p', source: 'app',
     url: 'https://' + host + '.fqnovelvod.com/' +

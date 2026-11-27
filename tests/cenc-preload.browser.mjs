@@ -30,10 +30,12 @@ await page.addInitScript(() => {
 });
 await page.route(url => url.pathname.startsWith('/api/'), async route => {
   const url = new URL(route.request().url());
-  if (url.pathname === '/api/health') return route.fulfill({ json: { ok: true } });
+  if (url.pathname === '/api/health') return route.fulfill({ json: { ok: true, sourceChannels: true } });
   if (url.pathname === '/api/series') return route.fulfill({ json: {
     kind: 'series', seriesId: '42', title: 'Stream preload regression', total: 2, accessible: 2,
     episodes: [{ vid: '1013', index: 13, available: true }, { vid: '1014', index: 14, available: true }] } });
+  if (url.pathname === '/api/source' && url.searchParams.get('channel') === 'web')
+    return route.fulfill({ status: 404, json: { error: { code: 'PUBLIC_SOURCE_UNAVAILABLE', message: 'fixture' } } });
   if (url.pathname === '/api/source') {
     const vid = url.searchParams.get('vid'); sourceCalls.push(vid);
     return route.fulfill({ json: { variants: [{ quality: '720p', codec: bvc2 ? 'bytevc2' : 'h264', source: 'app',
