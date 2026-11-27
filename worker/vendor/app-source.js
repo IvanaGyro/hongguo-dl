@@ -360,6 +360,60 @@ function videoTabRequest(vid, identity, deviceLevel) {
     }};
 }
 
+// Complete ordered episode directory (hongguoTV 615b0c5, "restore complete episode
+// directories"). Since 2026-11-27 the website's seriesDetail.vid_list can shrink to a
+// few obfuscated preview IDs; the App browsing API returns the full numeric directory.
+// Bodyless mobile-v5 GET, same anonymous browsing signature as the player POST — no
+// account login and no extra playback-device registration.
+const DIRECTORY_PATH = '/reading/bookapi/directory/all_items/v/';
+function directoryRequest(seriesId, identity, host = VIDEO_HOSTS[0]) {
+    if (!VIDEO_HOSTS.includes(host)) throw new TypeError('Unsupported v5 directory host');
+    const query = [...mobileV5.playerQuery(identity), ['book_id', String(seriesId)], ['need_version', 'true']];
+    const signed = mobileV5.signPlayback(host + DIRECTORY_PATH, query, null);
+    return { url: signed.url, body: null, method: 'GET', headers: {
+        'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf',
+        ...(identity.device_token ? { 'X-Tt-Token': identity.device_token } : {}),
+        ...signed.headers,
+    }};
+}
+// Upstream order is authoritative: sorting or dropping IDs would renumber saved episodes.
+function parseDirectory(response, expectedCount = 0) {
+    if (Number(response?.Code || response?.code || 0) !== 0)
+        throw Object.assign(new Error('完整分集接口暂不可用'), { code: 'BUSINESS_REJECTED' });
+    const rows = response?.data?.item_data_list;
+    if (!Array.isArray(rows)) throw Object.assign(new Error('完整分集数据缺失'), { code: 'MISSING_DIRECTORY' });
+    const ids = rows.map(row => (row && row.item_id != null) ? String(row.item_id) : '');
+    if (!(ids.length && ids.length >= expectedCount
+        && ids.every(id => /^\d{1,30}$/.test(id)) && new Set(ids).size === ids.length))
+        throw Object.assign(new Error('完整分集数据缺失或异常'), { code: 'INVALID_DIRECTORY' });
+    return ids;
+}
+async function fetchEpisodeDirectory(seriesId, options = {}) {
+    seriesId = String(seriesId || '');
+    if (!/^\d{1,30}$/.test(seriesId)) throw Object.assign(new Error('剧集编号无效'), { code: 'INVALID_ID' });
+    const expectedCount = Number(options.expectedCount) || 0;
+    const identity = options.identity || await getPlaybackDevice(requestJson);
+    throwIfAborted(options.signal);
+    const deadline = Date.now() + 15000;
+    const { signal } = boundedSignal(options.signal, 15000);
+    let failure;
+    for (const host of VIDEO_HOSTS) {
+        throwIfAborted(signal);
+        const signed = directoryRequest(seriesId, identity, host);
+        try {
+            const response = await requestJson(signed.url, {
+                method: signed.method, headers: signed.headers, jar: identity.cookies,
+                preserveLargeIntegerFields: ['item_id'],
+            }, deadline, signal);
+            return parseDirectory(response, expectedCount);
+        } catch (error) {
+            throwIfAborted(signal); // Cancellation stops recovery; a host error tries the backup.
+            failure = error;
+        }
+    }
+    throw failure || Object.assign(new Error('完整分集暂不可用，请稍后重试'), { code: 'DIRECTORY_UNAVAILABLE' });
+}
+
 function parseSearchInteger(value) {
     if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value.trim()))) return null;
     const number = Number(value);
@@ -763,4 +817,4 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
         });
 }
 
-module.exports = { v5Branch, playbackRequest, videoTabRequest, signPlaybackV5, VIDEO_HOSTS, hashF13, AesV3, V5_SBOX, fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, hashF13, setRustHashF13Backend };
+module.exports = { v5Branch, playbackRequest, videoTabRequest, directoryRequest, parseDirectory, fetchEpisodeDirectory, signPlaybackV5, VIDEO_HOSTS, hashF13, AesV3, V5_SBOX, fetchAppPlayUrl, signedSearchRequest, signedMetadataRequest, signedAccountRequest, parseSearchInteger, preserveLargeJsonIntegers, requestJson, SEARCH_API, SEARCH_UA, helios, xGorgon, setRustGorgonBackend, xmxor, setRustXmXorBackend, medusaAesV3Encrypt, setRustMedusaAesV3Backend, getIv, sumMd5, setRustMedusaHashBackend, setRustHashF13Backend };
