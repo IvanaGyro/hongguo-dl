@@ -1,7 +1,7 @@
 // Layer 1 owns source discovery, candidate URLs, failure history and refresh.
 // One session represents requested media, independently of how it is consumed.
 import { errorWith, assertSupportedMediaUrl, isHlsUrl } from './logic.js';
-import { codecId, qualityId, playbackRendition, untriedPlaybackRendition, sourceQueryForPlayback } from './source-options.js';
+import { codecId, qualityId, playbackRendition, untriedPlaybackRendition } from './source-options.js';
 import { sameTierPlaybackCandidates, isRecoverableMediaSourceError } from './cenc-source-fallback.js';
 
 // HLS playlists are not supported: a variant the source API returns as
@@ -47,7 +47,6 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
         log('source.list.refresh', { attempt: selected + 1, tier: tier?.quality || quality, refreshed: refreshes });
         report('正在重新取得同畫質影片來源…');
       }
-      const query = sourceQueryForPlayback(quality);
       let list;
       if (sameList) list = { variants: rawVariants, winnerVariants: rawWinners };
       else if (episode.vid === 'direct') {
@@ -56,7 +55,7 @@ export function createDownloadSourceSession({ sourceFor, seriesId, episode, log 
         list = { variants: [{ url: episode.url, source: 'web', codec: 'unknown', contentKey: null }] };
       }
       else {
-        try { list = await sourceFor(seriesId, episode.vid, query.quality, query.codec, signal,
+        try { list = await sourceFor(seriesId, episode.vid, signal,
           { refresh: Boolean(refresh || selected), onStage }); }
         catch (error) { throw Object.assign(error, { stage: 'source-api' }); }
       }

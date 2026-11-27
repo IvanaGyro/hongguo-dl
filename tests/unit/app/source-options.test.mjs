@@ -10,7 +10,6 @@ import {
   parseRenditionValue,
   matchingRenditionValue,
   candidateRenditions,
-  sourceQueryForPlayback,
   availableRenditions,
   chooseRendition,
   qualityId,
@@ -183,20 +182,6 @@ describe('rendition menu options', () => {
     assert.equal(matchingRenditionValue(options, parseRenditionValue('1080p')), '1080p|hevc');
     assert.equal(matchingRenditionValue(options, { quality: '540p', codec: 'auto' }), null);
     assert.deepEqual(parseRenditionValue('auto'), { quality: 'auto', codec: 'auto' });
-  });
-});
-
-describe('source query', () => {
-  test('all playback selections fetch complete unfiltered sources', () => {
-    assert.deepEqual(sourceQueryForPlayback('1080p'),
-      { quality: 'auto', codec: 'auto', partial: false });
-  });
-
-  test('auto and unsupported exact quality requests retain full metadata listing', () => {
-    for (const quality of ['auto', '720p', '540p', '480p', '360p']) {
-      assert.deepEqual(sourceQueryForPlayback(quality),
-        { quality: 'auto', codec: 'auto', partial: false });
-    }
   });
 });
 

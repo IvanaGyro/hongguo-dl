@@ -63,13 +63,6 @@ test('v5 player signs the final gzip body and registered identity with the minim
   }
 });
 
-test('invalid device level fails before registration or any network call', async () => {
-  await assert.rejects(
-    source.fetchAppPlayUrl('7703906910138813464', { deviceLevel: 4 }),
-    error => error.code === 'INVALID_DEVICE_LEVEL',
-  );
-});
-
 const identity = { device_id: '1234567890123456', iid: '2345678901234567',
   cdid: '0c6c7f17-b3b7-4d3b-bf66-5cb2b1d400d5' };
 const VID = '7703906910138813464';

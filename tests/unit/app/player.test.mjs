@@ -113,7 +113,7 @@ describe('episode selection and resume', () => {
       player.open(episodes[0]); await tick();
       player.open(episodes[1]); await ready(1);
       const url = video.src;
-      assert.equal(calls[0][4].aborted, true);
+      assert.equal(calls[0][2].aborted, true);
       resolveFirst({ variants: [source('one')] }); await tick(); await tick();
       assert.equal(video.src, url);
       assert.equal(player.current().vid, 'two');
@@ -138,7 +138,7 @@ describe('episode selection and resume', () => {
       video.dispatchEvent(new Event('timeupdate'));
       await wait(() => calls.length === 2);
       player.deactivate();
-      assert.equal(calls[1][4].aborted, true);
+      assert.equal(calls[1][2].aborted, true);
       assert.equal(video.src, null);
       assert.equal(video.paused, true);
       assert.equal(player.current().vid, 'one');
@@ -338,7 +338,7 @@ describe('CENC source retries', () => {
       calls++;
       if (calls === 1) throw failure('SOURCE_UNAVAILABLE');
       if (calls === 2) return { variants: [source('a'), source('b')] };
-      assert.equal(args[5].refresh, true);
+      assert.equal(args[3].refresh, true);
       if (calls === 3) throw failure('EMPTY_RESPONSE');
       return { variants: [source('c')] };
     }, async (url, options) => {

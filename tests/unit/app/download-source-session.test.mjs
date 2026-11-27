@@ -14,7 +14,7 @@ test('layer 1 selects CDNs and refreshes a full failed cycle; consumers receive 
   const session = createDownloadSourceSession({ seriesId: '42', episode: { vid: '1' },
     sourceFor: async (...args) => {
       queries++;
-      assert.equal(Boolean(args[5].refresh), queries > 1);
+      assert.equal(Boolean(args[3].refresh), queries > 1);
       return { variants: queries === 1 ? [source('a'), source('b')] : [source('a'), source('c')] };
     } });
   const download = createMediaDownload({ getWorkerOrigin: () => 'https://proxy.test' });

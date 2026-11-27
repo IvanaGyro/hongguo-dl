@@ -190,29 +190,26 @@ export function findPublicMedia(html, sid, vid) {
   }
   return null;
 }
-async function loadSource(sid, vid, channel = 'auto', installation = null, deviceLevel = '3') {
-  if (!['1', '2', '3'].includes(String(deviceLevel)))
-    throw httpError(400, 'INVALID_DEVICE_LEVEL', '裝置等級只支援 1、2、3');
+// /api/source takes only sid, vid and channel (app | web). It returns every
+// rendition unfiltered; quality and codec are chosen in the browser.
+async function loadSource(sid, vid, channel, installation = null) {
   if (!ID.test(sid) || !ID.test(vid)) throw httpError(400, 'INVALID_ID', '劇集或分集 ID 無效');
-  if (!['auto', 'web', 'app'].includes(channel))
-    throw httpError(400, 'INVALID_SOURCE_CHANNEL', '不支援的來源查詢方式');
-  let webError = '';
-  if (channel !== 'app') {
+  if (!['web', 'app'].includes(channel))
+    throw httpError(400, 'INVALID_SOURCE_CHANNEL', '來源查詢方式只支援 app 或 web');
+  if (channel === 'web') {
+    let media = null;
     try {
       const html = await fetchLimited(SITE + '/player/' + sid + '/' + vid, { timeout: 4500 });
-      const media = findPublicMedia(html, sid, vid);
-      if (media) return { variants: [media], sourceChannel: 'web' };
-    } catch (error) { webError = error.message; }
-    if (channel === 'web')
-      throw httpError(404, 'PUBLIC_SOURCE_UNAVAILABLE',
-        '目前沒有已確認可直接讀取的公開網頁片源');
+      media = findPublicMedia(html, sid, vid);
+    } catch { /* Reported below as an unavailable public source. */ }
+    if (media) return { variants: [media], sourceChannel: 'web' };
+    throw httpError(404, 'PUBLIC_SOURCE_UNAVAILABLE',
+      '目前沒有已確認可直接讀取的公開網頁片源');
   }
   try {
-    // Source metadata is complete. Quality and codec are a client-side
-    // selection policy, not a Worker concern.
     const session = installation ? installationSession(installation) : null;
     if (session && !session.identity.device_id) throw httpError(409, 'DEVICE_REQUIRED', '請先初始化播放裝置');
-    const result = await fetchAppPlayUrl(vid, { ...(session ? { identity: session.identity, session } : {}), deviceLevel: Number(deviceLevel) });
+    const result = await fetchAppPlayUrl(vid, session ? { identity: session.identity, session } : {});
     const variants = result.variants || [result];
     if (!variants.length) throw httpError(404, 'SOURCE_UNAVAILABLE', '本集沒有可用片源');
     return { variants: variants.map(v => ({ url: v.url, codec: v.codec, quality: v.quality,
@@ -222,7 +219,7 @@ async function loadSource(sid, vid, channel = 'auto', installation = null, devic
     // Preserve upstream error codes for actionable diagnostics, but never leak request credentials.
     const message = String(e.message || 'App 取源失敗').slice(0, 250);
     throw Object.assign(httpError(e.status && e.status >= 400 ? e.status : 502,
-      e.code || 'SOURCE_UNAVAILABLE', webError ? message + '；官網來源：' + webError : message), {
+      e.code || 'SOURCE_UNAVAILABLE', message), {
         retryAfterMs: e.retryAfterMs, emptyResponseCount: e.emptyResponseCount, upstreamStatus: e.upstreamStatus });
   }
 }
@@ -388,7 +385,7 @@ export default {
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
-          url.searchParams.get('channel') || 'auto', parseDeviceHeader(request), url.searchParams.get('device_level') || '3'));
+          url.searchParams.get('channel') || '', parseDeviceHeader(request)));
       } else if (url.pathname === '/api/media') {
         response = await relayMedia(request, mediaTiming);
       } else throw httpError(404, 'NOT_FOUND', '不存在的 API');

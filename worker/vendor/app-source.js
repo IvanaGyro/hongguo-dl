@@ -15,7 +15,6 @@ const mobileV5 = require('./mobile-v5');
 const mc = require('./metadata-collector');
 const { abortError, throwIfAborted, boundedSignal, networkFailure, retryAfterMs } = require('./request-signal');
 const sm3 = require('./sm3');
-const { normalizeDownloadQuality, meetsDownloadQuality } = require('./download-quality');
 const localId = () => String(1000000000000000n + BigInt('0x' + crypto.randomBytes(6).toString('hex')));
 // Cloudflare workerd forbids generating random bytes at module evaluation time.
 // Initialize this stable per-isolate identity only when an API request needs it.
@@ -35,6 +34,9 @@ const VIDEO_HOSTS = Object.freeze(['https://api5-normal-sinfonlinea.fqnovel.com'
 // resolves to .../default/v1/. The earlier /player/v1 (no trailing slash) matched
 // neither RpcOperation path.
 const PLAYER_PATH = '/novel/player/multi_video_model/v1/';
+// Fixed app device tier sent upstream. It is not a client parameter: /api/source
+// returns every rendition the App API offers and the browser selects among them.
+const DEVICE_LEVEL = 3;
 const VIDEO_TAB_HOST = 'https://api5-normal-sinfonlineb.fqnovel.com';
 const VIDEO_TAB_PATH = '/reading/bookapi/video_tab/multi_video_model/v1/';
 const SEARCH_API = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v';
@@ -346,10 +348,10 @@ function playbackRequest(payload, identity, host = VIDEO_HOSTS[0]) {
 }
 // Same player signing family as the POST, but bodyless: no Content-Type,
 // Content-Encoding or SS-STUB. Parameters follow the APK GetVideoModelRequest.
-function videoTabRequest(vid, identity, deviceLevel) {
+function videoTabRequest(vid, identity) {
     const signed = signPlaybackV5(VIDEO_TAB_HOST + VIDEO_TAB_PATH, {
         ...playbackQuery(identity),
-        video_id: String(vid), video_id_type: '0', device_level: String(deviceLevel),
+        video_id: String(vid), video_id_type: '0', device_level: String(DEVICE_LEVEL),
         need_all_video_definition: '1', need_mp4_align: '0', use_os_player: '0',
         video_platform: '1024', source: '0', from_video_id: '',
     });
@@ -649,7 +651,6 @@ async function requestJson(url, options, deadline, signal) {
 }
 async function fetchAppPlayUrl(vid, options = {}) {
     throwIfAborted(options.signal);
-    normalizeDownloadQuality(options.quality); // Validate before registration or network I/O.
     vid = String(vid || '');
     if (!/^\d{1,30}$/.test(vid)) throw new Error('分集编号无效');
     // No source queue or fixed delay: a slow/refused lookup must not block another lookup.
@@ -660,13 +661,11 @@ async function fetchAppPlayUrl(vid, options = {}) {
 }
 
 async function fetchAppPlayUrlFresh(vid, options) {
-    const deviceLevel = Number(options.deviceLevel ?? 3);
-    if (![1, 2, 3].includes(deviceLevel)) throw Object.assign(new Error('裝置等級必須為 1、2 或 3'), { code: 'INVALID_DEVICE_LEVEL' });
     // Default-route body (GetVideoModelRequest): the /multi_video_model/v1/ RPC
     // carries no dr_scene field (that belongs to the :dr_scene variant). biz_param
     // mirrors the APK's GetVideoBizParam field set.
     const payload = JSON.stringify({
-        biz_param: { caller_scene: '', detail_page_version: 0, device_level: deviceLevel, disable_digg_stat: false,
+        biz_param: { caller_scene: '', detail_page_version: 0, device_level: DEVICE_LEVEL, disable_digg_stat: false,
             disable_video_relate_book: false, from_video_id: '', need_all_video_definition: true, need_mp4_align: false,
             source: 0, use_os_player: false, use_server_dns: false, video_id_type: 0, video_platform: 1024 },
         mixed_video_id_map: { '1004': [vid] },
@@ -686,7 +685,7 @@ async function fetchAppPlayUrlFresh(vid, options) {
             throwIfAborted(signal);
             const signed = attempt < VIDEO_HOSTS.length
                 ? playbackRequest(payload, identity, VIDEO_HOSTS[attempt])
-                : videoTabRequest(vid, identity, deviceLevel);
+                : videoTabRequest(vid, identity);
             return requestJson(signed.url, {
                 method: signed.method, headers: signed.headers, data: signed.body, jar: identity.cookies,
             }, deadline, signal);
@@ -710,10 +709,10 @@ async function fetchAppPlayUrlFresh(vid, options) {
         if (!inline) {
             const info = await readFallback();
             throwIfAborted(signal);
-            return parseAppPlayModel(info, vid, options, false);
+            return parseAppPlayModel(info, vid, false);
         }
         try {
-            return parseAppPlayModel(model, vid, options, true);
+            return parseAppPlayModel(model, vid, true);
         } catch (error) {
             // Only absent encryption metadata enables this recovery path; the fallback
             // must independently pass identity, duration, encryption and URL validation.
@@ -727,16 +726,14 @@ async function fetchAppPlayUrlFresh(vid, options) {
                 || Math.abs(fallbackDuration - duration) > 0.5) {
                 throw Object.assign(new Error('备用片源编号或完整时长无法确认，已停止取址'), { code: 'INVALID_RESPONSE' });
             }
-            return parseAppPlayModel(info, vid, options, false, true, error.minimumPixels);
+            return parseAppPlayModel(info, vid, false, true, error.minimumPixels);
         }
     } finally {
         request.dispose();
     }
 }
 
-function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata = inline, minimumPixels = 0) {
-    const requestedQuality = normalizeDownloadQuality(options.quality);
-    const allowLowerQuality = options.allowLowerQuality === true && requestedQuality !== 'auto';
+function parseAppPlayModel(info, vid, inline, requireEncryptionMetadata = inline, minimumPixels = 0) {
     if (!info) throw Object.assign(new Error('App 接口未返回本集片源模型'), { code: 'MISSING_MODEL' });
     const compatibleRows = Object.values(info?.video_list || {}).filter(item => item && (item.main_url || item.backup_url || Array.isArray(item.backup_url_list))).map(item => {
         const codec = str(item.codec_type || item.video_meta?.codec_type).toLowerCase();
@@ -750,24 +747,13 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
     }).filter(row => row.codecRank < 3 && (!minimumPixels || Math.min(row.width, row.height) >= minimumPixels)
         && (row.codecRank !== 2 || (row.width > 0 && row.height > 0 && typeof info.video_id === 'string'
             && info.video_id.trim() && Number.isFinite(Number(info.video_duration)) && Number(info.video_duration) > 0)));
-    const rows = compatibleRows.filter(row => allowLowerQuality || meetsDownloadQuality(row, requestedQuality)).sort((a, b) => {
-        if (requestedQuality === 'auto') return b.pixels - a.pixels || a.codecRank - b.codecRank;
-        const aMeets = meetsDownloadQuality(a, requestedQuality), bMeets = meetsDownloadQuality(b, requestedQuality);
-        if (aMeets !== bMeets) return Number(bMeets) - Number(aMeets);
-        const aPixels = Math.min(a.width, a.height), bPixels = Math.min(b.width, b.height);
-        if (aMeets && (a.codecRank === 2) !== (b.codecRank === 2)) return Number(a.codecRank === 2) - Number(b.codecRank === 2);
-        return (aMeets ? aPixels - bPixels : bPixels - aPixels) || a.codecRank - b.codecRank;
-    });
+    // Every rendition is returned; quality and codec selection belong to the browser.
+    const rows = compatibleRows.sort((a, b) => b.pixels - a.pixels || a.codecRank - b.codecRank);
     if (!rows.length) {
-        const strictQuality = compatibleRows.length > 0 && requestedQuality !== 'auto' && !allowLowerQuality;
-        throw Object.assign(new Error(strictQuality
-            ? `本集暂无尺寸可确认且满足 ${requestedQuality} 的 H.264/HEVC 片源，未降级`
-            : Object.values(info.video_list || {}).some(item => str(item?.codec_type || item?.video_meta?.codec_type).toLowerCase() === 'bytevc2')
+        throw Object.assign(new Error(
+            Object.values(info.video_list || {}).some(item => str(item?.codec_type || item?.video_meta?.codec_type).toLowerCase() === 'bytevc2')
                 ? '本集仅提供播放器不支持的 ByteVC2 编码，当前无法播放或下载，请在官方 App 观看'
-                : '本集暂未提供兼容的 H.264/HEVC 片源'), {
-            code: strictQuality ? 'QUALITY_UNAVAILABLE' : 'NO_COMPATIBLE_SOURCE',
-            ...(strictQuality ? { quality: requestedQuality } : {}),
-        });
+                : '本集暂未提供兼容的 H.264/HEVC 片源'), { code: 'NO_COMPATIBLE_SOURCE' });
     }
     let lastError;
     let incompleteEncryptionMetadata = false;
@@ -775,8 +761,7 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
     const seen = new Set();
     // Auto means "best available". Keep every compatible encoding at the same
     // resolution tier, but never silently fall through to a lower rendition.
-    const selectedRows = rows; // Expose all available codecs; the frontend selects the desired stream.
-    for (const selected of selectedRows) {
+    for (const selected of rows) {
         try {
             const spade = selected.item.spade_a || selected.item.encrypt_info?.spade_a;
             const encrypt = selected.item.encrypt_info?.encrypt ?? selected.item.encrypt;
@@ -797,8 +782,7 @@ function parseAppPlayModel(info, vid, options, inline, requireEncryptionMetadata
                     if (seen.has(identity)) continue;
                     seen.add(identity);
                     variants.push({ url, contentKey, codec: selected.codec === 'bytevc1' ? 'hevc' : selected.codec, source: 'app', vid,
-                        userAgent: VIDEO_UA, quality: allowLowerQuality ? (selected.width && selected.height ? `${Math.min(selected.width, selected.height)}p` : '') : requestedQuality === 'auto' ? selected.quality : requestedQuality,
-                        ...(requestedQuality === 'auto' ? {} : { width: selected.width, height: selected.height }) });
+                        userAgent: VIDEO_UA, quality: selected.quality });
                     if (selected.codec === 'bytevc2') Object.assign(variants[variants.length - 1], {
                         width: selected.width, height: selected.height, duration: Number(info.video_duration),
                     });

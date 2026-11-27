@@ -151,10 +151,6 @@ export function untriedPlaybackRendition(variants, preferences, canPlayType,
     canTranscodeBvc2, isMseTypeSupported);
 }
 
-export function sourceQueryForPlayback(quality = 'auto') {
-  return { quality: 'auto', codec: 'auto', partial: false };
-}
-
 // One option per advertised quality/codec pair; duplicate CDN URLs are not
 // separate choices. Codec labels are useful only for ambiguous quality tiers.
 export function renditionOptions(variants = []) {

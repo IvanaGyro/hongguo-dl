@@ -209,16 +209,6 @@
       </section>
       <section class="tools" aria-labelledby="tools-title">
         <h2 id="tools-title">設定與診斷</h2>
-        <details class="api-settings" id="device-level-settings">
-          <summary>App 片源裝置等級</summary>
-          <label for="device-level">device_level</label>
-          <select id="device-level" class="device-level-control" aria-describedby="device-level-help">
-            <option value="1">1 — 偏向相容編碼</option>
-            <option value="2">2 — 中間等級（實際效果尚未驗證）</option>
-            <option value="3" selected>3 — 進階裝置（預設）</option>
-          </select>
-          <p id="device-level-help" class="help">播放與下載共用此等級，影響 App API 回傳的可用編碼與畫質。切換後會重新查詢片源；已播放中的影片不會中斷。設定只儲存在此瀏覽器。</p>
-        </details>
         <details class="api-settings" id="worker-settings">
           <summary>Cloudflare Worker API 設定</summary>
           <form id="api-settings-form">
