@@ -4,8 +4,10 @@
   "compatibility_date": "2026-11-11",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // Run near Tokyo so App API calls (search, episode directory, sources) leave
-  // from Japan: the App filters some series for Taiwan/Hong Kong IPs.
-  "placement": { "region": "aws:ap-southeast-2" },
+  // Run in Bangkok so App API calls (search, episode directory, sources)
+  // leave from Thailand. The App filters some series for IPs in Taiwan,
+  // Hong Kong, Japan, Korea, Singapore and Jakarta; Bangkok was the closest
+  // tested region to Taiwan that returned them (2026-11-28).
+  "placement": { "region": "aws:ap-southeast-7" },
   "previews": {}
 }
