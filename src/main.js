@@ -40,6 +40,7 @@ import { idsFromUrl, urlForSeriesIds } from './deep-link.js';
 import { startCrossOriginIsolation } from './cross-origin-isolation.js';
 import { triggerArchiveDownload } from './archive-download.js';
 import { recordFailure } from './retry.js';
+import { isSearchKeyword, searchRoute, searchCardsHtml, mergeSearchItems } from './series-search.js';
 import { interruptQueueOnPageHide } from './queue-lifecycle.js';
 import { renditionOptions, parseRenditionValue, matchingRenditionValue, renditionForAttempt, codecId, reconcileRendition } from './source-options.js';
 import { readMediaBody } from './media-body.js';
@@ -380,6 +381,15 @@ async function apiJson(route, signal, onWait = () => 0) {
   let stepAttempt = 0;
   const sourcePhase = route.includes("channel=app") ? "source-app" : route.includes("channel=web") ? "source-web" : "source-auto";
   const headers = { Accept: 'application/json' };
+  if (route.startsWith('/api/search?')) {
+    // Search signs with this browser's installation but never rotates it or
+    // retries: an empty search is reported, not recovered.
+    await supportsIndependentSourceChannels();
+    const capabilities = await sourceChannelProbe;
+    if (capabilities?.deviceSessions === true && typeof capabilities.deviceProfile === 'string')
+      return request(await playbackDevices.ensure(apiRoute(route), capabilities.deviceProfile));
+    return request();
+  }
   if (route.startsWith('/api/source?') && !route.includes('channel=web')) {
     await supportsIndependentSourceChannels();
     const capabilities = await sourceChannelProbe;
@@ -582,7 +592,14 @@ async function lookup(event) {
   if (!input) return;
   const ids = /^\d+(?:[\s,;，、]+\d+)+$/.test(input)
     ? input.split(/[\s,;，、]+/) : null;
+  if (isSearchKeyword(input)) return searchSeries(input);
+  // An ID or URL replaces any earlier search results.
+  if (search) { search.token++; search = null; }
+  $('search-results').hidden = true;
   if (ids?.length) return lookupIds(ids, { play: true });
+  return openSeriesInput(input);
+}
+async function openSeriesInput(input) {
   ++lookupSequence;
   $('linked-series').hidden = true;
   $('lookup-button').disabled = true;
@@ -599,6 +616,52 @@ async function lookup(event) {
     $('lookup-error').textContent = classifyError(error).message;
     $('lookup-error').hidden = false;
   } finally { $('lookup-button').disabled = false; $('lookup-button').textContent = '尋找影集'; }
+}
+// Search results accumulate page by page; a new query or a newer request wins.
+let search = null;
+async function searchSeries(query, more = false) {
+  const state = more && search?.query === query ? search
+    : { query, items: [], page: 0, cursor: null, hasMore: false, token: (search?.token || 0) + 1 };
+  search = state;
+  const token = ++state.token;
+  ++lookupSequence;
+  $('linked-series').hidden = true;
+  $('lookup-error').hidden = true;
+  $('search-results').hidden = false;
+  $('search-more').hidden = true;
+  $('lookup-button').disabled = true;
+  if (!more) {
+    $('search-list').innerHTML = '';
+    $('search-heading').textContent = '搜尋「' + query + '」…';
+  } else $('search-more').disabled = true;
+  try {
+    const data = await apiJson(searchRoute(query, state.page + 1, state.cursor));
+    if (search !== state || token !== state.token) return;
+    const items = Array.isArray(data?.items) ? data.items : [];
+    state.page = data.page || state.page + 1;
+    state.cursor = data.cursor || null;
+    state.hasMore = data.hasMore === true && !!state.cursor;
+    const added = mergeSearchItems(state.items, items).slice(state.items.length);
+    state.items.push(...added);
+    $('search-list').insertAdjacentHTML('beforeend', searchCardsHtml(added));
+    $('search-heading').textContent = state.items.length
+      ? '「' + query + '」的搜尋結果 · ' + state.items.length + ' 部'
+      : state.hasMore ? '這一頁沒有「' + query + '」的短劇，可再載入更多'
+      : '找不到「' + query + '」相關的短劇';
+    // An upstream page can hold only unrelated cells; it still advances the cursor.
+    $('search-more').hidden = !state.hasMore;
+  } catch (error) {
+    if (search !== state || token !== state.token) return;
+    if (!state.items.length) $('search-results').hidden = true;
+    else $('search-more').hidden = !state.hasMore;
+    $('lookup-error').textContent = '搜尋失敗：' + classifyError(error).message;
+    $('lookup-error').hidden = false;
+  } finally {
+    if (search === state && token === state.token) {
+      $('lookup-button').disabled = false;
+      $('search-more').disabled = false;
+    }
+  }
 }
 async function chooseFolder() {
   try {
@@ -1067,6 +1130,19 @@ $('share-series').addEventListener('click', async () => {
 void startCrossOriginIsolation({ base: import.meta.env.BASE_URL });
 renderRecentSeries();
 $('lookup-form').addEventListener('submit', lookup);
+$('search-more').addEventListener('click', () => { if (search) void searchSeries(search.query, true); });
+$('search-list').addEventListener('click', event => {
+  const id = event.target.closest('[data-search-id]')?.dataset.searchId;
+  if (!id) return;
+  // Opening a series supersedes a "load more" still in flight; the results stay.
+  if (search) {
+    search.token++;
+    $('search-more').disabled = false;
+    $('search-more').hidden = !search.hasMore;
+  }
+  $('input-url').value = id;
+  void openSeriesInput(id);
+});
 $('choose-folder').addEventListener('click', chooseFolder);
 $('add-queue').addEventListener('click', queueSelected);
 $('encode-speed-size').addEventListener('input', () => {

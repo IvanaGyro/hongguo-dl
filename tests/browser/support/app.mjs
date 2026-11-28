@@ -10,11 +10,26 @@ import { test as base, expect } from '@playwright/test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { KEY, mediaPath } from './fixtures.mjs';
 
 export { expect, KEY };
 
 const OPEN_RANGE_CAP = 8 * 1024 * 1024;
+// A valid 3x4 RGB PNG for search covers; Firefox rejects a corrupt one that
+// Chromium and WebKit would still draw.
+const pngChunk = (type, data) => {
+  const head = Buffer.alloc(8); head.writeUInt32BE(data.length); head.write(type, 4, 'ascii');
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])));
+  return Buffer.concat([head, data, crc]);
+};
+const COVER_PNG = (() => {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(3, 0); header.writeUInt32BE(4, 4); header.set([8, 2, 0, 0, 0], 8);
+  const rows = Buffer.concat(Array.from({ length: 4 }, () => Buffer.from([0, 240, 177, 107, 240, 177, 107, 240, 177, 107])));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)), pngChunk('IEND', Buffer.alloc(0))]);
+})();
 const files = new Map();
 const bytesOf = name => {
   if (!files.has(name)) files.set(name, new Uint8Array(readFileSync(mediaPath(name))));
@@ -41,6 +56,7 @@ export class App {
     this.requests = [];
     this.errors = [];
     this.health = { ok: true, sourceChannels: false };
+    this.searchPages = {};
   }
 
   // episodes: array of variant lists, one list per episode.
@@ -67,6 +83,12 @@ export class App {
       localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
     });
     await this.context.route(url => url.pathname.startsWith('/api/'), route => this.api(route));
+    // Search covers: a 3x4 PNG from the official picture host.
+    await this.context.route(/^https:\/\/p3-novel\.byteimg\.com\//, route => {
+      this.requests.push({ kind: 'cover', url: route.request().url() });
+      return route.fulfill({ status: 200, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' },
+        body: COVER_PNG });
+    });
     await this.context.route(/^https:\/\/[a-z0-9-]+\.fqnovelvod\.com\//, route =>
       this.media(route, route.request().url(), 'cdn'));
   }
@@ -114,6 +136,19 @@ export class App {
         if (await this.injected('source', route, { sid, vid, device })) return;
         if (!episode) return json({ error: { code: 'NOT_FOUND', message: 'No fixture episode' } }, 404);
         return json({ variants: episode.variants.map(({ media, ...v }) => v) });
+      }
+      case '/api/search': {
+        // Pages of `searchPages` (set by a spec); page N+1 needs cursor "cN".
+        const q = url.searchParams.get('q'), page = Number(url.searchParams.get('page') || 1);
+        const device = request.headers()['x-playback-device'];
+        this.requests.push({ kind: 'search', q, page, cursor: url.searchParams.get('cursor'), device: device ? JSON.parse(device) : null });
+        if (await this.injected('search', route, { q, page })) return;
+        if (!device) return json({ error: { code: 'DEVICE_REQUIRED', message: '請先初始化播放裝置' } }, 409);
+        if (page > 1 && url.searchParams.get('cursor') !== 'c' + (page - 1))
+          return json({ error: { code: 'INVALID_CURSOR', message: 'bad cursor' } }, 400);
+        const pages = this.searchPages[q] || [];
+        const more = page < pages.length;
+        return json({ items: pages[page - 1] || [], page, hasMore: more, cursor: more ? 'c' + page : null });
       }
       case '/api/media': return this.media(route, url.searchParams.get('url'), 'proxy');
       default: return json({ error: { code: 'NOT_FOUND', message: 'No fixture API' } }, 404);

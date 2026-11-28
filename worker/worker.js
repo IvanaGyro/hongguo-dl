@@ -4,6 +4,7 @@ import appModule from './vendor/app-source.js';
 import installationModule from './vendor/playback-installation.js';
 import deviceProfile from './vendor/device-profile.js';
 import requestSignal from './vendor/request-signal.js';
+import { searchQuery, searchSeries } from './series-search.js';
 const { PROFILE, installationSession, prepareInstallation } = installationModule;
 
 const { fetchAppPlayUrl } = appModule;
@@ -369,7 +370,7 @@ export default {
     const mediaTiming = url.pathname === '/api/media' ? { upstreamMs: 0 } : null;
     try {
       if (url.pathname === '/api/health') return withCors(asJson({
-        ok: true, runtime: 'cloudflare-worker', sourceChannels: true, deviceSessions: true, deviceProfile: PROFILE
+        ok: true, runtime: 'cloudflare-worker', sourceChannels: true, deviceSessions: true, seriesSearch: true, deviceProfile: PROFILE
       }), allowed);
       if (url.pathname === '/api/device' && request.method === 'POST') {
         const body = await readDeviceBody(request);
@@ -384,6 +385,10 @@ export default {
         if (parsed.kind === 'media') response = asJson({ kind: 'direct', title: '直接媒體網址',
           total: 1, episodes: [{ vid: 'direct', index: 1, url: parsed.url }] });
         else response = asJson(await loadSeries(parsed.seriesId));
+      } else if (url.pathname === '/api/search') {
+        const query = searchQuery(url.searchParams);
+        const installation = parseDeviceHeader(request);
+        response = asJson(await searchSeries(query, installation ? installationSession(installation) : null));
       } else if (url.pathname === '/api/source') {
         response = asJson(await loadSource(url.searchParams.get('sid') || '',
           url.searchParams.get('vid') || '',
