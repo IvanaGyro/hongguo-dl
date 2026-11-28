@@ -75,7 +75,8 @@ static int fail(int code, const char *where) {
 }
 
 EMSCRIPTEN_KEEPALIVE const char *bvc2_last_error(void) { return last_error; }
-// 1 when the last bvc2_convert wrote VVC by copying ByteVC2 NAL units.
+// 1 when the last conversion kept the source video packets: ByteVC2 copied
+// as VVC, or a source that already is the requested codec (no re-encode).
 EMSCRIPTEN_KEEPALIVE int bvc2_last_remuxed(void) { return last_remuxed; }
 EMSCRIPTEN_KEEPALIVE const char *media_last_error(void) { return last_error; }
 EMSCRIPTEN_KEEPALIVE int media_last_remuxed(void) { return last_remuxed; }
@@ -119,7 +120,9 @@ typedef struct Context {
     const char *input_format;
     // ByteVC2 slices use H.266 syntax (Librempeg decodes both with the same
     // VVC decoder); only the bvc2/bv2C framing differs. Remux, don't encode.
-    int remux_vvc, copy, no_remux;
+    // same_codec: the source already is the requested output codec, so a
+    // whole-file job copies its packets instead of re-encoding them.
+    int remux_vvc, same_codec, copy, no_remux;
     double start_seconds, last_progress;
     int64_t next_pts;
     int64_t decoded_frames;
@@ -377,7 +380,11 @@ static int execute(Context *c, const char *input, const char *output, const char
         return fail(AVERROR_INVALIDDATA, "input is not ByteVC2");
     c->remux_vvc = c->mode == 3 && !c->no_remux && !c->streaming &&
         c->video_in->codecpar->codec_id == AV_CODEC_ID_BVC2;
-    c->copy = c->mode == 0 || c->remux_vvc;
+    enum AVCodecID source = c->video_in->codecpar->codec_id;
+    c->same_codec = !c->streaming && !c->no_remux &&
+        ((c->mode == 4 && source == AV_CODEC_ID_H264) || (c->mode == 5 && source == AV_CODEC_ID_HEVC) ||
+         (c->mode == 2 && source == AV_CODEC_ID_AV1) || (c->mode == 3 && source == AV_CODEC_ID_VVC));
+    c->copy = c->mode == 0 || c->remux_vvc || c->same_codec;
     if (!c->copy) {
     const AVCodec *dec = avcodec_find_decoder(c->video_in->codecpar->codec_id);
     const AVCodec *enc = c->mode == MODE_RENDER ? NULL : avcodec_find_encoder_by_name(
@@ -515,9 +522,11 @@ static int execute(Context *c, const char *input, const char *output, const char
     }
     while ((ret = av_read_frame(c->input, c->packet)) >= 0) {
         if (c->packet->stream_index == vi && c->copy) {
-            if (c->remux_vvc) {
-                int code = packet_to_annexb(c->packet);
-                if (code < 0) { av_packet_unref(c->packet); return fail(code, "convert ByteVC2 packet"); }
+            if (c->remux_vvc || c->same_codec) {
+                if (c->remux_vvc) {
+                    int code = packet_to_annexb(c->packet);
+                    if (code < 0) { av_packet_unref(c->packet); return fail(code, "convert ByteVC2 packet"); }
+                }
                 c->decoded_frames++;
                 double duration = c->video_in->duration > 0
                     ? c->video_in->duration * av_q2d(c->video_in->time_base) : 0;
@@ -551,8 +560,8 @@ static int execute(Context *c, const char *input, const char *output, const char
         } else av_packet_unref(c->packet);
     }
     if (ret != AVERROR_EOF) return fail(ret, "read MP4 packets");
-    if (c->remux_vvc && !c->decoded_frames)
-        return fail(AVERROR_INVALIDDATA, "no ByteVC2 video packets");
+    if ((c->remux_vvc || c->same_codec) && !c->decoded_frames)
+        return fail(AVERROR_INVALIDDATA, "no video packets to copy");
     if (!c->copy) {
     if ((ret = avcodec_send_packet(c->decoder, NULL)) < 0)
         return fail(ret, "flush BVC2 decoder");
@@ -584,7 +593,9 @@ static int convert(const Job *job, int *remuxed) {
     c.last_dts[0] = c.last_dts[1] = AV_NOPTS_VALUE;
     last_error[0] = 0;
     int ret = execute(&c, job->input, job->output, job->key);
-    if (remuxed) *remuxed = c.remux_vvc ? (ret >= 0 ? 1 : -1) : 0;
+    // 1: the output keeps the source's compressed video (lossless).
+    // -1: a ByteVC2 -> VVC remux failed; the caller re-encodes instead.
+    if (remuxed) *remuxed = c.remux_vvc ? (ret >= 0 ? 1 : -1) : c.same_codec && ret >= 0 ? 1 : 0;
     sws_freeContext(c.scale); sws_freeContext(c.render_scale);
     av_frame_free(&c.converted); av_freep(&c.packed);
     av_packet_free(&c.packet); av_packet_free(&c.encoded);

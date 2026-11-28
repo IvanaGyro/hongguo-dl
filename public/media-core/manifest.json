@@ -15,16 +15,16 @@
   },
   "files": {
     "media-core.mjs": "7c217a82ceef322418f667611519400c559e81edb018bdc610aa7cdc9a94adbe",
-    "media-core.wasm": "183a5a25d6c387424c7056d84fb662bad6ddb5d0f61e0745b592fb38323234b3",
+    "media-core.wasm": "d970ea083d912394d7440adebb67ad131c0b5dc836a4ee048ad75ba10c6c6deb",
     "media-core-st.mjs": "8d73b31465ed131a848dc90ad081556eb22a5f05cac888d322346dd8c0219141",
-    "media-core-st.wasm": "18cf7cc29dc060a910a044cdde816a4ceb224f76629eb7257b4b885e6a4d35a4"
+    "media-core-st.wasm": "9f331319abfc62b334bb0fe822de59ba0a7eb30c9f94eea12ce904e1c85e844e"
   },
   "inputs": {
     "scripts/build-media-core.sh": "6a6abbeb42c0b83e694c4a64bdcc38893e07ae41bd636b607e1508f43441fc1a",
     "scripts/media-core/avio.c": "ae2ead1d93bc1cffee2ee2be4a6143fcbaae80641108058d15133f5dbef8529d",
     "scripts/media-core/avio.h": "8eeb35001e42845400e77b6642e3db765d382270c5543e1ef3875d15f0ac6378",
     "scripts/media-core/cenc-remux.c": "a646b13012ce93451bda1b63612f20f5ada531edee4d633b981010562402265f",
-    "scripts/media-core/transcoder.c": "2e7be0b01b7490b7413e94e8d181b9cb937c4c23db1199bd97cfe2ba858f08fd",
+    "scripts/media-core/transcoder.c": "5e9f62bea9966d35891fd37b04f08d4fab7a4f3ca21666a91e2c3ed23e1f3bb8",
     "scripts/patch-bvc2-mov.py": "bc527a9da819bec2b172f8d83d678ab62f0aafc496d72a133ec0153c1506deda",
     "scripts/patch-x265-single-thread.py": "f60854a47f868b1aaec1359efc0186eef5ddc8fe3b0da1e3cb75e8b0764c4e67",
     "scripts/patches/svt-av1/0001-wasm-wiener-kernel-pointers.patch": "9241a810f2534787c3e8c1ac5faa0ffc035889088c4cc93e5c595b20dce5d01d",

@@ -57,7 +57,9 @@ try {
     } else ffmpeg(['-xerror', '-i', path, '-f', 'null', '-']);
     assert.equal(progress.at(-1), 1);
     if (mode !== 0) assert(progress.some(p => p > 0 && p < 1), 'Measured intermediate progress');
-    if (mode === 0) {
+    // H.264 selected for an H.264 source: copied, never re-encoded.
+    assert.equal(core._media_last_remuxed(), mode === 4 ? 1 : 0, 'same-codec copy for mode ' + mode);
+    if (mode === 0 || mode === 4) {
       const hash = path => ffmpeg(['-i', path, '-map', '0:v', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-']);
       assert.deepEqual(hash(path), hash(input), 'Original compressed video packets must stay identical');
     }
@@ -68,15 +70,21 @@ try {
   // (mt) several encoder threads. Output must decode and keep every frame.
   const tuned = {};
   const tunedCore = await createModule({ pthreadPoolSize: variant === 'mt' ? 72 : 0 });
+  // x264 needs a non-H.264 source to actually encode (same codec is copied).
+  const hevcInput = join(dir, 'input-hevc.mp4');
+  ffmpeg(['-i', input, '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=error',
+    '-c:a', 'copy', '-movflags', '+faststart', '-y', hevcInput]);
+  const hevcRaw = readFileSync(hevcInput);
   for (const [mode, name, preset, quality] of [[4, 'h264', 'medium', 18], [5, 'hevc', 'fast', 22],
     [2, 'av1', '8', 30], [3, 'vvc', 'fast', 30]]) {
     const core = tunedCore;
-    core.FS.writeFile('/in.mp4', raw);
+    core.FS.writeFile('/in.mp4', name === 'h264' ? hevcRaw : raw);
     const start = performance.now();
     const code = await core.ccall('media_convert', 'number',
       ['string', 'string', 'string', 'number', 'string', 'number', 'number'],
-      ['/in.mp4', '/out.mp4', key, mode, preset, quality, threads], { async: true });
+      ['/in.mp4', '/out.mp4', name === 'h264' ? '' : key, mode, preset, quality, threads], { async: true });
     assert.equal(code, 0, core.UTF8ToString(core._media_last_error()));
+    assert.equal(core._media_last_remuxed(), 0, name + ' must be re-encoded');
     const path = join(dir, 'tuned-' + name + '.mp4');
     writeFileSync(path, core.FS.readFile('/out.mp4'));
     const info = probe(path, name === 'vvc'), video = info.streams.find(s => s.codec_type === 'video');
@@ -89,6 +97,27 @@ try {
     tuned[name] = Math.round(performance.now() - start);
     console.log(JSON.stringify({ tuned: name, preset, quality, threads, variant,
       bytes: info.streams.length && readFileSync(path).length, milliseconds: tuned[name] }));
+  }
+  // A tuned request for the source's own codec keeps its packets untouched.
+  for (const [mode, name, preset, quality, file] of [[5, 'hevc', 'medium', 22, 'tuned-hevc.mp4'],
+    [3, 'vvc', 'medium', 30, 'tuned-vvc.mp4']]) {
+    const core = await createModule({});
+    core.FS.writeFile('/in.mp4', readFileSync(join(dir, file)));
+    const code = await core.ccall('media_convert', 'number',
+      ['string', 'string', 'string', 'number', 'string', 'number', 'number'],
+      ['/in.mp4', '/out.mp4', '', mode, preset, quality, threads], { async: true });
+    assert.equal(code, 0, core.UTF8ToString(core._media_last_error()));
+    assert.equal(core._media_last_remuxed(), 1, name + ' -> ' + name + ' must not re-encode');
+    const path = join(dir, 'same-' + name + '.mp4');
+    writeFileSync(path, core.FS.readFile('/out.mp4'));
+    // The native VVC verifier has no hash muxer: compare Annex B streams.
+    const hash = file => name === 'vvc'
+      ? execFileSync(process.env.VVC_FFMPEG || 'ffmpeg', ['-nostdin', '-v', 'error', '-i', file, '-map', '0:v',
+        '-c', 'copy', '-bsf:v', 'vvc_mp4toannexb', '-f', 'vvc', '-'], { maxBuffer: 32 * 1024 * 1024 })
+      : ffmpeg(['-i', file, '-map', '0:v', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-']);
+    if (name !== 'vvc' || process.env.VVC_FFMPEG)
+      assert.deepEqual(hash(path), hash(join(dir, file)), name + ' packets must stay identical');
+    console.log(JSON.stringify({ sameCodecCopy: name }));
   }
   {
     const core = await createModule({});
@@ -199,6 +228,19 @@ try {
     assert.equal(progress.at(-1), 1);
     console.log(JSON.stringify({ syntheticBvc2Remux: 'vvc', configurationRecord,
       milliseconds: Math.round(performance.now() - start) }));
+  }
+  // The download UI always sends a slider preset: ByteVC2 -> VVC must still
+  // be a remux, whatever preset/QP was selected.
+  {
+    const core = await createModule({});
+    core.FS.writeFile('/bvc.mp4', normalizeBvc2Config(syntheticBvc2(join(dir, 'vvc3.mp4'),
+      { configurationRecord: true })).bytes);
+    const rc = await core.ccall('media_convert', 'number',
+      ['string', 'string', 'string', 'number', 'string', 'number', 'number'],
+      ['/bvc.mp4', '/out.mp4', '', 3, 'medium', 30, threads], { async: true });
+    assert.equal(rc, 0, core.UTF8ToString(core._media_last_error()));
+    assert.equal(core._media_last_remuxed(), 1, 'tuned ByteVC2 -> VVC must remux');
+    console.log(JSON.stringify({ syntheticBvc2Remux: 'vvc', tuned: true }));
   }
   // Non-ByteVC2 input selected as VVC still goes through VVenC.
   {

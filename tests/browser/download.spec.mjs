@@ -190,3 +190,27 @@ for (const [mode, codec] of [['hevc', 'hevc'], ['av1', 'av1']]) {
     expect(probe(path).streams.map(s => s.codec_name)).toContain(codec);
   });
 }
+
+test('the selected codec equal to the source codec is copied, not re-encoded', async ({ app, page }) => {
+  app.addSeries(52, { title: 'Same codec', episodes: [[variant('cenc-short.mp4')]] });
+  await page.goto('./');
+  await app.open(52);
+  await app.mode('download');
+  await page.locator('#output-mode').selectOption('h264');
+  await expect(page.locator('#encode-tradeoff-detail')).toContainText('不重新編碼');
+  await page.locator('#add-queue').click();
+  await app.expectQueueCompleted(1, 120_000);
+  await expect(page.locator('#queue')).toContainText('來源相同，未重新編碼');
+  const download = page.waitForEvent('download');
+  await page.locator('#queue [data-action="save"]').click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).not.toMatch(/\.h264-/);
+  const path = await saved.path();
+  expect(decodes(path), 'copied file decodes without the key').toBe(true);
+  const hash = file => spawnSync('ffmpeg', ['-v', 'error', '-i', file, '-map', '0:v', '-c', 'copy',
+    '-f', 'hash', '-hash', 'sha256', '-'], { encoding: 'utf8' }).stdout;
+  const clear = spawnSync('ffmpeg', ['-v', 'error', '-decryption_key', '00112233445566778899aabbccddeeff',
+    '-i', mediaPath('cenc-short.mp4'), '-map', '0:v', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'],
+    { encoding: 'utf8' }).stdout;
+  expect(hash(path)).toBe(clear);
+});

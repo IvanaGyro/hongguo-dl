@@ -52,7 +52,9 @@ H.264、H.265、AV1、VVC 都有與 H.264 相同的單一滑桿，選定值寫�
 | AV1（SVT-AV1, CRF） | preset 12 · 10 · 9 · 8 · 7 · 6，CRF 皆 30 | preset 10 |
 | VVC（VVenC, QP） | faster · fast · medium，QP 皆 30 | faster |
 
-H.265／AV1／VVC 在同一編碼內固定品質值，滑桿只交換編碼時間與檔案大小；這些值**尚未做 VMAF 量測**。`media_convert` 在 C 端再驗證一次 preset 名稱與品質範圍。ByteVC2 選 VVC 時仍優先直接重新封裝成 `vvc1`（不重新編碼，滑桿不影響）。
+**能不重新編碼就不重新編碼**：整集下載時，若來源已是選定的編碼（H.264→H.264、H.265→H.265、AV1→AV1、VVC→VVC），核心直接複製壓縮封包（CENC 來源同時解密），不套用滑桿；ByteVC2→VVC 一樣直接重新封裝成 `vvc1`，只有標準工具無法描述其參數集時才退回 VVenC 重新編碼。判斷依據是核心讀到的實際來源編碼（直連網址等 metadata 不明的來源也適用）；`media_last_remuxed()` 回報結果，佇列顯示「來源相同，未重新編碼」，檔名不加 preset 後綴。播放用的 ByteVC2 串流不受影響。
+
+H.265／AV1／VVC 在同一編碼內固定品質值，滑桿只交換編碼時間與檔案大小；這些值**尚未做 VMAF 量測**。`media_convert` 在 C 端再驗證一次 preset 名稱與品質範圍。
 
 ## SVT-AV1 修補評估
 

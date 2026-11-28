@@ -156,11 +156,11 @@ function saveJobs() {
     localStorage.setItem(STORE, JSON.stringify(jobs.map(({ id, seriesId, vid, index, title,
       quality, codec, mode, tradeoffIndex: jobTradeoffIndex, h264TradeoffIndex: legacyTradeoff, status, bytes, totalBytes, error, errorCode, attempts, sourceCodec,
       lastErrorKey, errorStreak, failureAttempts, fileName, seriesTitle, seriesTotal,
-      sourceWidth, sourceHeight, stored, onDisk }) => ({
+      sourceWidth, sourceHeight, stored, onDisk, keptSource }) => ({
       id, seriesId, vid, index, title, quality, codec, mode,
       tradeoffIndex: jobTradeoffIndex ?? legacyTradeoff ?? null, status, bytes, totalBytes, error, errorCode,
       attempts, sourceCodec, lastErrorKey, errorStreak, failureAttempts,
-      fileName, seriesTitle, seriesTotal, sourceWidth, sourceHeight, stored, onDisk
+      fileName, seriesTitle, seriesTotal, sourceWidth, sourceHeight, stored, onDisk, keptSource
     }))));
   } catch { /* Browser storage may be disabled. */ }
 }
@@ -236,6 +236,7 @@ function renderQueue() {
     const selectedOptions = [
       job.quality !== 'auto' && job.quality,
       job.codec !== 'auto' && job.codec?.toUpperCase(),
+      isEncodingMode(job.mode) && job.keptSource ? ENCODER_NAMES[job.mode] + ' · 來源相同，未重新編碼' :
       isEncodingMode(job.mode) ? '轉 ' + ENCODER_NAMES[job.mode] + ' · ' +
         encoderTradeoff(job.mode, jobTradeoff(job)).label :
         (({ copy: '無損封裝' })[job.mode] || '')
@@ -636,7 +637,9 @@ function updateEncodeTradeoff() {
   slider.value = String(index);
   const profile = encoderTradeoff(mode, index);
   $('encode-speed-size-name').textContent = profile.label;
-  $('encode-tradeoff-detail').textContent = encoderDetail(mode, profile);
+  $('encode-tradeoff-detail').textContent = encoderDetail(mode, profile) +
+    (mode === 'vvc' ? ' · 來源已是 ' + ENCODER_NAMES[mode] + ' 或 ByteVC2 時直接保留，不重新編碼'
+      : ' · 來源已是 ' + ENCODER_NAMES[mode] + ' 時直接保留，不重新編碼');
 }
 function queueSelected() {
   if (!series || !selected.size) return;
@@ -704,9 +707,10 @@ function pump() {
     });
   }
 }
-function outputFileName(job, source, processed) {
+function outputFileName(job, source, processed, keptSource = false) {
   const name = episodeFileName(job, processed ? '.mp4' : originalExtension(source.url));
-  if (!isEncodingMode(job.mode) || !processed) return name;
+  // A preset suffix only names files that were actually re-encoded.
+  if (!isEncodingMode(job.mode) || !processed || keptSource) return name;
   return name.replace(/\.mp4$/i, tradeoffSuffix(job.mode, jobTradeoff(job)) + '.mp4');
 }
 function triggerSave(bytes, name) {
@@ -878,18 +882,23 @@ async function runJob(job, signal) {
         throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg 媒體處理 WASM');
       const bvc2 = codecId(source.codec) === 'bytevc2';
       const bytes = await readWholeSource(job, source, signal, (bvc2 ? 260 : 320) * 1024 * 1024);
-      update(job, { status: 'processing', progress: bvc2 ? null : 0 });
+      update(job, { status: 'processing', progress: bvc2 ? null : 0, keptSource: false });
+      // A source that already is the selected codec (and ByteVC2 -> VVC) is
+      // copied by the media core, not re-encoded; the core reports it.
+      let keptSource = false;
       const out = await convertBytes(bytes, {
         mode: isEncodingMode(job.mode) ? job.mode : 'copy', contentKey: source.contentKey, signal,
         tradeoffIndex: isEncodingMode(job.mode) ? jobTradeoff(job) : null,
-        progress: progress => update(job, { progress })
+        progress: progress => update(job, { progress }),
+        onResult: result => { keptSource = isEncodingMode(job.mode) && result.remuxed; }
       });
+      if (keptSource) update(job, { keptSource: true });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
       if (['original', 'copy'].includes(job.mode) && !bvc2) {
         mediaCache.put(episodeCacheKey(job.seriesId, job.vid, job.quality, job.codec),
           new Blob([out], { type: 'video/mp4' }));
       }
-      await saveProcessed(out, outputFileName(job, source, true), job,
+      await saveProcessed(out, outputFileName(job, source, true, keptSource), job,
         { ...source, codec: ['original', 'copy'].includes(job.mode) ? source.codec : job.mode });
     }
     if (signal.aborted) throw errorWith('CANCELED', '使用者取消');
