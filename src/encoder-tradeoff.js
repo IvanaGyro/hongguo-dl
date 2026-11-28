@@ -45,6 +45,20 @@ export function encoderTradeoff(mode, value) {
   const stops = ENCODER_TRADEOFFS[mode];
   return stops ? stops[tradeoffIndex(mode, value)] : null;
 }
+/**
+ * The stop stored on a queue job. Jobs saved before per-codec sliders only
+ * carry `h264TradeoffIndex`; they keep their H.264 choice.
+ */
+export const jobTradeoffIndex = job => job?.tradeoffIndex ?? job?.h264TradeoffIndex ?? null;
+/**
+ * media_convert() preset/quality for a mode and slider stop. No stop (null)
+ * or a non-encoding mode sends '' and 0: the core keeps each encoder's fast
+ * defaults (playback's ByteVC2 fallback) or copies packets.
+ */
+export function encoderSettings(mode, index) {
+  const profile = index == null ? null : encoderTradeoff(mode, index);
+  return { preset: profile?.preset || '', quality: profile?.quality || 0 };
+}
 /** Filename suffix, e.g. `.hevc-superfast` or `.av1-p10`. */
 export function tradeoffSuffix(mode, value) {
   const profile = encoderTradeoff(mode, value);

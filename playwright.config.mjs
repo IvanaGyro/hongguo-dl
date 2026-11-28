@@ -38,6 +38,8 @@ export default defineConfig({
     // in WebKit, so the site's worker (registered at startup for COOP/COEP)
     // would bypass every mocked API/CDN response. WebKit has no COEP
     // `credentialless` (no isolation) and its ZIP step is skipped anyway.
+    // Serving COOP/COEP as real HTTP headers (issue #41) would remove the
+    // startup worker and this block.
     { name: 'webkit', use: { ...devices['Desktop Safari'], serviceWorkers: 'block' } }
   ],
   webServer: {

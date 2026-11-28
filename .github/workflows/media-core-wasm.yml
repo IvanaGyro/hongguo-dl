@@ -14,6 +14,7 @@ on:
       - 'scripts/verify-media-core.mjs'
       - 'scripts/verify-video-outputs.mjs'
       - 'scripts/synthetic-bvc2.mjs'
+      - 'scripts/synthetic-cenc.mjs'
       - 'scripts/build-native-vvc-verifier.sh'
       - 'tests/bvc2-stream.browser.mjs'
   workflow_dispatch:

@@ -114,3 +114,4 @@ console.log('PASS progressive CENC -> streaming clear fMP4 WASM:', JSON.stringif
   calls, transportMode: workerWindow ? 'worker-persistent-http' : 'direct-memory',
   transportWindows, moofCount: output.toString('latin1').match(/moof/g)?.length || 0
 }));
+process.exit(0);

@@ -15,7 +15,12 @@ test('runtime bundle digest detects swapped JS or WASM after deployment', async 
   await verifyMediaCoreBundle(manifest, 'mt', js, wasm);
   await verifyMediaCoreBundle(manifest, 'st', js, wasm);
   await assert.rejects(verifyMediaCoreBundle(manifest, 'mt', js, new Uint8Array([5])), /mismatch/);
+  // A tampered or swapped JS glue file is rejected like a WASM one.
+  await assert.rejects(verifyMediaCoreBundle(manifest, 'mt', new Uint8Array([1, 2, 4]), wasm), /mismatch/);
+  await assert.rejects(verifyMediaCoreBundle(manifest, 'st', wasm, js), /mismatch/);
   await assert.rejects(verifyMediaCoreBundle({ ...manifest, api: 3 }, 'mt', js, wasm), /Invalid/);
+  for (const schema of [1, 3, '2', undefined])
+    await assert.rejects(verifyMediaCoreBundle({ ...manifest, schema }, 'mt', js, wasm), /Invalid/, String(schema));
   await assert.rejects(verifyMediaCoreBundle(manifest, 'gpu', js, wasm), /Invalid/);
 });
 
@@ -51,6 +56,19 @@ test('pthread pool covers the threads each encoder starts', () => {
   assert(mediaPoolSize('av1', 8, 'mt') >= 59 + 8);   // level 4
   assert(mediaPoolSize('av1', 32, 'mt') >= 82 + 16); // level 6, decoder capped at 16
   assert(mediaPoolSize('hevc', 32, 'mt') >= 32 + 16);
+});
+
+test('loader rejects a swapped JS glue file before importing it', async () => {
+  const js = new TextEncoder().encode('export default 1'), wasm = new Uint8Array([0, 97, 115, 109]);
+  const manifest = manifestFor(js, wasm);
+  const fetchImpl = async url => {
+    if (String(url).endsWith('manifest.json')) return new Response(JSON.stringify(manifest));
+    return new Response(String(url).includes('.mjs')
+      ? new TextEncoder().encode('globalThis.imported = true; export default 1') : wasm);
+  };
+  await assert.rejects(loadMediaCore({ baseUrl: '/', baseHref: 'https://example.test/', variant: 'mt',
+    fetchImpl }), /hash mismatch/);
+  assert.equal(globalThis.imported, undefined, 'the swapped module was never imported');
 });
 
 test('loader verifies hashes before importing and picks the variant files', async () => {
