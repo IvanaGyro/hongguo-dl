@@ -28,5 +28,5 @@ defaults. H.265, AV1 and VVC downloads have the same kind of slider; see
 
 The reference speed and size measurements used a separate pinned 8-thread
 WASM benchmark and are **not guaranteed** on end-user devices. The browser
-uses the multi-thread core (up to 8 encoder threads) on cross-origin
+uses the multi-thread core (one encoder thread per logical core) on cross-origin
 isolated pages and the single-thread core elsewhere.

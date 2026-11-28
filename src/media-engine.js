@@ -19,6 +19,8 @@ export async function loadMediaRuntime({ bridge, signal, onStage, hooks, baseHre
     poolSize: bridge === 'bvc2' ? mediaPoolSize('bvc2-stream', threads, variant) : 0 });
   core._media_set_threads(threads);
   onStage('wasm-threads', { variant, threads });
+  console.info('[media-core] ' + bridge + ' stream: ' + (variant === 'mt' ? 'multi-thread' : 'single-thread') +
+    ' core, threads ' + threads);
   return core;
 }
 

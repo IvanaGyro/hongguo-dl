@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { verifyMediaCoreBundle, readLimitedAsset, mediaCoreVariant, mediaThreads,
-  mediaPoolSize, loadMediaCore } from '../../../src/media-core.js';
+  mediaPoolSize, loadMediaCore, svtParallelLevel } from '../../../src/media-core.js';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const manifestFor = (js, wasm) => ({ schema: 2, api: 4, files: {
@@ -31,21 +31,26 @@ test('multi-thread variant only where shared memory exists', () => {
   assert.equal(mediaCoreVariant({ crossOriginIsolated: true }), 'st');
 });
 
-test('thread budget is shared by concurrent jobs and capped', () => {
-  const scope = { navigator: { hardwareConcurrency: 12 } };
-  assert.equal(mediaThreads('st', scope), 1);
-  assert.equal(mediaThreads('mt', scope), 8);
-  assert.equal(mediaThreads('mt', scope, 3), 4);
-  assert.equal(mediaThreads('mt', { navigator: { hardwareConcurrency: 2 } }, 3), 1);
+test('every logical core is used, without an arbitrary cap', () => {
+  assert.equal(mediaThreads('st', { navigator: { hardwareConcurrency: 12 } }), 1);
+  assert.equal(mediaThreads('mt', { navigator: { hardwareConcurrency: 12 } }), 12);
+  assert.equal(mediaThreads('mt', { navigator: { hardwareConcurrency: 32 } }), 32);
+  assert.equal(mediaThreads('mt', { navigator: {} }), 4);
+});
+
+test('SVT-AV1 parallelism level follows its own core-count mapping', () => {
+  assert.deepEqual([1, 2, 3, 5, 6, 11, 12, 23, 24, 64].map(svtParallelLevel), [1, 2, 3, 3, 4, 4, 5, 5, 6, 6]);
 });
 
 test('pthread pool covers the threads each encoder starts', () => {
   assert.equal(mediaPoolSize('av1', 4, 'st'), 0);
   assert.equal(mediaPoolSize('copy', 8, 'mt'), 0);
   assert.equal(mediaPoolSize('av1', 1, 'mt'), 0);
-  assert(mediaPoolSize('av1', 4, 'mt') >= 59 + 4);
-  assert(mediaPoolSize('av1', 2, 'mt') >= 37 + 2);
-  assert(mediaPoolSize('hevc', 4, 'mt') > 8);
+  assert(mediaPoolSize('av1', 2, 'mt') >= 37 + 2);   // level 2
+  assert(mediaPoolSize('av1', 4, 'mt') >= 46 + 4);   // level 3
+  assert(mediaPoolSize('av1', 8, 'mt') >= 59 + 8);   // level 4
+  assert(mediaPoolSize('av1', 32, 'mt') >= 82 + 16); // level 6, decoder capped at 16
+  assert(mediaPoolSize('hevc', 32, 'mt') >= 32 + 16);
 });
 
 test('loader verifies hashes before importing and picks the variant files', async () => {

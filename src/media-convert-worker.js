@@ -19,6 +19,8 @@ async function load(mode, threads) {
   prepared = await loadMediaCore({ baseHref: self.location.href, variant,
     poolSize: mediaPoolSize(mode, threads, variant),
     hooks: { onProgress: value => progress({ progress: value }), printErr: () => {} } });
+  console.info('[media-core] ' + (variant === 'mt' ? 'multi-thread' : 'single-thread') +
+    ' core, encoder threads ' + threads + ', pthread pool ' + mediaPoolSize(mode, threads, variant));
   progress({ phase: 'wasm-ready', variant });
   return prepared;
 }

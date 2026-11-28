@@ -23,7 +23,6 @@ import '@fontsource-variable/chiron-goround-tc/wght.css';
 import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, assertSupportedMediaUrl, displayStatus } from './logic.js';
 import { convertBytes, mediaCoreAvailable } from './media-convert.js';
-import { mediaCoreVariant } from './media-core.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
@@ -637,8 +636,7 @@ function updateEncodeTradeoff() {
   slider.value = String(index);
   const profile = encoderTradeoff(mode, index);
   $('encode-speed-size-name').textContent = profile.label;
-  $('encode-tradeoff-detail').textContent = encoderDetail(mode, profile) +
-    (mediaCoreVariant() === 'mt' ? ' · 多執行緒' : ' · 單執行緒（此頁面無法使用 SharedArrayBuffer）');
+  $('encode-tradeoff-detail').textContent = encoderDetail(mode, profile);
 }
 function queueSelected() {
   if (!series || !selected.size) return;
@@ -884,7 +882,6 @@ async function runJob(job, signal) {
       const out = await convertBytes(bytes, {
         mode: isEncodingMode(job.mode) ? job.mode : 'copy', contentKey: source.contentKey, signal,
         tradeoffIndex: isEncodingMode(job.mode) ? jobTradeoff(job) : null,
-        concurrentJobs: Math.max(1, Number($('concurrency').value) || 1),
         progress: progress => update(job, { progress })
       });
       if (signal.aborted) throw errorWith('CANCELED', '使用者取消');

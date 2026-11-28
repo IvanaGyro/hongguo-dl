@@ -22,7 +22,8 @@
 #include "avio.h"
 
 #ifdef __EMSCRIPTEN_PTHREADS__
-#define MAX_THREADS 16
+// Only a sanity bound (x264 X264_THREAD_MAX); the page passes the core count.
+#define MAX_THREADS 128
 #else
 #define MAX_THREADS 1
 #endif
@@ -57,6 +58,14 @@ static char last_error[256];
 static int last_remuxed;
 
 static int clamp_threads(int n) { return n < 1 ? 1 : n > MAX_THREADS ? MAX_THREADS : n; }
+
+// SVT-AV1 4.x `lp` is a level of parallelism (1-6), not a thread count.
+// Same mapping as its own lp=0 default (enc_handle.c), from our core count,
+// so the page can size the pthread pool: level 2/3/4/5/6 start 37/46/59/78/82
+// threads; level 1 encodes inline without threads.
+static int svt_parallel_level(int cores) {
+    return cores <= 1 ? 1 : cores <= 2 ? 2 : cores <= 5 ? 3 : cores <= 11 ? 4 : cores <= 23 ? 5 : 6;
+}
 
 static int fail(int code, const char *where) {
     char reason[AV_ERROR_MAX_STRING_SIZE];
@@ -305,7 +314,7 @@ static int configure_encoder(Context *c) {
         av_opt_set_int(opt, "crf", c->preset ? c->quality : 23, 0);
         av_opt_set(opt, "x265-params", params, 0);
     } else if (c->mode == 2) {
-        snprintf(params, sizeof(params), "lp=%d", threads);
+        snprintf(params, sizeof(params), "lp=%d", svt_parallel_level(threads));
         av_opt_set(opt, "preset", c->preset ? c->preset : "10", 0);
         av_opt_set_int(opt, "crf", c->preset ? c->quality : 32, 0);
         av_opt_set(opt, "svtav1-params", params, 0);
@@ -380,7 +389,8 @@ static int execute(Context *c, const char *input, const char *output, const char
     if (!c->decoder || (enc && !c->encoder)) return fail(AVERROR(ENOMEM), "allocate codecs");
     if ((ret = avcodec_parameters_to_context(c->decoder, c->video_in->codecpar)) < 0)
         return fail(ret, "read codec parameters");
-    c->decoder->thread_count = c->threads;
+    // FFmpeg advises against more than 16 frame/slice decoder threads.
+    c->decoder->thread_count = FFMIN(c->threads, 16);
     c->decoder->pkt_timebase = c->video_in->time_base;
     if ((ret = avcodec_open2(c->decoder, dec, NULL)) < 0)
         return fail(ret, "open BVC2 decoder");

@@ -53,7 +53,7 @@ function takeWorker(mode) {
  * encoder's fast defaults (used by playback's ByteVC2 fallback).
  */
 export function convertBytes(bytes, { mode = 'copy', contentKey = null, signal, progress, onProgress,
-  tradeoffIndex = null, h264TradeoffIndex, concurrentJobs = 1, onResult } = {}) {
+  tradeoffIndex = null, h264TradeoffIndex, onResult } = {}) {
   if (!(bytes instanceof Uint8Array) || !bytes.length)
     return Promise.reject(errorWith('EMPTY_MEDIA', '沒有收到影片資料'));
   if (bytes.length > MAX_CONVERT_INPUT)
@@ -63,7 +63,7 @@ export function convertBytes(bytes, { mode = 'copy', contentKey = null, signal, 
   if (signal?.aborted) return Promise.reject(errorWith('CANCELED', '已取消影片處理'));
   const index = tradeoffIndex ?? h264TradeoffIndex ?? null;
   const profile = index == null ? null : encoderTradeoff(mode, index);
-  const threads = mediaThreads(mediaCoreVariant(), globalThis, concurrentJobs);
+  const threads = mediaThreads(mediaCoreVariant());
   return runMediaWorkerJob(bytes, {
     request: { mode, key: contentKey || '', preset: profile?.preset || '',
       quality: profile?.quality || 0, threads },

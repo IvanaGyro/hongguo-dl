@@ -13,7 +13,7 @@ const core = await createModule({ wasmBinary: readFileSync(path.replace(/\.mjs$/
 const info = core.UTF8ToString(core._media_core_info());
 for (const name of ['libx264', 'libx265', 'libsvtav1', 'libvvenc', 'bvc2'])
   assert(info.includes(name), 'missing ' + name + ' in ' + info);
-assert.match(info, /^api=4;threads=(1|16);/);
+assert.match(info, /^api=4;threads=(1|128);/);
 assert.equal(core._bvc2_decoder_available(), 1);
 assert.equal(core._cenc_remux_available(), 1);
 for (const name of ['media_convert', 'media_concat', 'media_set_threads', 'bvc2_stream', 'bvc2_play',

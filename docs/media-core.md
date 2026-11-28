@@ -25,10 +25,12 @@ C 介面在 `scripts/media-core/`：`avio.c`（Asyncify Range 讀取／fMP4 輸�
 
 - GitHub Pages 無法送出 COOP/COEP，因此站內 Service Worker（`public/bulk-download-sw.js`，原本只負責 ZIP 串流）為同源頁面、腳本與 WASM 回應補上 `Cross-Origin-Opener-Policy: same-origin` 與 `Cross-Origin-Embedder-Policy: credentialless`。不攔截 `/api/`、跨來源 CDN 與 Range 請求；`credentialless` 讓跨來源圖片與 CDN 影片（no-cors、不帶 cookie）照常載入。
 - 第一次造訪時頁面尚未受 Service Worker 控制；若使用者還沒操作且載入不到 4 秒，`src/cross-origin-isolation.js` 會自動重新整理一次（以 sessionStorage 防止迴圈；自動化測試不重新整理）。之後每次開啟都是隔離狀態。
-- 每個工作的執行緒數＝`min(8, hardwareConcurrency ÷ 同時下載集數)`。ByteVC2 串流播放的 VVC 解碼與 x264 也使用多執行緒；CENC 轉封裝不需要執行緒。
-- Emscripten 的 pthread 必須事先建立 Worker，否則編碼器等待執行緒時可能卡住。載入器依編碼器預先建立 Worker 池（`mediaPoolSize`）。實測 SVT-AV1 4.3 在 `lp` 2／4／8 時分別啟動 37／59／82 個執行緒，`lp=1` 則完全不建立執行緒——因此單執行緒變體也能使用 SVT-AV1，不再需要 libaom。
+- 能開就開：每個轉碼工作使用全部邏輯核心（`navigator.hardwareConcurrency`），不因同時下載多集而平分——下載多半在等網路，真正重疊的轉碼交給作業系統排程。沒有人為上限；C 端只保留 x264 的 128 執行緒上限，解碼器依 FFmpeg 建議最多 16。ByteVC2 串流播放的 VVC 解碼與 x264 也使用多執行緒；CENC 轉封裝不需要執行緒。
+- 使用哪個變體與執行緒數只寫入 console log（`[media-core] multi-thread core, encoder threads N, pthread pool P`），網頁不顯示。
+- **SVT-AV1 4.x 的 `lp` 是 1–6 的平行度等級，不是執行緒數**（≥7 會被夾到 6）。`transcoder.c` 用與 SVT 自己 `lp=0` 相同的對照把核心數換成等級：1 核→1、2→2、3–5→3、6–11→4、12–23→5、24 以上→6。
+- Emscripten 的 pthread 必須事先建立 Worker，否則編碼器等待執行緒時可能卡住。載入器依編碼器預先建立 Worker 池（`mediaPoolSize`）。實測 SVT-AV1 4.3 等級 2／3／4／5／6 分別啟動 37／46／59／78／82 個執行緒（720p、1080p 相同），等級 1 完全不建立執行緒——因此單執行緒變體也能使用 SVT-AV1，不再需要 libaom。
 
-### 實測（Chromium headless，4 核，720p30 5 秒 testsrc2，執行緒 4）
+### 實測（Chromium headless，4 核，720p30 5 秒 testsrc2，執行緒 4；AV1 當時誤用 `lp=4`，現為等級 3，Node.js 重測 4.7 s）
 
 | 編碼 | st | mt | 加速 |
 | --- | ---: | ---: | ---: |

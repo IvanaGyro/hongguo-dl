@@ -12,7 +12,6 @@ export const MEDIA_CORE_VARIANTS = Object.freeze({
 });
 const MAX_MODULE = 1024 * 1024;
 const MAX_WASM = 40 * 1024 * 1024;
-export const MAX_ENCODER_THREADS = 8;
 
 /** `mt` only where shared WebAssembly memory can actually be created. */
 export function mediaCoreVariant(scope = globalThis) {
@@ -20,25 +19,34 @@ export function mediaCoreVariant(scope = globalThis) {
     ? 'mt' : 'st';
 }
 
-/** Encoder/decoder threads for one job; 1 for the single-thread build. */
-export function mediaThreads(variant = mediaCoreVariant(), scope = globalThis, concurrentJobs = 1) {
+/**
+ * Encoder/decoder threads for one job: every logical core. Concurrent
+ * downloads mostly wait on the network, and transcodes that do overlap are
+ * left to the OS scheduler. 1 for the single-thread build.
+ */
+export function mediaThreads(variant = mediaCoreVariant(), scope = globalThis) {
   if (variant !== 'mt') return 1;
-  const cores = Number(scope?.navigator?.hardwareConcurrency) || 4;
-  const share = Math.floor(cores / Math.max(1, concurrentJobs));
-  return Math.max(1, Math.min(MAX_ENCODER_THREADS, share));
+  return Math.max(1, Math.floor(Number(scope?.navigator?.hardwareConcurrency) || 4));
+}
+
+// SVT-AV1 4.x maps cores to a level of parallelism (transcoder.c mirrors
+// it); measured threads started per level (720p and 1080p alike).
+const SVT_LEVEL_THREADS = [0, 0, 37, 46, 59, 78, 82];
+export function svtParallelLevel(cores) {
+  return cores <= 1 ? 1 : cores <= 2 ? 2 : cores <= 5 ? 3 : cores <= 11 ? 4 : cores <= 23 ? 5 : 6;
 }
 
 /**
  * Web Workers to pre-start for a job. Emscripten threads must exist before
  * the engine blocks on them, so the pool covers what each library starts:
- * measured for SVT-AV1 4.3 (lp 2 -> 37, lp 4 -> 59, lp 8 -> 82 threads;
- * lp 1 runs inline), and threads plus helpers for x264/x265/VVenC/decoder.
- * Pthreads beyond the pool are still created on demand.
+ * SVT-AV1 per its parallelism level, threads plus helpers for
+ * x264/x265/VVenC, and up to 16 decoder threads. Pthreads beyond the pool
+ * are still created on demand.
  */
 export function mediaPoolSize(mode, threads, variant = mediaCoreVariant()) {
   if (variant !== 'mt' || threads <= 1) return 0;
-  const decoder = threads;
-  if (mode === 'av1') return decoder + (threads >= 8 ? 84 : threads >= 4 ? 60 : 38);
+  const decoder = Math.min(threads, 16);
+  if (mode === 'av1') return decoder + SVT_LEVEL_THREADS[svtParallelLevel(threads)] + 4;
   if (mode === 'hevc') return decoder + threads + 6;
   if (mode === 'vvc') return decoder + threads + 4;
   if (mode === 'h264' || mode === 'bvc2-stream') return decoder + threads + 3;
