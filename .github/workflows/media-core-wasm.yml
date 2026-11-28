@@ -80,7 +80,6 @@ jobs:
         run: |
           set -euo pipefail
           bun ci
-          bun add --dev --no-save playwright@1.58.0
           bunx playwright install --with-deps chromium
           node scripts/media-core-bundle.mjs publish "$OUT/dist"
           VITE_BASE_PATH=/hongguo-dl/ bun run build
