@@ -1,0 +1,68 @@
+From c09c1361e5f2f695964c436047aa93e92dc59dc3 Mon Sep 17 00:00:00 2001
+From: Ivana <ivana.gyro@gmail.com>
+Date: Mon, 23 Nov 2026 02:29:46 +0800
+Subject: [PATCH] fix(avx2): respect pointer width when copying motion-info
+ grids
+
+---
+ Source/Lib/ASM_AVX2/encodetxb_avx2.c | 41 ++++++++++++++++------------
+ 1 file changed, 24 insertions(+), 17 deletions(-)
+
+diff --git a/Source/Lib/ASM_AVX2/encodetxb_avx2.c b/Source/Lib/ASM_AVX2/encodetxb_avx2.c
+index 83dcf3b..fa78271 100644
+--- a/Source/Lib/ASM_AVX2/encodetxb_avx2.c
++++ b/Source/Lib/ASM_AVX2/encodetxb_avx2.c
+@@ -796,26 +796,33 @@ void svt_av1_get_nz_map_contexts_2d_rows_avx2(const uint8_t* const levels, const
+ void svt_copy_mi_map_grid_avx2(MbModeInfo** mi_grid_ptr, uint32_t mi_stride, uint8_t num_rows, uint8_t num_cols) {
+     MbModeInfo* target = mi_grid_ptr[0];
+     if (num_cols == 1) {
++        for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++)
++            mi_grid_ptr[mi_y * mi_stride] = target;
++    } else if (sizeof(MbModeInfo*) == 4) {
++        /* Emscripten Wasm32: two pointers occupy 64 bits, four occupy 128.
++         * The original 64-bit pointer broadcasts overwrite adjacent cells. */
++        const __m128i broadcast32 = _mm_set1_epi32((int32_t)(uintptr_t)target);
+         for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++) {
+-            const int32_t mi_idx = 0 + mi_y * mi_stride;
+-            // width is 1 block (corresponds to block width 4)
+-            mi_grid_ptr[mi_idx] = target;
+-        }
+-    } else if (num_cols == 2) {
+-        __m128i target_sse = _mm_set1_epi64x((uint64_t)target);
+-        for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++) {
+-            const int32_t mi_idx = 0 + mi_y * mi_stride;
+-            // width is 2 blocks, so can copy 2 at once (corresponds to block width 8)
+-            _mm_storeu_si128((__m128i*)(mi_grid_ptr + mi_idx), target_sse);
++            MbModeInfo** row = mi_grid_ptr + (size_t)mi_y * mi_stride;
++            if (num_cols == 2) {
++                _mm_storel_epi64((__m128i*)row, broadcast32);
++            } else {
++                for (uint8_t x = 0; x < num_cols; x += 4)
++                    _mm_storeu_si128((__m128i*)(row + x), broadcast32);
++            }
+         }
+     } else {
+-        __m256i target_avx = _mm256_set1_epi64x((uint64_t)target);
+-        for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++) {
+-            for (uint8_t mi_x = 0; mi_x < num_cols; mi_x += 4) {
+-                const int32_t mi_idx = mi_x + mi_y * mi_stride;
+-                // width is >=4 blocks, so can copy 4 at once; (corresponds to block width >=16).
+-                // All blocks >= 16 have widths that are divisible by 16, so it is ok to copy 4 blocks at once
+-                _mm256_storeu_si256((__m256i*)(mi_grid_ptr + mi_idx), target_avx);
++        /* Native x86-64 and Emscripten Wasm64: 64-bit pointer lanes. */
++        if (num_cols == 2) {
++            const __m128i broadcast64 = _mm_set1_epi64x((int64_t)(uintptr_t)target);
++            for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++)
++                _mm_storeu_si128((__m128i*)(mi_grid_ptr + (size_t)mi_y * mi_stride), broadcast64);
++        } else {
++            const __m256i broadcast64 = _mm256_set1_epi64x((int64_t)(uintptr_t)target);
++            for (uint8_t mi_y = 0; mi_y < num_rows; mi_y++) {
++                MbModeInfo** row = mi_grid_ptr + (size_t)mi_y * mi_stride;
++                for (uint8_t x = 0; x < num_cols; x += 4)
++                    _mm256_storeu_si256((__m256i*)(row + x), broadcast64);
+             }
+         }
+     }
+-- 
+2.43.0
+

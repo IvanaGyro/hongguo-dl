@@ -5,8 +5,6 @@
     "": {
       "name": "hongguo-dl",
       "dependencies": {
-        "@ffmpeg/core": "0.12.10",
-        "@ffmpeg/ffmpeg": "0.12.15",
         "@fontsource-variable/chiron-goround-tc": "5.3.1",
         "@videojs/html": "10.3.0",
         "@videojs/media": "10.3.0",
@@ -88,12 +86,6 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.25.12", "", { "os": "win32", "cpu": "ia32" }, "sha512-HkqnmmBoCbCwxUKKNPBixiWDGCpQGVsrQfJoVGYLPT41XWF8lHuE5N6WhVia2n4o5QK5M4tYr21827fNhi4byQ=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
-
-    "@ffmpeg/core": ["@ffmpeg/core@0.12.10", "", {}, "sha512-dzNplnn2Nxle2c2i2rrDhqcB19q9cglCkWnoMTDN9Q9l3PvdjZWd1HfSPjCNWc/p8Q3CT+Es9fWOR0UhAeYQZA=="],
-
-    "@ffmpeg/ffmpeg": ["@ffmpeg/ffmpeg@0.12.15", "", { "dependencies": { "@ffmpeg/types": "^0.12.4" } }, "sha512-1C8Obr4GsN3xw+/1Ww6PFM84wSQAGsdoTuTWPOj2OizsRDLT4CXTaVjPhkw6ARyDus1B9X/L2LiXHqYYsGnRFw=="],
-
-    "@ffmpeg/types": ["@ffmpeg/types@0.12.4", "", {}, "sha512-k9vJQNBGTxE5AhYDtOYR5rO5fKsspbg51gbcwtbkw2lCdoIILzklulcjJfIDwrtn7XhDeF2M+THwJ2FGrLeV6A=="],
 
     "@fontsource-variable/chiron-goround-tc": ["@fontsource-variable/chiron-goround-tc@5.3.1", "", {}, "sha512-NkC+5+AFjRYnLe2nRxNiMT/WJmmVRiaUfolrlgOrrzYIa7C/W64dxVY2MfE3wkJCFJhGnBlBXRtiSnwjFBNyqg=="],
 

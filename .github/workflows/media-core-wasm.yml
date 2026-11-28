@@ -1,0 +1,138 @@
+name: Media core WASM (Librempeg + x264/x265/SVT-AV1/VVenC)
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - '.github/workflows/media-core-wasm.yml'
+      - 'scripts/build-media-core.sh'
+      - 'scripts/media-core/**'
+      - 'scripts/patches/**'
+      - 'scripts/patch-bvc2-mov.py'
+      - 'scripts/patch-x265-single-thread.py'
+      - 'scripts/vendor/libvvenc.c'
+      - 'scripts/media-core-bundle.mjs'
+      - 'scripts/verify-media-core.mjs'
+      - 'scripts/verify-video-outputs.mjs'
+      - 'scripts/synthetic-bvc2.mjs'
+      - 'scripts/build-native-vvc-verifier.sh'
+      - 'tests/bvc2-stream.browser.mjs'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: emscripten/emsdk:3.1.74
+    env:
+      OUT: /tmp/hongguo-media-core
+      VVC_FFMPEG: /tmp/hongguo-media-core/native/librempeg/ffmpeg
+      VVC_FFPROBE: /tmp/hongguo-media-core/native/librempeg/ffprobe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native tools
+        run: |
+          apt-get update -qq
+          apt-get install -y pkg-config ffmpeg cmake python3 git curl >/dev/null
+          emcc --version | head -n 1
+      - uses: actions/cache/restore@v4
+        id: core-cache
+        with:
+          path: |
+            /tmp/hongguo-media-core/dist
+            /tmp/hongguo-media-core/native/librempeg/ffmpeg
+            /tmp/hongguo-media-core/native/librempeg/ffprobe
+          key: media-core-emsdk-3.1.74-${{ runner.os }}-${{ hashFiles('scripts/build-media-core.sh', 'scripts/media-core/**', 'scripts/patches/**', 'scripts/patch-bvc2-mov.py', 'scripts/patch-x265-single-thread.py', 'scripts/vendor/libvvenc.c', 'scripts/build-native-vvc-verifier.sh') }}
+      - name: Build multi-thread variant (pthreads)
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-media-core.sh mt "$OUT"
+      - name: Build single-thread variant
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-media-core.sh st "$OUT"
+      - name: Build native VVC verifier for older distro FFmpeg
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-native-vvc-verifier.sh "$OUT"
+      - name: Verify encoders, CENC, concat, ByteVC2 and async fMP4 (multi-thread)
+        env:
+          SYNTHETIC_BVC2_PATH: /tmp/hongguo-synthetic-bvc2.mp4
+          SYNTHETIC_BVC2_LONG_PATH: /tmp/hongguo-synthetic-bvc2-long.mp4
+        run: node scripts/verify-video-outputs.mjs "$OUT/dist" mt
+      - name: Verify the same outputs (single-thread)
+        run: node scripts/verify-video-outputs.mjs "$OUT/dist" st
+      - uses: actions/cache/save@v4
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            /tmp/hongguo-media-core/dist
+            /tmp/hongguo-media-core/native/librempeg/ffmpeg
+            /tmp/hongguo-media-core/native/librempeg/ffprobe
+          key: ${{ steps.core-cache.outputs.cache-primary-key }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
+      - name: Browser acceptance, non-isolated (st) and isolated (mt)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun ci
+          bun add --dev --no-save playwright@1.58.0
+          bunx playwright install --with-deps chromium
+          node scripts/media-core-bundle.mjs publish "$OUT/dist"
+          VITE_BASE_PATH=/hongguo-dl/ bun run build
+          VITE_BASE_PATH=/hongguo-dl/ bunx vite preview --host 127.0.0.1 --port 4173 > /tmp/media-core-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/hongguo-dl/ >/dev/null; then break; fi
+            sleep 1
+          done
+          for isolated in 0 1; do
+            BVC2_ISOLATED=$isolated node tests/bvc2-stream.browser.mjs /tmp/hongguo-synthetic-bvc2.mp4 /tmp/hongguo-synthetic-bvc2-long.mp4
+            BVC2_ISOLATED=$isolated BVC2_TEST_WHOLE=1 node tests/bvc2-stream.browser.mjs /tmp/hongguo-synthetic-bvc2.mp4 /tmp/hongguo-synthetic-bvc2-long.mp4
+          done
+      # Generated binaries are committed only after every check above.
+      - name: Publish verified media core on the source branch
+        if: success() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          node scripts/media-core-bundle.mjs publish "$OUT/dist"
+          node scripts/media-core-bundle.mjs verify
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/media-core
+          if git diff --cached --quiet; then
+            echo "Published media core already matches the verified build"
+          else
+            git commit -m "build(media-core): publish verified mt/st JS/WASM with pinned manifest"
+            git fetch origin "$SOURCE_BRANCH"
+            git rebase "origin/$SOURCE_BRANCH"
+            # Reject binaries compiled from sources that changed meanwhile.
+            node scripts/media-core-bundle.mjs verify
+            git push origin "HEAD:$SOURCE_BRANCH"
+            if [[ "$SOURCE_BRANCH" == main ]]; then
+              curl --fail --silent --show-error --request POST \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/pages.yml/dispatches" \
+                -d '{"ref":"main"}'
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-core
+          path: |
+            /tmp/hongguo-media-core/dist
+            /tmp/hongguo-media-core/*/*.log
+          if-no-files-found: warn

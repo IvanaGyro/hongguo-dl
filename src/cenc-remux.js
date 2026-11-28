@@ -2,11 +2,10 @@
 // Playback layer: MSE presentation of the media Worker's clear fMP4 output.
 // The Worker (download + processing layers) owns HTTP, metadata and WASM.
 import { createMediaProcessor } from './media-processor.js';
-import { bvc2BridgeAvailable } from './bvc2.js';
+import { mediaCoreAvailable } from './media-convert.js';
 import { errorWith } from './logic.js';
 import { isProcessingFailure } from './fallback-policy.js';
 import { evictionEnd } from './mse-eviction.js';
-import { retryableAvailability } from './retryable-availability.js';
 import { assertHevcInitCodecMatches } from './cenc-init-codec.js';
 import { alignInitialCencBufferedStart } from './mse-start-gap.js';
 import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-buffer-policy.js';
@@ -14,24 +13,13 @@ import { streamBufferPolicy, bufferedIntervals, bufferedAround } from './stream-
 import { MAX_REMUX_FILE_BYTES } from './media-route.js';
 import { frameRendererStatus, frameRendererFor } from './bvc2-frame-renderer.js';
 
-const MAX_CORE = 24 * 1024 * 1024;
 // The Worker's route decision enforces this; metadata and native EME do not.
 export const MAX_CENC_REMUX_FILE_BYTES = MAX_REMUX_FILE_BYTES;
-const checkCencCore = retryableAvailability(async () => {
-  const coreUrl = new URL((import.meta.env?.BASE_URL || '/') + 'cenc/cenc-core.wasm',
-    location.href);
-  const res = await fetch(coreUrl, { method: 'HEAD', cache: 'force-cache' });
-  return res.ok &&
-    /^(application\/wasm|application\/octet-stream)\b/i.test(
-      res.headers.get('content-type') || '') &&
-    Number(res.headers.get('content-length') || 0) < MAX_CORE;
-});
-
 export async function cencRemuxAvailable() {
   if (typeof Worker !== 'function' || typeof MediaSource !== 'function')
     return false;
   // Temporary deployment races or HEAD failures must be retryable.
-  return checkCencCore();
+  return mediaCoreAvailable();
 }
 const waitSourceOpen = (mediaSource, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error('CENC stream canceled'));
@@ -156,7 +144,7 @@ export async function openCencProgressiveStream({
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
   // Capability report: whether this browser can host the WASM/MSE route.
   const processing = typeof MediaSource !== 'undefined' &&
-    await (bridge === 'bvc2' ? bvc2BridgeAvailable() : cencRemuxAvailable());
+    await (bridge === 'bvc2' ? mediaCoreAvailable() : cencRemuxAvailable());
   if (signal?.aborted) throw errorWith('CANCELED', '已切換影片');
   const outputCodec = bridge === 'bvc2' ? 'h264' : codec;
   const renderStatus = bridge === 'bvc2' && render ? frameRendererStatus() : null;

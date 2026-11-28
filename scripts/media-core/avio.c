@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include <stdio.h>
+#include <libavformat/avio.h>
+#include <libavutil/common.h>
+#include <libavutil/error.h>
+#include <emscripten/emscripten.h>
+#include "avio.h"
+
 EM_ASYNC_JS(int, js_range_read, (int offset, int wanted, uint8_t *dest), {
     try {
         const data = await Module['readRange'](offset, wanted);
@@ -25,12 +32,7 @@ EM_ASYNC_JS(int, js_output_write, (const uint8_t *src, int length), {
     }
 });
 
-typedef struct Stream {
-    int64_t size;
-    int64_t position;
-} Stream;
-
-static int input_read(void *opaque, uint8_t *buf, int capacity) {
+int media_input_read(void *opaque, uint8_t *buf, int capacity) {
     Stream *stream = opaque;
     if (stream->position >= stream->size) return AVERROR_EOF;
     int length = (int)FFMIN((int64_t)capacity, stream->size - stream->position);
@@ -40,7 +42,7 @@ static int input_read(void *opaque, uint8_t *buf, int capacity) {
     return count;
 }
 
-static int64_t input_seek(void *opaque, int64_t offset, int whence) {
+int64_t media_input_seek(void *opaque, int64_t offset, int whence) {
     Stream *stream = opaque;
     if (whence == AVSEEK_SIZE) return stream->size;
     int64_t next;
@@ -55,9 +57,8 @@ static int64_t input_seek(void *opaque, int64_t offset, int whence) {
     return next;
 }
 
-static int output_write(void *opaque, const uint8_t *data, int length) {
+int media_output_write(void *opaque, const uint8_t *data, int length) {
     (void)opaque;
     if (length <= 0) return 0;
     return js_output_write(data, length);
 }
-

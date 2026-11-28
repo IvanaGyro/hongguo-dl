@@ -1,5 +1,9 @@
-// Same-origin service worker for one-click streamed ZIP downloads. It never
-// caches video, never intercepts normal API requests, and never stores media.
+// Same-origin service worker: (1) one-click streamed ZIP downloads and
+// (2) cross-origin isolation for the multi-thread media core. GitHub Pages
+// cannot send COOP/COEP headers, so same-origin page, script and WASM
+// responses get them here; `credentialless` keeps cross-origin images and
+// CDN media (no-cors, no cookies) loading. It never caches anything, never
+// touches cross-origin requests (API, CDN) and never stores media.
 const pending = new Map();
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
@@ -21,9 +25,28 @@ self.addEventListener('message', event => {
   pending.set(id, { filename: String(filename || 'videos.zip'), stream });
   event.ports[0]?.postMessage({ ok: true });
 });
+const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless'
+};
+async function isolated(request) {
+  const response = await fetch(request);
+  // Opaque or error responses cannot be re-labelled; pass them through.
+  if (!response.status || response.type === 'opaque' || response.type === 'opaqueredirect') return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(ISOLATION_HEADERS)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  if (!url.pathname.endsWith('/__bulk_download__')) return;
+  if (!url.pathname.endsWith('/__bulk_download__')) {
+    const request = event.request;
+    if (url.origin !== self.location.origin || request.method !== 'GET' ||
+        url.pathname.includes('/api/') || request.headers.has('range') ||
+        (request.cache === 'only-if-cached' && request.mode !== 'same-origin')) return;
+    event.respondWith(isolated(request));
+    return;
+  }
   const archive = pending.get(url.searchParams.get('id'));
   if (!archive) {
     event.respondWith(new Response('Archive expired', { status: 404 }));

@@ -1,11 +1,12 @@
 // Batch orchestration, independent of the browser UI. A ZIP is emitted as a
-// single ZIP64 stream; a lossless concat uses FFmpeg and is memory-limited.
+// single ZIP64 stream; a lossless concat uses the media core and is memory-limited.
 import { assertSupportedMediaUrl, safeName, errorWith, classifyError } from './logic.js';
 import { episodeFileName } from './naming.js';
 import { recordFailure } from './retry.js';
 import { episodeCacheKey } from './media-cache.js';
 import { zipReadableStream } from './zip.js';
-import { convertBytes, concatLosslessly } from './ffmpeg.js';
+import { convertBytes, concatLosslessly } from './media-convert.js';
+import { isEncodingMode } from './encoder-tradeoff.js';
 
 const PER_EPISODE_LIMIT = 260 * 1024 * 1024;
 const CONCAT_INPUT_LIMIT = 160 * 1024 * 1024;
@@ -46,7 +47,8 @@ export async function getEpisodeBytes({
   sourceFor, fetchBytes, cache, signal, onUpdate
 }) {
   const key = episodeCacheKey(series.seriesId, episode.vid, quality, codec);
-  const cached = outputMode === 'h264' ? null : cache.get(key);
+  const encoded = isEncodingMode(outputMode);
+  const cached = encoded ? null : cache.get(key);
   if (cached) {
     onUpdate?.('第 ' + episode.index + ' 集：共用記憶體快取');
     return { bytes: new Uint8Array(await cached.arrayBuffer()), ext: '.mp4', codec: null };
@@ -61,12 +63,12 @@ export async function getEpisodeBytes({
   const process = type === 'concat' || !!source.contentKey || outputMode !== 'original';
   const raw = await fetchBytes(source.url, profile, signal, PER_EPISODE_LIMIT);
   const bytes = process ? await convertBytes(raw, {
-    mode: outputMode === 'h264' ? 'h264' : 'copy', contentKey: source.contentKey, signal,
-    h264TradeoffIndex
+    mode: encoded ? outputMode : 'copy', contentKey: source.contentKey, signal,
+    tradeoffIndex: encoded ? h264TradeoffIndex : null
   }) : raw;
   if (!bytes?.length) throw errorWith('EMPTY_MEDIA', '第 ' + episode.index + ' 集下載結果為空');
   const ext = extensionFor(source, process);
-  if (ext === '.mp4' && outputMode !== 'h264')
+  if (ext === '.mp4' && !encoded)
     cache.put(key, new Blob([bytes], { type: 'video/mp4' }));
   return { bytes, ext, codec: source.codec, width: source.width, height: source.height };
 }
@@ -100,10 +102,10 @@ export async function runBulk({
       previous = format;
       total += episode.bytes.length;
       if (total > CONCAT_INPUT_LIMIT) throw errorWith('FFMPEG_LIMIT',
-        '合併輸入超過 160 MiB 的瀏覽器 FFmpeg 記憶體上限；多集請使用串流 ZIP');
+        '合併輸入超過 160 MiB 的瀏覽器影片處理記憶體上限；多集請使用串流 ZIP');
       inputs.push(episode.bytes);
     }
-    onStatus?.('正在用 FFmpeg 無損接合 ' + inputs.length + ' 集（不包含字幕）');
+    onStatus?.('正在無損接合 ' + inputs.length + ' 集（不包含字幕）');
     const result = await concatLosslessly(inputs, { signal,
       progress: x => onStatus?.('無損接合：' + Math.round(x * 100) + '%') });
     await saveOutput(result, title + '_第' + ordered[0].index + '-' +

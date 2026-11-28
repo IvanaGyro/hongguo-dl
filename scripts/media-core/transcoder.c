@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Experimental single-threaded ByteVC2 -> H.264/AAC MP4 transcoder, plus a
-// decode-only render mode (bvc2_play) for direct WebGL2 presentation.
-// This is invoked from Emscripten MEMFS, not from the FFmpeg CLI.
-// Keep this separate from the production player until a real BVC2 fixture passes.
+// The media core's decode/encode half: generic MP4 conversion (stream copy,
+// CENC decryption, H.264/HEVC/AV1/VVC encoding with preset/quality, lossless
+// concat), incremental ByteVC2 -> H.264 streaming and a decode-only render
+// mode (bvc2_play) for direct WebGL2 presentation. Whole-file jobs use
+// Emscripten MEMFS paths; streaming jobs use the Asyncify AVIO in avio.c.
+// The same source builds with pthreads (mt) and without (st).
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,7 +19,16 @@
 #include <libavutil/mem.h>
 #include <libavutil/intreadwrite.h>
 #define AVIO_BUFFER 32768
-#include "bvc2-avio.h"
+#include "avio.h"
+
+#ifdef __EMSCRIPTEN_PTHREADS__
+#define MAX_THREADS 16
+#else
+#define MAX_THREADS 1
+#endif
+// Streaming playback (bvc2_stream/bvc2_play) uses this; whole-file jobs
+// receive their own thread count.
+static int stream_threads = 1;
 
 EM_JS(void, report_progress, (double value), {
     if (Module["onProgress"]) Module["onProgress"](value);
@@ -45,6 +56,8 @@ EM_ASYNC_JS(int, js_frame_out, (const uint8_t *src, int length, int width, int h
 static char last_error[256];
 static int last_remuxed;
 
+static int clamp_threads(int n) { return n < 1 ? 1 : n > MAX_THREADS ? MAX_THREADS : n; }
+
 static int fail(int code, const char *where) {
     char reason[AV_ERROR_MAX_STRING_SIZE];
     av_strerror(code, reason, sizeof(reason));
@@ -55,6 +68,23 @@ static int fail(int code, const char *where) {
 EMSCRIPTEN_KEEPALIVE const char *bvc2_last_error(void) { return last_error; }
 // 1 when the last bvc2_convert wrote VVC by copying ByteVC2 NAL units.
 EMSCRIPTEN_KEEPALIVE int bvc2_last_remuxed(void) { return last_remuxed; }
+EMSCRIPTEN_KEEPALIVE const char *media_last_error(void) { return last_error; }
+EMSCRIPTEN_KEEPALIVE int media_last_remuxed(void) { return last_remuxed; }
+EMSCRIPTEN_KEEPALIVE int media_set_threads(int threads) {
+    stream_threads = clamp_threads(threads);
+    return stream_threads;
+}
+// ABI/capability report for the loader: "api=4;threads=N;<encoders...>".
+EMSCRIPTEN_KEEPALIVE const char *media_core_info(void) {
+    static char info[160];
+    snprintf(info, sizeof(info), "api=4;threads=%d;%s%s%s%s%s", MAX_THREADS,
+        avcodec_find_encoder_by_name("libx264") ? "libx264," : "",
+        avcodec_find_encoder_by_name("libx265") ? "libx265," : "",
+        avcodec_find_encoder_by_name("libsvtav1") ? "libsvtav1," : "",
+        avcodec_find_encoder_by_name("libvvenc") ? "libvvenc," : "",
+        avcodec_find_decoder_by_name("bvc2") ? "bvc2" : "");
+    return info;
+}
 
 EMSCRIPTEN_KEEPALIVE int bvc2_decoder_available(void) {
     const AVCodec *decoder = avcodec_find_decoder_by_name("bvc2");
@@ -73,15 +103,18 @@ typedef struct Context {
     struct SwsContext *scale, *render_scale;
     AVIOContext *reader_io, *writer_io;
     Stream reader;
-    int mode, streaming;
-    const char *download_h264_preset;
-    int download_h264_crf;
+    int mode, streaming, threads;
+    // Download encoder settings; NULL preset keeps the historic defaults.
+    const char *preset;
+    int quality;
+    const char *input_format;
     // ByteVC2 slices use H.266 syntax (Librempeg decodes both with the same
     // VVC decoder); only the bvc2/bv2C framing differs. Remux, don't encode.
     int remux_vvc, copy, no_remux;
     double start_seconds, last_progress;
     int64_t next_pts;
     int64_t decoded_frames;
+    int64_t last_dts[2]; // copied video, audio (output time base)
 } Context;
 
 // ByteVC2 configuration and samples are always 4-byte length-prefixed NAL
@@ -125,6 +158,18 @@ static int packet_to_annexb(AVPacket *pkt) {
     if (ret < 0) return ret;
     nal_lengths_to_start_codes(pkt->data, pkt->size);
     return 0;
+}
+
+// Concatenated files overlap by AAC priming/rounding at each boundary. Like
+// the FFmpeg CLI, nudge a copied packet's DTS forward instead of failing.
+static void keep_monotonic(Context *c, AVPacket *pkt, int slot) {
+    if (pkt->dts == AV_NOPTS_VALUE) return;
+    if (c->last_dts[slot] != AV_NOPTS_VALUE && pkt->dts <= c->last_dts[slot]) {
+        int64_t dts = c->last_dts[slot] + 1;
+        if (pkt->pts != AV_NOPTS_VALUE && pkt->pts >= pkt->dts) pkt->pts += dts - pkt->dts;
+        pkt->dts = dts;
+    }
+    c->last_dts[slot] = pkt->dts;
 }
 
 static int write_encoded(Context *c) {
@@ -242,6 +287,51 @@ static int process_frames(Context *c) {
     return fail(ret, "decode ByteVC2 frame");
 }
 
+static int configure_encoder(Context *c) {
+    void *opt = c->encoder->priv_data;
+    char params[160];
+    int threads = c->threads;
+    if (c->mode == 5) {
+#ifdef __EMSCRIPTEN_PTHREADS__
+        int frames = threads >= 8 ? 3 : threads >= 3 ? 2 : 1;
+        snprintf(params, sizeof(params), "pools=%d:frame-threads=%d%s", threads, frames,
+            c->preset ? "" : ":bframes=0:rc-lookahead=0:cutree=0");
+#else
+        // The synchronous x265 port supports neither pools, WPP nor lookahead.
+        snprintf(params, sizeof(params),
+            "pools=none:frame-threads=1:wpp=0:bframes=0:rc-lookahead=0:cutree=0");
+#endif
+        av_opt_set(opt, "preset", c->preset ? c->preset : "ultrafast", 0);
+        av_opt_set_int(opt, "crf", c->preset ? c->quality : 23, 0);
+        av_opt_set(opt, "x265-params", params, 0);
+    } else if (c->mode == 2) {
+        snprintf(params, sizeof(params), "lp=%d", threads);
+        av_opt_set(opt, "preset", c->preset ? c->preset : "10", 0);
+        av_opt_set_int(opt, "crf", c->preset ? c->quality : 32, 0);
+        av_opt_set(opt, "svtav1-params", params, 0);
+    } else if (c->mode == 3) {
+        snprintf(params, sizeof(params), "Threads=%d", threads > 1 ? threads : 0);
+        av_opt_set(opt, "preset", c->preset ? c->preset : "faster", 0);
+        av_opt_set_int(opt, "qp", c->preset ? c->quality : 32, 0);
+        av_opt_set(opt, "vvenc-params", params, 0);
+        if (threads <= 1) c->encoder->thread_count = 0;
+    } else if (c->preset) {
+        // Mirror the x264 coding tools used for the measured preset/CRF
+        // options. Playback and other codecs keep their old defaults.
+        av_opt_set(opt, "preset", c->preset, 0);
+        av_opt_set(opt, "profile", "high", 0);
+        av_opt_set(opt, "level", "5.1", 0);
+        av_opt_set_int(opt, "crf", c->quality, 0);
+    } else {
+        av_opt_set(opt, "preset", "ultrafast", 0);
+        av_opt_set(opt, "tune", "zerolatency", 0);
+        av_opt_set(opt, "profile", "baseline", 0);
+        av_opt_set(opt, "level", "3.1", 0);
+        av_opt_set(opt, "crf", "20", 0);
+    }
+    return 0;
+}
+
 static int execute(Context *c, const char *input, const char *output, const char *key) {
     int ret;
     AVDictionary *open_options = NULL;
@@ -254,14 +344,20 @@ static int execute(Context *c, const char *input, const char *output, const char
         uint8_t *buffer = av_malloc(AVIO_BUFFER);
         if (!buffer) return fail(AVERROR(ENOMEM), "input buffer");
         c->reader_io = avio_alloc_context(buffer, AVIO_BUFFER, 0,
-            &c->reader, input_read, NULL, input_seek);
+            &c->reader, media_input_read, NULL, media_input_seek);
         if (!c->reader_io) { av_free(buffer); return fail(AVERROR(ENOMEM), "input AVIO"); }
         c->input = avformat_alloc_context();
         if (!c->input) return fail(AVERROR(ENOMEM), "input context");
         c->input->pb = c->reader_io;
         c->input->flags |= AVFMT_FLAG_CUSTOM_IO;
     }
-    ret = avformat_open_input(&c->input, input, av_find_input_format("mov"), &open_options);
+    if (c->input_format) {
+        av_dict_set(&open_options, "safe", "1", 0);
+        // MP4 to MP4: keep length-prefixed NAL units (no Annex B filters).
+        av_dict_set(&open_options, "auto_convert", "0", 0);
+    }
+    ret = avformat_open_input(&c->input, input,
+        av_find_input_format(c->input_format ? c->input_format : "mov"), &open_options);
     av_dict_free(&open_options);
     if (ret < 0) return fail(ret, "open MP4");
 
@@ -276,15 +372,15 @@ static int execute(Context *c, const char *input, const char *output, const char
     if (!c->copy) {
     const AVCodec *dec = avcodec_find_decoder(c->video_in->codecpar->codec_id);
     const AVCodec *enc = c->mode == MODE_RENDER ? NULL : avcodec_find_encoder_by_name(
-        c->mode == 5 ? "libx265" : c->mode == 2 ? "libaom-av1" : c->mode == 3 ? "libvvenc" : "libx264");
+        c->mode == 5 ? "libx265" : c->mode == 2 ? "libsvtav1" : c->mode == 3 ? "libvvenc" : "libx264");
     if (!dec || (!enc && c->mode != MODE_RENDER))
-        return fail(AVERROR_DECODER_NOT_FOUND, "missing BVC2/x264 codec");
+        return fail(AVERROR_DECODER_NOT_FOUND, "missing decoder or encoder");
     c->decoder = avcodec_alloc_context3(dec);
     c->encoder = enc ? avcodec_alloc_context3(enc) : NULL;
     if (!c->decoder || (enc && !c->encoder)) return fail(AVERROR(ENOMEM), "allocate codecs");
     if ((ret = avcodec_parameters_to_context(c->decoder, c->video_in->codecpar)) < 0)
         return fail(ret, "read codec parameters");
-    c->decoder->thread_count = 1;
+    c->decoder->thread_count = c->threads;
     c->decoder->pkt_timebase = c->video_in->time_base;
     if ((ret = avcodec_open2(c->decoder, dec, NULL)) < 0)
         return fail(ret, "open BVC2 decoder");
@@ -301,36 +397,14 @@ static int execute(Context *c, const char *input, const char *output, const char
     c->encoder->time_base = av_inv_q(fps);
     c->encoder->framerate = fps;
     c->encoder->gop_size = av_q2d(fps) * 2;
-    c->encoder->max_b_frames = (c->mode == 4 && c->download_h264_preset) ? 2 : 0;
-    c->encoder->thread_count = 1;
+    // Tuned H.264 keeps the two B-frames it was measured with; a tuned
+    // multi-threaded HEVC job lets the x265 preset choose. Everything else
+    // (playback, synchronous x265) stays B-frame free.
+    c->encoder->max_b_frames = c->mode == 4 && c->preset ? 2 :
+        c->mode == 5 && c->preset && MAX_THREADS > 1 ? -1 : 0;
+    c->encoder->thread_count = c->threads;
     c->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    if (c->mode == 5) {
-        av_opt_set(c->encoder->priv_data, "preset", "ultrafast", 0);
-        av_opt_set(c->encoder->priv_data, "crf", "23", 0);
-        av_opt_set(c->encoder->priv_data, "x265-params",
-            "pools=none:frame-threads=1:wpp=0:bframes=0:rc-lookahead=0:cutree=0", 0);
-    } else if (c->mode == 2) {
-        av_opt_set(c->encoder->priv_data, "cpu-used", "8", 0);
-        av_opt_set(c->encoder->priv_data, "crf", "32", 0);
-        av_opt_set(c->encoder->priv_data, "lag-in-frames", "0", 0);
-    } else if (c->mode == 3) {
-        av_opt_set(c->encoder->priv_data, "preset", "faster", 0);
-        av_opt_set(c->encoder->priv_data, "qp", "32", 0);
-        av_opt_set(c->encoder->priv_data, "vvenc-params", "Threads=0", 0);
-    } else if (c->download_h264_preset) {
-        // Mirror the x264 coding tools used for the measured preset/CRF
-        // options. Playback and other codecs keep their old defaults.
-        av_opt_set(c->encoder->priv_data, "preset", c->download_h264_preset, 0);
-        av_opt_set(c->encoder->priv_data, "profile", "high", 0);
-        av_opt_set(c->encoder->priv_data, "level", "5.1", 0);
-        av_opt_set_int(c->encoder->priv_data, "crf", c->download_h264_crf, 0);
-    } else {
-        av_opt_set(c->encoder->priv_data, "preset", "ultrafast", 0);
-        av_opt_set(c->encoder->priv_data, "tune", "zerolatency", 0);
-        av_opt_set(c->encoder->priv_data, "profile", "baseline", 0);
-        av_opt_set(c->encoder->priv_data, "level", "3.1", 0);
-        av_opt_set(c->encoder->priv_data, "crf", "20", 0);
-    }
+    if ((ret = configure_encoder(c)) < 0) return ret;
     if ((ret = avcodec_open2(c->encoder, enc, NULL)) < 0)
         return fail(ret, "open output encoder");
     }
@@ -348,6 +422,8 @@ static int execute(Context *c, const char *input, const char *output, const char
         : avcodec_parameters_from_context(c->video_out->codecpar, c->encoder);
     if (ret < 0) return fail(ret, "copy video parameters");
     c->video_out->codecpar->codec_tag = 0;
+    // Parameter sets live in hvcC (global header): hvc1 plays on Apple too.
+    if (!c->copy && c->mode == 5) c->video_out->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
     if (c->remux_vvc) {
         if ((ret = prepare_vvc_parameters(c->video_out->codecpar)) < 0)
             return fail(ret, "convert ByteVC2 parameter sets");
@@ -359,13 +435,17 @@ static int execute(Context *c, const char *input, const char *output, const char
     }
     for (unsigned i = 0; i < c->input->nb_streams; i++) {
         AVStream *track = c->input->streams[i];
-        if (track->codecpar->codec_type != AVMEDIA_TYPE_AUDIO ||
-            track->codecpar->codec_id != AV_CODEC_ID_AAC) continue;
+        if (track->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+        // Streaming/render output feeds MSE: AAC only. Whole-file output
+        // keeps any audio codec the MP4 muxer can store (like -map 0:a?).
+        if (track->codecpar->codec_id != AV_CODEC_ID_AAC && (c->streaming ||
+            avformat_query_codec(c->output->oformat, track->codecpar->codec_id,
+                FF_COMPLIANCE_NORMAL) != 1)) continue;
         c->audio_in = track;
         c->audio_out = avformat_new_stream(c->output, NULL);
         if (!c->audio_out) return fail(AVERROR(ENOMEM), "create audio stream");
         if ((ret = avcodec_parameters_copy(c->audio_out->codecpar, track->codecpar)) < 0)
-            return fail(ret, "copy AAC parameters");
+            return fail(ret, "copy audio parameters");
         c->audio_out->codecpar->codec_tag = 0;
         c->audio_out->time_base = track->time_base;
         break;
@@ -384,7 +464,7 @@ static int execute(Context *c, const char *input, const char *output, const char
         uint8_t *buffer = av_malloc(AVIO_BUFFER);
         if (!buffer) return fail(AVERROR(ENOMEM), "output buffer");
         c->writer_io = avio_alloc_context(buffer, AVIO_BUFFER, 1,
-            NULL, NULL, output_write, NULL);
+            NULL, NULL, media_output_write, NULL);
         if (!c->writer_io) { av_free(buffer); return fail(AVERROR(ENOMEM), "output AVIO"); }
         c->writer_io->seekable = 0;
         c->output->pb = c->writer_io;
@@ -442,6 +522,7 @@ static int execute(Context *c, const char *input, const char *output, const char
             }
             av_packet_rescale_ts(c->packet, c->video_in->time_base, c->video_out->time_base);
             c->packet->stream_index = c->video_out->index;
+            keep_monotonic(c, c->packet, 0);
             int code = av_interleaved_write_frame(c->output, c->packet);
             av_packet_unref(c->packet);
             if (code < 0) return fail(code, "copy original video");
@@ -453,6 +534,7 @@ static int execute(Context *c, const char *input, const char *output, const char
         } else if (c->audio_in && c->packet->stream_index == c->audio_in->index) {
             av_packet_rescale_ts(c->packet, c->audio_in->time_base, c->audio_out->time_base);
             c->packet->stream_index = c->audio_out->index;
+            keep_monotonic(c, c->packet, 1);
             int code = av_interleaved_write_frame(c->output, c->packet);
             av_packet_unref(c->packet);
             if (code < 0) return fail(code, "write audio packet");
@@ -477,15 +559,21 @@ static int execute(Context *c, const char *input, const char *output, const char
     return 0;
 }
 
-static int convert(const char *input, const char *output, const char *key, int mode, int file_size,
-                   double start_seconds, int no_remux, int *remuxed,
-                   const char *h264_preset, int h264_crf) {
+typedef struct Job {
+    const char *input, *output, *key, *preset, *input_format;
+    int mode, file_size, no_remux, quality, threads;
+    double start_seconds;
+} Job;
+
+static int convert(const Job *job, int *remuxed) {
     Context c = {0};
-    c.mode = mode; c.streaming = file_size > 0; c.no_remux = no_remux;
-    c.download_h264_preset = h264_preset; c.download_h264_crf = h264_crf;
-    c.reader.size = file_size; c.start_seconds = start_seconds;
+    c.mode = job->mode; c.streaming = job->file_size > 0; c.no_remux = job->no_remux;
+    c.preset = job->preset; c.quality = job->quality; c.input_format = job->input_format;
+    c.threads = clamp_threads(job->threads);
+    c.reader.size = job->file_size; c.start_seconds = job->start_seconds;
+    c.last_dts[0] = c.last_dts[1] = AV_NOPTS_VALUE;
     last_error[0] = 0;
-    int ret = execute(&c, input, output, key);
+    int ret = execute(&c, job->input, job->output, job->key);
     if (remuxed) *remuxed = c.remux_vvc ? (ret >= 0 ? 1 : -1) : 0;
     sws_freeContext(c.scale); sws_freeContext(c.render_scale);
     av_frame_free(&c.converted); av_freep(&c.packed);
@@ -503,46 +591,83 @@ static int convert(const char *input, const char *output, const char *key, int m
     return ret;
 }
 
-EMSCRIPTEN_KEEPALIVE int bvc2_transcode(const char *in, const char *out, const char *key) {
-    return convert(in, out, key, 1, 0, 0, 0, NULL, NULL, 0);
-}
-EMSCRIPTEN_KEEPALIVE int bvc2_convert(const char *in, const char *out, const char *key, int mode) {
-    if (mode != 0 && mode != 2 && mode != 3 && mode != 4 && mode != 5)
-        return fail(AVERROR(EINVAL), "invalid output mode");
+// Whole-file conversion. VVC from a ByteVC2 source is first tried as a
+// lossless re-mux (bvc2 NAL units are H.266); standard tools that cannot
+// describe the parameter sets fall back to re-encoding.
+static int convert_file(Job job) {
     int remuxed = 0;
     last_remuxed = 0;
-    int ret = convert(in, out, key, mode, 0, 0, 0, &remuxed, NULL, 0);
+    int ret = convert(&job, &remuxed);
     if (remuxed > 0) last_remuxed = 1;
-    // Parameter sets that standard VVC tooling cannot describe: re-encode.
     else if (remuxed < 0) {
-        remove(out);
-        ret = convert(in, out, key, mode, 0, 0, 1, NULL, NULL, 0);
+        remove(job.output);
+        job.no_remux = 1;
+        ret = convert(&job, NULL);
     }
     return ret;
 }
-// Whole-file H.264 download entry point; no global mutable quality settings.
+
+static int name_in(const char *name, const char *const *list) {
+    for (; name && *list; list++) if (!strcmp(name, *list)) return 1;
+    return 0;
+}
+
+static int valid_settings(int mode, const char *preset, int quality) {
+    static const char *const x26x[] = { "ultrafast", "superfast", "veryfast", "faster",
+        "fast", "medium", "slow", "slower", "veryslow", NULL };
+    static const char *const svt[] = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        "10", "11", "12", "13", NULL };
+    static const char *const vvenc[] = { "faster", "fast", "medium", "slow", "slower", NULL };
+    switch (mode) {
+    case 4: case 5: return name_in(preset, x26x) && quality >= 0 && quality <= 51;
+    case 2: return name_in(preset, svt) && quality >= 1 && quality <= 63;
+    case 3: return name_in(preset, vvenc) && quality >= 0 && quality <= 63;
+    default: return 0;
+    }
+}
+
+// mode: 0 copy, 2 AV1 (SVT-AV1), 3 VVC (VVenC), 4 H.264 (x264), 5 HEVC
+// (x265). An empty preset keeps each encoder's fast defaults; otherwise
+// preset/quality are the encoder's own preset name and CRF (VVenC: QP).
+EMSCRIPTEN_KEEPALIVE int media_convert(const char *in, const char *out, const char *key,
+    int mode, const char *preset, int quality, int threads) {
+    if (mode != 0 && mode != 2 && mode != 3 && mode != 4 && mode != 5)
+        return fail(AVERROR(EINVAL), "invalid output mode");
+    if (preset && !preset[0]) preset = NULL;
+    if (preset && !valid_settings(mode, preset, quality))
+        return fail(AVERROR(EINVAL), "invalid encoder preset or quality");
+    return convert_file((Job){ .input = in, .output = out, .key = key, .mode = mode,
+        .preset = preset, .quality = quality, .threads = threads });
+}
+// Lossless concatenation of compatible MP4s listed in an ffconcat file
+// (relative names only: the demuxer runs with safe=1).
+EMSCRIPTEN_KEEPALIVE int media_concat(const char *list, const char *out) {
+    last_remuxed = 0;
+    return convert(&(Job){ .input = list, .output = out, .mode = 0,
+        .input_format = "concat", .threads = 1 }, NULL);
+}
+
+EMSCRIPTEN_KEEPALIVE int bvc2_transcode(const char *in, const char *out, const char *key) {
+    return convert(&(Job){ .input = in, .output = out, .key = key, .mode = 1,
+        .threads = stream_threads }, NULL);
+}
+EMSCRIPTEN_KEEPALIVE int bvc2_convert(const char *in, const char *out, const char *key, int mode) {
+    return media_convert(in, out, key, mode, NULL, 0, stream_threads);
+}
 EMSCRIPTEN_KEEPALIVE int bvc2_convert_h264(const char *in, const char *out,
     const char *key, const char *preset, int crf) {
-    static const struct { const char *name; int q; } choices[] = {
-        { "ultrafast", 18 }, { "superfast", 19 }, { "faster", 16 },
-        { "fast", 17 }, { "medium", 18 }, { "slow", 18 }
-    };
-    int allowed = 0;
-    for (unsigned i = 0; i < sizeof(choices) / sizeof(choices[0]); i++)
-        if (preset && strcmp(preset, choices[i].name) == 0 && crf == choices[i].q)
-            allowed = 1;
-    if (!allowed) return fail(AVERROR(EINVAL), "invalid H.264 download preset");
-    last_remuxed = 0;
-    return convert(in, out, key, 4, 0, 0, 0, NULL, preset, crf);
+    return media_convert(in, out, key, 4, preset, crf, stream_threads);
 }
 EMSCRIPTEN_KEEPALIVE int bvc2_stream(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, 4, size, start, 0, NULL, NULL, 0);
+    return convert(&(Job){ .key = key, .mode = 4, .file_size = size, .start_seconds = start,
+        .threads = stream_threads }, NULL);
 }
 // Decode only: AAC fMP4 through writeChunk, I420 pictures through writeFrame.
 EMSCRIPTEN_KEEPALIVE int bvc2_play(int size, const char *key, double start) {
     if (size < 8 || size > 260 * 1024 * 1024 || !(start >= 0 && start <= 86400))
         return fail(AVERROR(EINVAL), "invalid stream input");
-    return convert(NULL, NULL, key, MODE_RENDER, size, start, 0, NULL, NULL, 0);
+    return convert(&(Job){ .key = key, .mode = MODE_RENDER, .file_size = size,
+        .start_seconds = start, .threads = stream_threads }, NULL);
 }

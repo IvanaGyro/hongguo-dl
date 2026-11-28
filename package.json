@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun scripts/copy-ffmpeg.mjs && vite build",
+    "build": "vite build",
     "dev": "vite --host",
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
@@ -14,8 +14,6 @@
     "test:live": "node --test --test-reporter=spec tests/live/pipeline-health.test.mjs"
   },
   "dependencies": {
-    "@ffmpeg/core": "0.12.10",
-    "@ffmpeg/ffmpeg": "0.12.15",
     "@fontsource-variable/chiron-goround-tc": "5.3.1",
     "@videojs/html": "10.3.0",
     "@videojs/media": "10.3.0"

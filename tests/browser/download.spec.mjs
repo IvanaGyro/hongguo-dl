@@ -132,28 +132,61 @@ test('a job interrupted by leaving the page resumes only when retried', async ({
   });
 });
 
-test('H.264 download uses a single speed-to-size slider and remembers the setting', async ({ app, page }) => {
-  app.addSeries(50, { title: 'H264 tradeoff', episodes: [[variant('clear-short.mp4')]] });
+test('each encoder has its own speed-to-size slider and remembers its setting', async ({ app, page }) => {
+  app.addSeries(50, { title: 'Encoder tradeoff', episodes: [[variant('clear-short.mp4')]] });
   await page.goto('./');
   await app.open(50);
   await app.mode('download');
-  const panel = page.locator('#h264-tradeoff');
+  const panel = page.locator('#encode-tradeoff');
+  const slider = page.locator('#encode-speed-size');
+  const name = page.locator('#encode-speed-size-name');
   await expect(panel).toBeHidden();
   await page.locator('#output-mode').selectOption('h264');
   await expect(panel).toBeVisible();
-  const slider = page.locator('#h264-speed-size');
   await expect(slider).toHaveCount(1);
-  await expect(page.locator('#h264-speed-size-name')).toHaveText('快速');
+  await expect(name).toHaveText('快速');
   await slider.focus();
   await slider.press('End');
   await slider.press('ArrowLeft');
   await expect(slider).toHaveValue('4');
-  await expect(page.locator('#h264-speed-size-name')).toHaveText('省空間');
+  await expect(name).toHaveText('省空間');
+  await page.locator('#output-mode').selectOption('vvc');
+  await expect(slider).toHaveAttribute('max', '2');
+  await expect(slider).toHaveValue('0');
+  await expect(page.locator('#encode-tradeoff-detail')).toContainText('VVenC faster');
+  await page.locator('#output-mode').selectOption('av1');
+  await expect(slider).toHaveAttribute('max', '5');
+  await slider.focus();
+  await slider.press('Home');
+  await expect(page.locator('#encode-tradeoff-detail')).toContainText('SVT-AV1 preset 12');
   await page.reload();
   await app.open(50);
   await app.mode('download');
   await page.locator('#output-mode').selectOption('h264');
-  await expect(page.locator('#h264-speed-size')).toHaveValue('4');
+  await expect(slider).toHaveValue('4');
+  await page.locator('#output-mode').selectOption('av1');
+  await expect(slider).toHaveValue('0');
   await page.locator('#output-mode').selectOption('copy');
   await expect(panel).toBeHidden();
 });
+
+for (const [mode, codec] of [['hevc', 'hevc'], ['av1', 'av1']]) {
+  test('download re-encoded to ' + mode + ' with the selected preset', async ({ app, page }) => {
+    app.addSeries(51, { title: 'Encode ' + mode, episodes: [[variant('cenc-short.mp4')]] });
+    await page.goto('./');
+    await app.open(51);
+    await app.mode('download');
+    await page.locator('#output-mode').selectOption(mode);
+    await page.locator('#encode-speed-size').focus();
+    await page.locator('#encode-speed-size').press('Home');
+    await page.locator('#add-queue').click();
+    await app.expectQueueCompleted(1, 240_000);
+    const download = page.waitForEvent('download');
+    await page.locator('#queue [data-action="save"]').click();
+    const saved = await download;
+    expect(saved.suggestedFilename()).toContain(mode === 'av1' ? '.av1-p12.mp4' : '.hevc-ultrafast.mp4');
+    const path = await saved.path();
+    expect(decodes(path), 'encoded file decodes').toBe(true);
+    expect(probe(path).streams.map(s => s.codec_name)).toContain(codec);
+  });
+}

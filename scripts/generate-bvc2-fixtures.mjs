@@ -13,8 +13,8 @@ try {
     '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '8',
     '-c:v', 'libx264', '-g', '12', '-bf', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
     '-movflags', '+faststart', '-y', join(root, 'input.mp4')]);
-  const { default: createModule } = await import(pathToFileURL(resolve('public/bvc2/bvc2-core.mjs')));
-  const core = await createModule({ wasmBinary: readFileSync('public/bvc2/bvc2-core.wasm') });
+  const { default: createModule } = await import(pathToFileURL(resolve('public/media-core/media-core-st.mjs')));
+  const core = await createModule({ wasmBinary: readFileSync('public/media-core/media-core-st.wasm') });
   core.FS.writeFile('/input.mp4', readFileSync(join(root, 'input.mp4')));
   const result = await core.ccall('bvc2_convert', 'number', ['string', 'string', 'string', 'number'],
     ['/input.mp4', '/vvc.mp4', '', 3], { async: true });

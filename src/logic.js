@@ -54,8 +54,8 @@ export function classifyError(error) {
     code = 'MEDIA_RATE_LIMITED';
   const descriptions = {
     MEMORY_LIMIT: '檔案過大，瀏覽器記憶體模式無法安全處理；請改用支援資料夾寫入的瀏覽器，或下載較小片源',
-    FFMPEG_ERROR: 'FFmpeg.wasm 處理失敗：可能不支援此影片編碼、加密方式或媒體格式',
-    FFMPEG_LIMIT: 'FFmpeg.wasm 的記憶體限制：請選擇較短分集或原始串流下載',
+    FFMPEG_ERROR: '影片處理工具（Librempeg WASM）失敗：可能不支援此影片編碼、加密方式或媒體格式',
+    FFMPEG_LIMIT: '瀏覽器影片處理的記憶體限制：請選擇較短分集或原始串流下載',
     NO_DIRECTORY: '儲存資料夾不可使用，請重新選擇',
     UNSUPPORTED_FORMAT: '不支援 HLS（.m3u8）媒體網址；請改用 MP4 媒體直連或官方劇集網址',
     INCOMPLETE: '下載內容不完整，收到的位元組數與 Content-Length 不符',

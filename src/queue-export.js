@@ -1,7 +1,7 @@
 // Export only the entries selected in the *download queue*. All bytes come
 // from the locally staged episode files, not a second network-fetch pipeline.
 import { zipReadableStream } from './zip.js';
-import { concatLosslessly } from './ffmpeg.js';
+import { concatLosslessly } from './media-convert.js';
 import { collectionFileName, episodeFileName, filenameExtension } from './naming.js';
 import { errorWith, classifyError } from './logic.js';
 

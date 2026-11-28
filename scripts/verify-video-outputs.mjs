@@ -13,9 +13,16 @@ import { createFmp4Assembler } from '../src/fmp4-assembler.js';
 import { normalizeBvc2Config } from '../src/bvc2-config.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'hongguo-output-check-'));
-const coreDir = resolve(process.argv[2] || 'public/bvc2');
-const { default: createModule } = await import(pathToFileURL(join(coreDir, 'bvc2-core.mjs')));
-const wasmBinary = readFileSync(join(coreDir, 'bvc2-core.wasm'));
+// Usage: node scripts/verify-video-outputs.mjs [DIR] [mt|st]
+const coreDir = resolve(process.argv[2] || 'public/media-core');
+const variant = process.argv[3] || 'mt';
+const base = variant === 'mt' ? 'media-core' : 'media-core-st';
+const { default: createCore } = await import(pathToFileURL(join(coreDir, base + '.mjs')));
+const wasmBinary = readFileSync(join(coreDir, base + '.wasm'));
+const threads = variant === 'mt' ? 4 : 1;
+// Each instance keeps its pthread Workers; only the tuned encoders below
+// (SVT-AV1 at lp 4 starts ~60 threads) pre-start a pool, like the browser.
+const createModule = options => createCore({ pthreadPoolSize: 0, ...options });
 const key = '00112233445566778899aabbccddeeff'; // public synthetic test constant
 const ffmpeg = args => execFileSync('ffmpeg', ['-nostdin', '-v', 'error', ...args], { maxBuffer: 32 * 1024 * 1024 });
 const probe = (path, vvc = false) => JSON.parse(execFileSync(vvc ? (process.env.VVC_FFPROBE || 'ffprobe') : 'ffprobe', ['-v', 'error', '-count_frames',
@@ -56,6 +63,74 @@ try {
     }
     console.log(JSON.stringify({ mode, codec: name, frames: video.nb_read_frames,
       milliseconds: Math.round(performance.now() - start), progressEvents: progress.length }));
+  }
+  // Download profiles: each encoder with an explicit preset and quality, and
+  // (mt) several encoder threads. Output must decode and keep every frame.
+  const tuned = {};
+  const tunedCore = await createModule({ pthreadPoolSize: variant === 'mt' ? 72 : 0 });
+  for (const [mode, name, preset, quality] of [[4, 'h264', 'medium', 18], [5, 'hevc', 'fast', 22],
+    [2, 'av1', '8', 30], [3, 'vvc', 'fast', 30]]) {
+    const core = tunedCore;
+    core.FS.writeFile('/in.mp4', raw);
+    const start = performance.now();
+    const code = await core.ccall('media_convert', 'number',
+      ['string', 'string', 'string', 'number', 'string', 'number', 'number'],
+      ['/in.mp4', '/out.mp4', key, mode, preset, quality, threads], { async: true });
+    assert.equal(code, 0, core.UTF8ToString(core._media_last_error()));
+    const path = join(dir, 'tuned-' + name + '.mp4');
+    writeFileSync(path, core.FS.readFile('/out.mp4'));
+    const info = probe(path, name === 'vvc'), video = info.streams.find(s => s.codec_type === 'video');
+    assert.equal(video.codec_name, name);
+    assert.equal(Number(video.nb_read_frames), 96);
+    if (name === 'hevc') assert.equal(video.codec_tag_string, 'hvc1');
+    if (name !== 'vvc' || process.env.VVC_FFMPEG)
+      execFileSync(name === 'vvc' ? process.env.VVC_FFMPEG : 'ffmpeg',
+        ['-nostdin', '-v', 'error', '-xerror', '-i', path, '-map', '0:v', '-f', 'null', '-']);
+    tuned[name] = Math.round(performance.now() - start);
+    console.log(JSON.stringify({ tuned: name, preset, quality, threads, variant,
+      bytes: info.streams.length && readFileSync(path).length, milliseconds: tuned[name] }));
+  }
+  {
+    const core = await createModule({});
+    const bad = await core.ccall('media_convert', 'number',
+      ['string', 'string', 'string', 'number', 'string', 'number', 'number'],
+      ['/missing.mp4', '/out.mp4', '', 2, '14', 30, threads], { async: true });
+    assert(bad < 0);
+    assert.match(core.UTF8ToString(core._media_last_error()), /invalid encoder preset/);
+  }
+  // Lossless concat of two copies: twice the frames, packets unchanged.
+  {
+    const core = await createModule({});
+    core.FS.writeFile('/a.mp4', readFileSync(input));
+    core.FS.writeFile('/b.mp4', readFileSync(input));
+    core.FS.writeFile('/list.ffconcat', "ffconcat version 1.0\nfile 'a.mp4'\nfile 'b.mp4'\n");
+    const code = await core.ccall('media_concat', 'number', ['string', 'string'],
+      ['/list.ffconcat', '/joined.mp4'], { async: true });
+    assert.equal(code, 0, core.UTF8ToString(core._media_last_error()));
+    const path = join(dir, 'joined.mp4');
+    writeFileSync(path, core.FS.readFile('/joined.mp4'));
+    const info = probe(path), video = info.streams.find(s => s.codec_type === 'video');
+    assert.equal(Number(video.nb_read_frames), 192);
+    assert(info.streams.some(s => s.codec_type === 'audio'));
+    ffmpeg(['-xerror', '-i', path, '-f', 'null', '-']);
+    console.log(JSON.stringify({ concat: true, frames: video.nb_read_frames }));
+  }
+  // CENC progressive -> clear fMP4 through the same core (no decoding).
+  {
+    const units = [];
+    const assembler = createFmp4Assembler({ onInit: b => units.push(b), onMedia: b => units.push(b) });
+    const core = await createModule({
+      readRange: async (offset, count) => raw.subarray(offset, offset + count),
+      writeChunk: async bytes => { await assembler.push(bytes); } });
+    const ret = await core.ccall('cenc_stream_remux', 'number', ['number', 'string'],
+      [raw.length, key], { async: true });
+    assert.equal(ret, 0, core.UTF8ToString(core._cenc_remux_error()));
+    assembler.finish();
+    const path = join(dir, 'cenc-fmp4.mp4');
+    writeFileSync(path, Buffer.concat(units));
+    const hash = file => ffmpeg(['-i', file, '-map', '0:v', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-']);
+    assert.deepEqual(hash(path), hash(input), 'CENC remux must keep compressed packets');
+    console.log(JSON.stringify({ cencRemux: true, units: units.length }));
   }
   const bvc = syntheticBvc2(join(dir, 'vvc3.mp4'));
   if (process.env.SYNTHETIC_BVC2_PATH) writeFileSync(process.env.SYNTHETIC_BVC2_PATH, bvc);
@@ -211,3 +286,5 @@ try {
       lastPts: frames.at(-1).pts, audioUnits: units.length }));
   }
 } finally { rmSync(dir, { recursive: true, force: true }); }
+// Pthread Workers keep Node alive after the last core is dropped.
+process.exit(0);

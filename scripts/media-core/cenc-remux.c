@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Incremental CENC progressive MP4 -> clear fragmented MP4, preserving
-// compressed H.264/HEVC/AAC packets. No video decoder or encoder is linked.
+// compressed H.264/HEVC/AAC packets. No decoder or encoder is used here.
 // All HTTP reads and MSE output are async Worker callbacks via Asyncify.
 #include <errno.h>
 #include <inttypes.h>
@@ -12,6 +12,7 @@
 #include <libavutil/error.h>
 #include <libavutil/mem.h>
 #include <emscripten/emscripten.h>
+#include "avio.h"
 
 #define INPUT_LIMIT (260 * 1024 * 1024)
 #define AVIO_BUFFER 32768
@@ -31,68 +32,6 @@ static int failure(int code, const char *stage) {
     return code < 0 ? code : AVERROR(EINVAL);
 }
 
-EM_ASYNC_JS(int, js_range_read, (int offset, int wanted, uint8_t *dest), {
-    try {
-        const data = await Module['readRange'](offset, wanted);
-        if (!(data instanceof Uint8Array) || data.byteLength > wanted)
-            return -5;
-        if (!data.byteLength) return 0;
-        HEAPU8.set(data, dest);
-        return data.byteLength;
-    } catch (error) {
-        // Worker owns the actual error; never log signed URL or CENC key.
-        Module['bridgeError'] = error?.name || 'ReadError';
-        return -5;
-    }
-});
-
-EM_ASYNC_JS(int, js_output_write, (const uint8_t *src, int length), {
-    try {
-        const data = HEAPU8.slice(src, src + length);
-        await Module['writeChunk'](data);
-        return length;
-    } catch (error) {
-        Module['bridgeError'] = error?.name || 'WriteError';
-        return -5;
-    }
-});
-
-typedef struct Stream {
-    int64_t size;
-    int64_t position;
-} Stream;
-
-static int input_read(void *opaque, uint8_t *buf, int capacity) {
-    Stream *stream = opaque;
-    if (stream->position >= stream->size) return AVERROR_EOF;
-    int length = (int)FFMIN((int64_t)capacity, stream->size - stream->position);
-    int count = js_range_read((int)stream->position, length, buf);
-    if (count <= 0) return count < 0 ? AVERROR(EIO) : AVERROR_EOF;
-    stream->position += count;
-    return count;
-}
-
-static int64_t input_seek(void *opaque, int64_t offset, int whence) {
-    Stream *stream = opaque;
-    if (whence == AVSEEK_SIZE) return stream->size;
-    int64_t next;
-    switch (whence & ~AVSEEK_FORCE) {
-    case SEEK_SET: next = offset; break;
-    case SEEK_CUR: next = stream->position + offset; break;
-    case SEEK_END: next = stream->size + offset; break;
-    default: return AVERROR(EINVAL);
-    }
-    if (next < 0 || next > stream->size) return AVERROR(EINVAL);
-    stream->position = next;
-    return next;
-}
-
-static int output_write(void *opaque, const uint8_t *data, int length) {
-    (void)opaque;
-    if (length <= 0) return 0;
-    return js_output_write(data, length);
-}
-
 static int execute(Stream *reader, const char *key, double start_seconds) {
     int ret, video_tracks = 0, video_input_index = -1;
     AVFormatContext *input = NULL, *output = NULL;
@@ -105,7 +44,7 @@ static int execute(Stream *reader, const char *key, double start_seconds) {
     input_buffer = av_malloc(AVIO_BUFFER);
     if (!input_buffer) { ret = failure(AVERROR(ENOMEM), "input AVIO buffer"); goto done; }
     reader_io = avio_alloc_context(input_buffer, AVIO_BUFFER, 0,
-        reader, input_read, NULL, input_seek);
+        reader, media_input_read, NULL, media_input_seek);
     if (!reader_io) { ret = failure(AVERROR(ENOMEM), "input AVIO context"); goto done; }
     input_buffer = NULL; // now owned by reader_io
     input = avformat_alloc_context();
@@ -165,7 +104,7 @@ static int execute(Stream *reader, const char *key, double start_seconds) {
     output_buffer = av_malloc(AVIO_BUFFER);
     if (!output_buffer) { ret = failure(AVERROR(ENOMEM), "output AVIO buffer"); goto done; }
     writer_io = avio_alloc_context(output_buffer, AVIO_BUFFER, 1,
-        NULL, NULL, output_write, NULL);
+        NULL, NULL, media_output_write, NULL);
     if (!writer_io) { ret = failure(AVERROR(ENOMEM), "output AVIO context"); goto done; }
     output_buffer = NULL;
     writer_io->seekable = 0;

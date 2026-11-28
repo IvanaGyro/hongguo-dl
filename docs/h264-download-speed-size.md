@@ -20,19 +20,13 @@ localStorage; a job snapshots the profile on enqueue and retains it across
 retries and reloads. Separate profiles may coexist as distinct jobs and
 have distinct filenames.
 
-- Non-ByteVC2: FFmpeg.wasm uses `-c:v libx264 -preset ... -crf ...`.
-- ByteVC2: `bvc2_convert_h264` selects the same preset/CRF, High profile
-  and two B-frames, while the existing playback transcode remains unchanged.
-
-**Runtime deployment:** updating `scripts/bvc2-transcoder.c` does not
-update the already published WASM. The JS worker detects missing
-`bvc2_convert_h264` and reports the unavailable encoder rather than
-silently reverting to a different CRF. Rebuild `public/bvc2/bvc2-core.mjs`,
-`.wasm` and the manifest together using
-`scripts/build-bvc2-wasm-transcode.sh` then
-`scripts/bvc2-wasm-bundle.mjs publish DIST`, and verify the published
-pair with `node scripts/bvc2-wasm-bundle.mjs verify`.
+Every source (ByteVC2 or not) is encoded by the unified media core's
+`media_convert(..., "h264", preset, crf, threads)` with High profile and two
+B-frames; playback's ByteVC2 fallback keeps its own baseline/zerolatency
+defaults. H.265, AV1 and VVC downloads have the same kind of slider; see
+[media-core.md](media-core.md).
 
 The reference speed and size measurements used a separate pinned 8-thread
-WASM benchmark and are **not guaranteed** on end-user devices; the current
-published browser x264 build is single-threaded.
+WASM benchmark and are **not guaranteed** on end-user devices. The browser
+uses the multi-thread core (up to 8 encoder threads) on cross-origin
+isolated pages and the single-thread core elsewhere.

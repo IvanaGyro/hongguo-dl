@@ -1,6 +1,5 @@
 node_modules/
 dist/
-public/ffmpeg/
 .wrangler/
 .DS_Store
 *.log

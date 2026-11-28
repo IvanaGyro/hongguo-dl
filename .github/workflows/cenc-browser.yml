@@ -43,7 +43,7 @@ on:
       - 'src/stream-buffer-policy.js'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'src/retry.js'
-      - 'public/cenc/**'
+      - 'public/media-core/**'
   pull_request:
     paths:
       - '.github/workflows/cenc-browser.yml'
@@ -86,7 +86,7 @@ on:
       - 'src/stream-buffer-policy.js'
       - 'tests/cenc-worker-reuse.node.mjs'
       - 'src/retry.js'
-      - 'public/cenc/**'
+      - 'public/media-core/**'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -116,10 +116,10 @@ jobs:
         run: node --test tests/unit/app/fmp4-assembler.test.mjs tests/unit/app/clear-key.test.mjs
       - name: Verify WASM assets are published to branch
         run: |
-          test -s public/cenc/cenc-core.wasm
-          test -s public/cenc/cenc-core.mjs
+          test -s public/media-core/media-core.wasm
+          test -s public/media-core/media-core-st.wasm
       - name: Verify published WASM ABI manifest and asset hashes
-        run: node scripts/cenc-wasm-bundle.mjs verify
+        run: node scripts/media-core-bundle.mjs verify
       - name: Generate large synthetic encrypted H264/AAC progressive sample
         run: |
           sudo apt-get update -qq

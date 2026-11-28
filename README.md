@@ -11,12 +11,12 @@
 - 播放畫質選單逐集依取得的 metadata 動態更新，先排除瀏覽器或播放工具不支援的編碼。同畫質只有一種可播放編碼時只顯示畫質，多種時才附上 codec。切換影集或重新載入一律重設為自動；同影集跨集只匹配畫質，不沿用上一集的 codec。
 - 自動畫質使用 Web／App 最先成功回傳的 CDN 清單，先過濾不可播放編碼，再選其中最高畫質。後到清單可更新選單與備援候選，不會自動中斷正在播放的來源。下載選單不受瀏覽器解碼能力限制，仍只用一集取得可用畫質。
 - **ByteVC2 與標準 VVC/H.266 不相容**，不能由瀏覽器的 `vvc1` 支援判斷。需部署 Librempeg WASM 播放工具，一律先增量轉碼成 H.264 串流；只有瀏覽器無法使用增量串流（例如沒有 MSE）時才改用整集轉碼備援，不再提供網址參數強制整集轉碼。已用一份真實 720p CENC ByteVC2 樣本驗證全集轉碼（4,640 影格）與串流／前後 seek 片段解碼；這不代表所有變體與裝置都已驗證，兩條路徑均有記憶體與效能限制。
-- **CENC 一般加密 MP4 增量播放（實驗性）**：精簡 Librempeg WASM 透過 HTTP Range 的自訂 AVIO 逐段讀取並解密，保留原有 H.264/HEVC、AAC 壓縮封包，重新封裝為 clear fMP4，經 MSE 播放；不是重新編碼。已在 Chromium 與 Firefox 的合成 H.264/AAC 加密一般 MP4 上確認**第一個影格在來源未下載完時呈現、持續播放超過 1.5 秒**；並在 Node.js WASM 中驗證合成 HEVC/AAC 完整輸出可解碼。**合成素材**已在 Chromium／Firefox 驗證第 7／35／63 秒等未緩衝位置往返 Seek、重新整理續播與播放／下載模式切換；Chromium 合成 300 秒影片完整播畢，MSE 採有容量限制的前後緩衝。1920×1080 HEVC/AAC 合成加密樣本已確認 WASM 無損轉封裝與 FFmpeg 解碼。**真實紅果 1080p HEVC 的瀏覽器影格／音訊、Android Firefox、作業系統與 GPU 記憶體仍待驗證**。已分段加密 fMP4 改由媒體 Worker 從同一份下載快取把原始加密片段直通給 MSE，再由瀏覽器原生 EME（Clear Key）解密，需要 `sidx` 或 `mfra` 分段索引，否則改走 WASM 串流。加密網址不再直接交給 `<video>`。
+- **CENC 一般加密 MP4 增量播放（實驗性）**：Librempeg 媒體核心透過 HTTP Range 的自訂 AVIO 逐段讀取並解密，保留原有 H.264/HEVC、AAC 壓縮封包，重新封裝為 clear fMP4，經 MSE 播放；不是重新編碼。已在 Chromium 與 Firefox 的合成 H.264/AAC 加密一般 MP4 上確認**第一個影格在來源未下載完時呈現、持續播放超過 1.5 秒**；並在 Node.js WASM 中驗證合成 HEVC/AAC 完整輸出可解碼。**合成素材**已在 Chromium／Firefox 驗證第 7／35／63 秒等未緩衝位置往返 Seek、重新整理續播與播放／下載模式切換；Chromium 合成 300 秒影片完整播畢，MSE 採有容量限制的前後緩衝。1920×1080 HEVC/AAC 合成加密樣本已確認 WASM 無損轉封裝與 FFmpeg 解碼。**真實紅果 1080p HEVC 的瀏覽器影格／音訊、Android Firefox、作業系統與 GPU 記憶體仍待驗證**。已分段加密 fMP4 改由媒體 Worker 從同一份下載快取把原始加密片段直通給 MSE，再由瀏覽器原生 EME（Clear Key）解密，需要 `sidx` 或 `mfra` 分段索引，否則改走 WASM 串流。加密網址不再直接交給 `<video>`。
 - **本集下載快取與 Seek**：CENC 一般 MP4 的原始加密資料使用獨立的 16／32 MiB 有界區段快取，保留 metadata，並跨 Seek 重用 Worker、WASM 與 MediaSource。目標已下載但尚未封裝至 MSE 時，從快取重新封裝，只有缺少的位元組才向 CDN 請求。播放開始後，容量允許的短片可先下載完整本集；大型來源採有限預載，暫停會停止主動預讀，省流量模式停用背景預讀。MSE 前方預載依碼率與記憶體調整，最多約 120 秒。快取隨離開該集／切換模式釋放，不是永久下載。診斷 v2 分開顯示 MSE 時間區間、原始快取位元組區間、快取命中／淘汰、HTTP 數與 Seek 耗時，`bufferedEnd` 不代表之前所有區段均已下載。
 - **自動下一集預取**：接近片尾或本集處理完成時，只準備下一集。支援的增量路徑可獨立下載下一集，並在本集 CPU 處理完成後預先產生有界片段；切集沿用 Worker、索引與快取。預載用的 MediaSource 尚未掛載，不會同時顯示兩集；離開播放會清掉當前與預載資源。不能安全預建的 EME／整檔 ByteVC2 路徑只預取 metadata。節省數據模式會停用預取，跳集或離開播放會取消。
 - 下載模式提供選集佇列、逐集手動儲存、從佇列勾選多集匯出單一 ZIP 或 MP4 無損合併；ZIP 可混合影集，MP4 合併僅接受相容的同一影集。
 - Worker 以 **Rust/WASM** 計算 SM3、Argus Simon、Ladon／Helios、Gorgon，以及 Medusa 的 XM-XOR、自訂 AES V3、F13 雜湊與 IV／校驗碼；Bun 負責建置與測試，JavaScript 保留瀏覽器、網路與部分協定組裝 API。
-- 未加密且無需轉換的原始影片可直接串流寫入已選取的本機資料夾；加密或需處理的影片使用 FFmpeg.wasm 解密、無損封裝 MP4 或轉 H.264。**不支援 HLS（`.m3u8`）**：紅果片源皆為 MP4，貼上 `.m3u8` 網址會在任何媒體請求前回報 `UNSUPPORTED_FORMAT`。
+- 未加密且無需轉換的原始影片可直接串流寫入已選取的本機資料夾；加密或需處理的影片使用統一的 Librempeg WASM 媒體核心解密、無損封裝 MP4，或以可調速度／檔案大小的 H.264、H.265、AV1（SVT-AV1）、VVC 重新編碼。**不支援 HLS（`.m3u8`）**：紅果片源皆為 MP4，貼上 `.m3u8` 網址會在任何媒體請求前回報 `UNSUPPORTED_FORMAT`。
 - 以 `window.showDirectoryPicker()` 是否可使用決定是否直接寫入資料夾，**不依瀏覽器名稱判斷**。Android Firefox 等不支援此 API 的瀏覽器會把已完成分集暫存至 IndexedDB，**不會逐集自動跳出存檔對話框**；使用者自行決定何時逐集儲存或匯出。
 - ZIP64 優先透過 Service Worker 串流匯出，無法轉移 ReadableStream 時提供有容量上限的 Blob 備援。
 - 最近影集、觀看進度及佇列狀態保存在 localStorage；已完成分集的 Blob 暫存於 IndexedDB。重開網頁後未完成的串流需手動重試，已完成的暫存也可能被瀏覽器回收。影片內容不傳回 GitHub Pages，也不儲存在 Cloudflare。
@@ -27,7 +27,7 @@
 GitHub Pages (Bun/Vite)        Cloudflare Worker           官方來源
    網頁播放器                 /api/series  ----------->  官網分集資料
    下載佇列   ------------->  /api/source  ----------->  App / 公開片源
-   FFmpeg.wasm                /api/media   ----------->  影片 CDN (Range)
+   Librempeg WASM（單一核心）  /api/media   ----------->  影片 CDN (Range)
        |
        +-- localStorage: 最近影集 / 觀看進度 / 佇列狀態
        +-- IndexedDB: 已完成的分集 Blob
@@ -51,7 +51,7 @@ bunx playwright test  # 瀏覽器行為測試（tests/browser；需 FFmpeg 與 P
 
 測試分層、各檔案涵蓋範圍與已知問題見 [測試目錄](docs/test-catalog.md)。
 
-FFmpeg.wasm 核心由建置腳本 gzip 壓縮成約 9.8 MiB，避免 Cloudflare Worker Assets 的 25 MiB 限制。此版實際部署在 GitHub Pages，不再需要把此檔案放進 Worker。
+所有影片處理（CENC 增量轉封裝、ByteVC2、整集解密／轉碼、MP4 合併）都使用同一個 Librempeg WASM 媒體核心（`public/media-core/`），含 x264、x265、SVT-AV1、VVenC。頁面可跨來源隔離時使用多執行緒版，否則使用相同 API 的單執行緒版；GitHub Pages 由站內 Service Worker 補上 COOP/COEP。建置、執行緒與 SVT-AV1 修補說明見 [媒體核心](docs/media-core.md)。
 
 ### 2. 部署 Cloudflare Worker
 
@@ -66,7 +66,7 @@ bun run deploy:worker
 
 1. 進入 [此儲存庫 GitHub Pages 設定](https://github.com/IvanaGyro/hongguo-dl/settings/pages)，在 **Build and deployment → Source** 選取 **GitHub Actions**。
 2. 在 `main` 分支包含此工作流程之後，`.github/workflows/pages.yml` 會在每次 push main 時，用 Bun 建置並部署 `dist/`；也可在 Actions 手動執行 `workflow_dispatch`。
-3. 網站預期網址為 `https://ivanagyro.github.io/hongguo-dl/`，Vite base path 已設定為 `/hongguo-dl/`，FFmpeg.wasm 壓縮核心亦使用此路徑。
+3. 網站預期網址為 `https://ivanagyro.github.io/hongguo-dl/`，Vite base path 已設定為 `/hongguo-dl/`，媒體核心亦使用此路徑。
 4. 在 GitHub 儲存庫 **Settings → Secrets and variables → Actions → Variables** 新增 `PROXY`，內容填入 **Cloudflare Worker 的公開 HTTPS 網域根網址**，例如 `https://hongguo-dl.<your-subdomain>.workers.dev`。下一次執行 `.github/workflows/pages.yml` 時會自動帶入前端的 `VITE_API_ORIGIN`，第一次開啟網站就有預設 API 網址；舊變數 `HONGGUO_WORKER_ORIGIN` 僅作備援。
 5. 你可以在網站「**Cloudflare Worker API 設定**」另存自己的 Worker 網址，這個瀏覽器的設定會優先於網站預設。按「**恢復網站預設**」可刪除本機覆寫設定，改用最新 Pages 建置帶入的 `PROXY`。如果 `PROXY` 沒有設定，GitHub Pages 仍需使用者手動填寫。
 
@@ -93,8 +93,8 @@ Vite 開發模式預設將同來源的 `/api/` 轉發到本機 Worker；`.env` �
 - **尚待驗收**：WebKit 真正 AAC 音訊輸出（Web Audio RMS 為 0 尚不代表實際靜音）、真實 reload／播畢、Windows／Android 解碼及長片資源使用。
 - **ByteVC2**：已整合實驗性 Range/MSE 串流與原編碼、H.264、H.265、AV1、標準 VVC 下載輸出（ByteVC2 選 VVC 時直接重新封裝成 `vvc1`，不重新編碼），已以一份真實 720p CENC ByteVC2 樣本驗證全集轉碼及串流片段解碼；播放預設使用增量串流，仍須注意裝置效能與記憶體限制。詳見 [技術說明](docs/bvc2-wasm.md)。
 - **公開來源檢測**：真實 CDN 候選可能同時有 HTTP 403／206；腳本只做有界讀取，遇 429 停止。無 DRM 授權、HLS、帳號登入或任意網域代理支援；媒體 URL／金鑰不進日誌。
-- **下載限制**：Blob／FFmpeg 暫存及 ZIP／MP4 合併均有限額；不是所有 60 集都能直接無損併成單一 MP4。仍需 Android Firefox 真實大批次驗收。
+- **下載限制**：Blob／WASM 暫存及 ZIP／MP4 合併均有限額；不是所有 60 集都能直接無損併成單一 MP4。仍需 Android Firefox 真實大批次驗收。
 
 ## 授權與第三方來源
 
-本專案及衍生檔案採 GPL-3.0-only。 `worker/vendor/` 修改自 [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama) 的播放取源模組；FFmpeg.wasm 於建置時取得，並遵循相關授權。詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和 [LICENSE](LICENSE)。
+本專案及衍生檔案採 GPL-3.0-only。 `worker/vendor/` 修改自 [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama) 的播放取源模組；媒體核心的 Librempeg 與編碼器原始碼於建置時依固定 commit 取得，並遵循相關授權。詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和 [LICENSE](LICENSE)。
