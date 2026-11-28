@@ -68,6 +68,7 @@ Media and API responses are local:
 | `recovery.spec.mjs` | **Fault table**: source API failure, CDN 403 rotation, CORS failure → proxy, Referer refusal, a 520 in the middle of an episode, empty App source → new device, failing device registration (twice; and the cooldown message), no WASM/EME → whole-file, mid-stream processing failure. Also: the device is reused after a reload. |
 | `quality.spec.mjs` | **Quality rules**, with codec support emulated: the player offers only playable renditions while downloads offer all; a late list extends the menu without switching; manual quality is per session; it survives a codec change; the codec report. |
 | `layout.spec.mjs` | Widths 1440–320 px in watch (landscape and portrait video) and download mode; a 1000-episode series pages its grid and queue. Screenshots are attached to the report. |
+| `search.spec.mjs` | **Title search**: cards show cover, title, episode count and intro; the search carries the browser installation; "load more" sends the upstream cursor and skips repeated series; widths 1440–320 px; a card opens the series. An ID still opens directly and clears results; a failed search is an error, not an empty list. |
 | `slow.spec.mjs` | `@slow`, only with `HONGGUO_SLOW=1` (and on pushes to `main`): a 5-minute CENC episode across a 2-minute pause, and a 30-minute CENC episode, both to the end. |
 
 ### Known bugs the specs record

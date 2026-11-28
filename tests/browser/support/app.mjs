@@ -41,6 +41,7 @@ export class App {
     this.requests = [];
     this.errors = [];
     this.health = { ok: true, sourceChannels: false };
+    this.searchPages = {};
   }
 
   // episodes: array of variant lists, one list per episode.
@@ -67,6 +68,12 @@ export class App {
       localStorage.setItem('hongguo-dl-worker-origin-v1', location.origin);
     });
     await this.context.route(url => url.pathname.startsWith('/api/'), route => this.api(route));
+    // Search covers: a 3x4 PNG from the official picture host.
+    await this.context.route(/^https:\/\/p3-novel\.byteimg\.com\//, route => {
+      this.requests.push({ kind: 'cover', url: route.request().url() });
+      return route.fulfill({ status: 200, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' },
+        body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAAECAIAAADETxJQAAAAEklEQVR4nGP4z8AARAxEMjAGANn5C/U9wPKZAAAAAElFTkSuQmCC', 'base64') });
+    });
     await this.context.route(/^https:\/\/[a-z0-9-]+\.fqnovelvod\.com\//, route =>
       this.media(route, route.request().url(), 'cdn'));
   }
@@ -114,6 +121,19 @@ export class App {
         if (await this.injected('source', route, { sid, vid, device })) return;
         if (!episode) return json({ error: { code: 'NOT_FOUND', message: 'No fixture episode' } }, 404);
         return json({ variants: episode.variants.map(({ media, ...v }) => v) });
+      }
+      case '/api/search': {
+        // Pages of `searchPages` (set by a spec); page N+1 needs cursor "cN".
+        const q = url.searchParams.get('q'), page = Number(url.searchParams.get('page') || 1);
+        const device = request.headers()['x-playback-device'];
+        this.requests.push({ kind: 'search', q, page, cursor: url.searchParams.get('cursor'), device: device ? JSON.parse(device) : null });
+        if (await this.injected('search', route, { q, page })) return;
+        if (!device) return json({ error: { code: 'DEVICE_REQUIRED', message: '請先初始化播放裝置' } }, 409);
+        if (page > 1 && url.searchParams.get('cursor') !== 'c' + (page - 1))
+          return json({ error: { code: 'INVALID_CURSOR', message: 'bad cursor' } }, 400);
+        const pages = this.searchPages[q] || [];
+        const more = page < pages.length;
+        return json({ items: pages[page - 1] || [], page, hasMore: more, cursor: more ? 'c' + page : null });
       }
       case '/api/media': return this.media(route, url.searchParams.get('url'), 'proxy');
       default: return json({ error: { code: 'NOT_FOUND', message: 'No fixture API' } }, 404);
