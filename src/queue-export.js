@@ -1,7 +1,7 @@
 // Export only the entries selected in the *download queue*. All bytes come
 // from the locally staged episode files, not a second network-fetch pipeline.
 import { zipReadableStream } from './zip.js';
-import { concatLosslessly } from './media-convert.js';
+import { concatLosslessly, mediaCoreAvailable, MEDIA_CORE_MISSING } from './media-convert.js';
 import { collectionFileName, episodeFileName, filenameExtension } from './naming.js';
 import { errorWith, classifyError } from './logic.js';
 
@@ -24,13 +24,18 @@ async function waitUntilStaged(job, readFile, currentStatus, signal, onStatus) {
   }
 }
 export async function exportQueue({
-  jobs, type, readFile, currentStatus, signal, saveArchive, saveMp4, onStatus
+  jobs, type, readFile, currentStatus, signal, saveArchive, saveMp4, onStatus,
+  coreAvailable = mediaCoreAvailable
 }) {
   if (!jobs?.length) throw errorWith('NO_SELECTION', '請勾選要匯出的佇列項目');
   const ordered = orderQueueSelection(jobs);
   if (type === 'mp4') {
     if (new Set(ordered.map(j => j.seriesId)).size !== 1)
       throw errorWith('INCOMPATIBLE_MEDIA', 'MP4 無損合併僅限同一部影集，跨影集請使用 ZIP');
+    // Merging needs the media core: check before waiting for downloads or
+    // reading every staged episode into memory. ZIP never needs it.
+    if (ordered.length > 1 && !await coreAvailable())
+      throw errorWith('MEDIA_CORE_UNAVAILABLE', MEDIA_CORE_MISSING);
     const inputs = [];
     let prior = null;
     for (const [index, job] of ordered.entries()) {
