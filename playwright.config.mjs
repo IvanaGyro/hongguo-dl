@@ -34,7 +34,11 @@ export default defineConfig({
         launchOptions: { firefoxUserPrefs: { 'media.eme.enabled': true, 'media.autoplay.default': 0 } }
       }
     },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } }
+    // Playwright cannot route requests from a service-worker-controlled page
+    // in WebKit, so the site's worker (registered at startup for COOP/COEP)
+    // would bypass every mocked API/CDN response. WebKit has no COEP
+    // `credentialless` (no isolation) and its ZIP step is skipped anyway.
+    { name: 'webkit', use: { ...devices['Desktop Safari'], serviceWorkers: 'block' } }
   ],
   webServer: {
     command: `bun run build && bunx vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,
