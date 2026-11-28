@@ -8,7 +8,8 @@ const DRAMA_TAB = 11;
 const ID = /^\d{1,30}$/;
 const MAX_QUERY = 80;
 const MAX_PAGE = 50;
-const MAX_CURSOR = 2048;
+// Worst case: both tokens at their limits, every character JSON-escaped, then base64.
+const MAX_CURSOR = 4096;
 
 function httpError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
@@ -63,29 +64,32 @@ export function parseSearchResponse(data) {
   }
   const hasMore = tab.has_more === true || tab.has_more === 1 || tab.has_more === '1' || tab.has_more === 'true';
   const nextOffset = Number(tab.next_offset);
-  const next = hasMore && Number.isSafeInteger(nextOffset) && nextOffset >= 0 ? {
-    search_id: text(tab.search_id).slice(0, 256), passback: text(tab.passback).slice(0, 1024), next_offset: nextOffset
-  } : null;
-  return { items, hasMore: Boolean(next), next };
+  const next = { search_id: text(tab.search_id), passback: text(tab.passback), next_offset: nextOffset };
+  // Opaque upstream tokens are never truncated: one the cursor cannot carry ends paging.
+  return { items, hasMore: hasMore && validNext(next), next: hasMore && validNext(next) ? next : null };
+}
+
+const TOKEN = /^[\x21-\x7e]*$/;
+function validNext(value) {
+  return Boolean(value) && Number.isSafeInteger(value.next_offset) && value.next_offset >= 0 &&
+    typeof value.search_id === 'string' && value.search_id.length <= 256 && TOKEN.test(value.search_id) &&
+    typeof value.passback === 'string' && value.passback.length <= 1024 && TOKEN.test(value.passback);
 }
 
 // Upstream paging is by result cell offset plus a search session, not by fixed
 // page size, so the next page's state travels back to the client opaquely.
+// Validated tokens are printable ASCII, so their JSON is plain base64 input.
 export function encodeCursor(next) {
-  return next ? btoa(unescape(encodeURIComponent(JSON.stringify(next))))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : null;
+  return next && validNext(next) ? btoa(JSON.stringify({ search_id: next.search_id, passback: next.passback,
+    next_offset: next.next_offset })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : null;
 }
 export function decodeCursor(raw) {
   if (!raw) return null;
   const invalid = () => httpError(400, 'INVALID_CURSOR', '搜尋分頁資料無效，請重新搜尋');
   if (raw.length > MAX_CURSOR || !/^[A-Za-z0-9_-]+$/.test(raw)) throw invalid();
   let value;
-  try {
-    value = JSON.parse(decodeURIComponent(escape(atob(raw.replace(/-/g, '+').replace(/_/g, '/')))));
-  } catch { throw invalid(); }
-  if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.next_offset) || value.next_offset < 0 ||
-      typeof value.search_id !== 'string' || value.search_id.length > 256 || !/^[\x21-\x7e]*$/.test(value.search_id) ||
-      typeof value.passback !== 'string' || value.passback.length > 1024 || !/^[\x21-\x7e]*$/.test(value.passback)) throw invalid();
+  try { value = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/'))); } catch { throw invalid(); }
+  if (!validNext(value)) throw invalid();
   return { search_id: value.search_id, passback: value.passback, next_offset: value.next_offset };
 }
 
@@ -112,7 +116,8 @@ export async function searchSeries({ q, page, cursor }, session, { requestJson =
   } catch (error) {
     throw Object.assign(httpError(error.status >= 400 ? error.status : 502, error.code || 'SEARCH_UNAVAILABLE',
       String(error.message || '搜尋失敗').slice(0, 250)),
-    { retryAfterMs: error.retryAfterMs, upstreamStatus: error.code === 'EMPTY_RESPONSE' ? 200 : undefined, emptyResponseCount: 1 });
+    { retryAfterMs: error.retryAfterMs,
+      ...(error.code === 'EMPTY_RESPONSE' ? { upstreamStatus: 200, emptyResponseCount: 1 } : {}) });
   }
   const { items, hasMore, next } = parseSearchResponse(data);
   return { items, page, hasMore: hasMore && page < MAX_PAGE, cursor: page < MAX_PAGE ? encodeCursor(next) : null };

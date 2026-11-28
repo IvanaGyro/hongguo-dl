@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { isSearchKeyword, searchRoute, searchCardsHtml, mergeSearchItems } from '../../../src/series-search.js';
 
 test('only titles go to search; IDs, ID lists and URLs keep the series lookup', () => {
-  for (const input of ['閃婚老公大十歲', 'BFLC', '總裁 第二季', 'love 2'])
+  for (const input of ['閃婚老公大十歲', 'BFLC', '總裁 第二季', 'love 2', 'No.1', 'v2.0', 'S.H.E', 'Mr.Big'])
     assert.equal(isSearchKeyword(input), true, input);
   for (const input of ['', '7709512254240066584', '1, 2，3', 'https://hongguoduanju.com/detail?series_id=1',
-    'hongguoduanju.com/player/1', 'www.example.com', '//cdn.example/a.mp4'])
+    'HTTPS://cdn.example/a.mp4', 'http://example.com'])
     assert.equal(isSearchKeyword(input), false, input);
 });
 

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Series search by title: input classification, /api/search routes and result cards.
 
-const URL_LIKE = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|www\.|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#:]|$))/i;
+// Only an explicit scheme marks a URL (the Worker requires one too), so dotted
+// titles such as "No.1" or "S.H.E" stay searches.
+const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** True when lookup input is a title keyword rather than an ID, ID list or URL. */
 export function isSearchKeyword(input) {

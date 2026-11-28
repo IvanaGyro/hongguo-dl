@@ -67,3 +67,49 @@ test('a failed search is shown as an error, not as empty results', async ({ app,
   await expect(page.locator('#lookup-error')).toHaveText('搜尋失敗：搜尋服務暫不可用（錯誤碼 100103）');
   await expect(page.locator('#search-results')).toBeHidden();
 });
+
+test('a page with no series yet says more may follow, and a card opened during "load more" wins', async ({ app, page }) => {
+  app.health = { ok: true, sourceChannels: true, deviceSessions: true, deviceProfile: 'fixture-v1' };
+  app.addSeries(81, { title: '第二頁的劇', episodes: [[variant('clear.mp4')]] });
+  app.searchPages['只有片段'] = [[], [result(81, '第二頁的劇', '簡介')], [result(82, '第三頁', '簡介')]];
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  // Page 3 hangs until the test lets it through.
+  app.fault('search', async ({ page: n }) => { if (n === 3) await held; });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await page.locator('#input-url').fill('只有片段');
+  await page.locator('#lookup-button').click();
+  await expect(page.locator('#search-heading')).toHaveText('這一頁沒有「只有片段」的短劇，可再載入更多');
+  await expect(page.locator('#search-more')).toBeVisible();
+
+  await page.locator('#search-more').click();
+  await expect(page.locator('#search-list .search-card')).toHaveCount(1);
+  await page.locator('#search-more').click();
+  await expect.poll(() => app.requestsOf('search').length).toBe(3);
+  await page.locator('#search-list .search-card').first().click();
+  await expect(page.locator('#series-title')).toHaveText('第二頁的劇');
+  // The opened series is brought into view on a phone, above the fold of the results.
+  await expect(page.locator('#player-panel')).toBeInViewport();
+  release();
+  // The superseded page neither adds cards nor reports over the opened series.
+  await page.waitForTimeout(500);
+  await expect(page.locator('#search-list .search-card')).toHaveCount(1);
+  await expect(page.locator('#lookup-error')).toBeHidden();
+  await expect(page.locator('#lookup-button')).toBeEnabled();
+  await expect(page.locator('#search-more')).toBeEnabled();
+});
+
+test('search never rotates the device or retries an empty upstream answer', async ({ app, page }) => {
+  app.health = { ok: true, sourceChannels: true, deviceSessions: true, deviceProfile: 'fixture-v1' };
+  app.fault('search', () => ({ status: 502, headers: { 'Access-Control-Allow-Origin': '*' },
+    json: { error: { code: 'EMPTY_RESPONSE', message: 'App 接口返回空響應（HTTP 200）', upstreamStatus: 200, emptyResponseCount: 1 } } }));
+  await page.goto('./');
+  for (let i = 0; i < 4; i++) {
+    await page.locator('#input-url').fill('閃婚' + i);
+    await page.locator('#lookup-button').click();
+    await expect(page.locator('#lookup-error')).toContainText('空響應');
+  }
+  expect(app.requestsOf('search')).toHaveLength(4);
+  expect(app.requestsOf('device')).toHaveLength(1);
+});

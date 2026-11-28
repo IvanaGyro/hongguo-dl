@@ -381,8 +381,16 @@ async function apiJson(route, signal, onWait = () => 0) {
   let stepAttempt = 0;
   const sourcePhase = route.includes("channel=app") ? "source-app" : route.includes("channel=web") ? "source-web" : "source-auto";
   const headers = { Accept: 'application/json' };
-  // App source and App search requests both sign with this browser's installation.
-  if ((route.startsWith('/api/source?') && !route.includes('channel=web')) || route.startsWith('/api/search?')) {
+  if (route.startsWith('/api/search?')) {
+    // Search signs with this browser's installation but never rotates it or
+    // retries: an empty search is reported, not recovered.
+    await supportsIndependentSourceChannels();
+    const capabilities = await sourceChannelProbe;
+    if (capabilities?.deviceSessions === true && typeof capabilities.deviceProfile === 'string')
+      return request(await playbackDevices.ensure(apiRoute(route), capabilities.deviceProfile));
+    return request();
+  }
+  if (route.startsWith('/api/source?') && !route.includes('channel=web')) {
     await supportsIndependentSourceChannels();
     const capabilities = await sourceChannelProbe;
     if (capabilities?.deviceSessions === true && typeof capabilities.deviceProfile === 'string') {
@@ -638,6 +646,7 @@ async function searchSeries(query, more = false) {
     $('search-list').insertAdjacentHTML('beforeend', searchCardsHtml(added));
     $('search-heading').textContent = state.items.length
       ? '「' + query + '」的搜尋結果 · ' + state.items.length + ' 部'
+      : state.hasMore ? '這一頁沒有「' + query + '」的短劇，可再載入更多'
       : '找不到「' + query + '」相關的短劇';
     // An upstream page can hold only unrelated cells; it still advances the cursor.
     $('search-more').hidden = !state.hasMore;
@@ -1125,6 +1134,12 @@ $('search-more').addEventListener('click', () => { if (search) void searchSeries
 $('search-list').addEventListener('click', event => {
   const id = event.target.closest('[data-search-id]')?.dataset.searchId;
   if (!id) return;
+  // Opening a series supersedes a "load more" still in flight; the results stay.
+  if (search) {
+    search.token++;
+    $('search-more').disabled = false;
+    $('search-more').hidden = !search.hasMore;
+  }
   $('input-url').value = id;
   void openSeriesInput(id);
 });
