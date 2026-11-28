@@ -8,7 +8,6 @@ const PROCESSING_FAILURES = new Set([
   'CENC_UNAVAILABLE',       // streaming Worker or MSE route could not run
   'CENC_REMUX_FAILED',      // WASM demux/decrypt/remux or SourceBuffer failure
   'BVC2_TRANSCODE_FAILED',  // WASM ByteVC2 → H.264 failure
-  'BVC2_UNAVAILABLE',
   'HEVC_INIT_MISMATCH',
   'HEVC_INIT_UNSUPPORTED',
   'EME_UNAVAILABLE',        // no Clear Key, unusable key or EME codec
@@ -20,6 +19,8 @@ export function isProcessingFailure(code) {
   return PROCESSING_FAILURES.has(code);
 }
 
+// MEDIA_CORE_UNAVAILABLE is deliberately absent: whole-file processing needs
+// the same media core, so falling back would only download the whole episode.
 // An absent code means the streaming route declined before reporting one.
 export function allowsWholeFileFallback(error) {
   if (!error) return true;

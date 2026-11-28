@@ -22,7 +22,7 @@ import '@videojs/html/ui/status-announcer';
 import '@fontsource-variable/chiron-goround-tc/wght.css';
 import './styles.css';
 import { safeName, mediaProxyUrl, apiUrl, normalizeWorkerOrigin, chooseWorkerOrigin, formatBytes, classifyError, errorWith, assertSupportedMediaUrl, displayStatus } from './logic.js';
-import { convertBytes, mediaCoreAvailable } from './media-convert.js';
+import { convertBytes, mediaCoreAvailable, MEDIA_CORE_MISSING } from './media-convert.js';
 import { MediaCache, episodeCacheKey } from './media-cache.js';
 import { recentSeries, rememberSeries, watchRecords, playbackKey } from './library.js';
 import { createPlayer } from './player.js';
@@ -31,7 +31,7 @@ import { createMediaTransportForSource } from './media-transport.js';
 import { createEpisodeSourceStore } from './episode-source-store.js';
 import { initialDownloadQualityEpisode } from './download-quality-options.js';
 import { ENCODER_TRADEOFFS, ENCODER_NAMES, DEFAULT_TRADEOFFS, encoderTradeoff, tradeoffIndex,
-  tradeoffSuffix, isEncodingMode } from './encoder-tradeoff.js';
+  tradeoffSuffix, isEncodingMode, jobTradeoffIndex } from './encoder-tradeoff.js';
 import { raceSourceQueries } from './source-race.js';
 import { exportQueue, orderQueueSelection } from './queue-export.js';
 import { readDownload, storeDownload, removeDownload } from './download-store.js';
@@ -61,7 +61,7 @@ const H264_TRADEOFF_STORE = 'hongguo-dl-h264-tradeoff-v1';
 // One remembered slider position per encoder; H.264 keeps its v1 key.
 const tradeoffStore = mode => mode === 'h264' ? H264_TRADEOFF_STORE : 'hongguo-dl-' + mode + '-tradeoff-v1';
 // Older queues stored only the H.264 profile.
-const jobTradeoff = job => job.tradeoffIndex ?? job.h264TradeoffIndex ?? null;
+const jobTradeoff = jobTradeoffIndex;
 // A deployment URL in .env must not bypass Vite's local /api proxy in dev.
 // Explicit per-browser overrides remain available through the API settings.
 const defaultWorkerOrigin = chooseWorkerOrigin('', import.meta.env.DEV ? '' : import.meta.env.VITE_API_ORIGIN || '');
@@ -879,7 +879,7 @@ async function runJob(job, signal) {
       await streamToDestination(job, source, signal);
     } else {
       if (!await mediaCoreAvailable())
-        throw errorWith('BVC2_UNAVAILABLE', '尚未部署 Librempeg 媒體處理 WASM');
+        throw errorWith('MEDIA_CORE_UNAVAILABLE', MEDIA_CORE_MISSING);
       const bvc2 = codecId(source.codec) === 'bytevc2';
       const bytes = await readWholeSource(job, source, signal, (bvc2 ? 260 : 320) * 1024 * 1024);
       update(job, { status: 'processing', progress: bvc2 ? null : 0, keptSource: false });

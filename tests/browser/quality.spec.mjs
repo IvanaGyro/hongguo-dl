@@ -12,7 +12,7 @@ async function emulate(context, { hevc = true, bvc2 = false } = {}) {
       return /hvc1|hev1/.test(mime) ? (hevc ? 'probably' : '') : canPlay.call(this, mime);
     };
   }, hevc);
-  if (!bvc2) await context.route('**/bvc2/**', route => route.fulfill({ status: 404, body: 'not deployed' }));
+  if (!bvc2) await context.route('**/media-core/**', route => route.fulfill({ status: 404, body: 'not deployed' }));
 }
 const options = page => page.locator('#player-quality option').allTextContents();
 const openQualityMenu = async page => {

@@ -3,7 +3,7 @@ import { createPlaybackAttempts } from './playback-attempts.js';
 // and speculative work. Playback supplies context; this layer owns scheduling.
 import { errorWith } from './logic.js';
 import { episodeCacheKey } from './media-cache.js';
-import { convertBytes, prepareMediaCore, mediaCoreAvailable } from './media-convert.js';
+import { convertBytes, prepareMediaCore, mediaCoreAvailable, MEDIA_CORE_MISSING } from './media-convert.js';
 import { renditionOptions, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, reconcileRendition, playableVariants } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
@@ -49,6 +49,13 @@ export function createMediaSession({
     log('whole-file.source', { reused: Boolean(processor), bridge });
     return download.whole(source, { bridge, processor, maxBytes: WHOLE_FILE_LIMIT,
       signal, onStage, onProgress });
+  }
+  // Whole-file processing always needs the media core: check before
+  // downloading an entire episode that could not be used anyway.
+  async function requireMediaCore(signal) {
+    const available = await mediaCoreAvailable();
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+    if (!available) throw errorWith('MEDIA_CORE_UNAVAILABLE', MEDIA_CORE_MISSING);
   }
   function refreshBvc2Choices(variants, signal) {
     if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
@@ -277,6 +284,7 @@ export function createMediaSession({
         // ByteVC2 → H.264 route was unavailable or failed while processing.
         const reportBvc2 = (message, layer = 2) => report(message, layer);
         log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2', reason: fallbackReason });
+        await requireMediaCore(signal);
         onStage('cdn.probe', { mode: 'whole-file' });
         failureStep = 'media-download'; steps.begin('media-download');
         reportBvc2('正在下載 ByteVC2 影片…', 1);
@@ -358,6 +366,7 @@ export function createMediaSession({
       log('playback.fallback.whole-file', {
         codec: codecId(source.codec) || 'unknown', reason: fallbackReason, elapsedMs: ageMs()
       });
+      await requireMediaCore(signal);
       let bytes;
       // Encrypted MP4s still require the complete source before decryption.
       // Initialize the media core after the first media chunk, in parallel with the

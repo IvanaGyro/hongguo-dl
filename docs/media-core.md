@@ -81,6 +81,16 @@ node scripts/media-core-bundle.mjs verify
 
 `.github/workflows/media-core-wasm.yml` 在 `emscripten/emsdk:3.1.74` 容器內做同樣步驟，再用 Chromium 跑 ByteVC2 串流／整檔備援（非隔離與隔離各一次），全部通過後才把二進位提交回來源分支。
 
+## 媒體核心缺失時
+
+所有整集處理（播放的整集備援、下載的解密／轉碼、合併）都需要同一個核心，所以 `media-core` 回應 404 時不會先下載整集再失敗：下載在讀取來源前、播放在進入整集備援前就以 `MEDIA_CORE_UNAVAILABLE` 停止，且不重試。這個代碼不在 `fallback-policy.js` 的處理失敗清單內，不會觸發整集備援；不需要核心的路徑（原生 EME、未加密直連）照常運作。
+
+## 測試
+
+- `scripts/verify-video-outputs.mjs DIR mt|st`：每種輸出模式各跑一次滑桿 preset／品質與編碼器預設（`''`／`0`）。來源輪流使用加密 ByteVC2 與加密 H.265，不做完整交叉組合；ByteVC2 以 `scripts/synthetic-cenc.mjs` 做整個 sample 的 CENC 加密，因為 FFmpeg 的 muxer 無法加密 VVC/ByteVC2。同編碼的來源會解密後複製，並比對封包。另外確認 `bvc2_transcode` 拒絕 H.264 輸入（`not ByteVC2`）。
+- `scripts/verify-cenc-stream-wasm.mjs`（CENC 串流、多點跳轉、256 KiB Worker 視窗）在 `cenc-wasm-stream.yml` 中對 `mt`、`st` 各跑一次。
+- 單元測試涵蓋：`.mjs`／`.wasm` 被竄改或互換、`schema`／`api` 不符、工具產生的 manifest 能通過瀏覽器驗證、已發布的 `public/media-core/manifest.json`，以及修改後的 `emsdk`／`librempegCommit`／`encoders` 來源紀錄。
+
 ## 限制
 
 - 單一核心約 17 MiB，CENC 增量播放第一次載入比原本 1.4 MiB 的 `cenc-core` 大（之後由 HTTP 快取與內容雜湊網址重用）。

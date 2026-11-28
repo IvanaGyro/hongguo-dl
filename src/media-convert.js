@@ -4,7 +4,7 @@
 // stops the encoder immediately. Replaces FFmpeg.wasm and the BVC2 bridge.
 import { errorWith } from './logic.js';
 import { runMediaWorkerJob } from './media-job.js';
-import { encoderTradeoff, isEncodingMode } from './encoder-tradeoff.js';
+import { encoderSettings, isEncodingMode } from './encoder-tradeoff.js';
 import { mediaCorePublished, mediaCoreVariant, mediaThreads } from './media-core.js';
 import { retryableAvailability } from './retryable-availability.js';
 
@@ -13,6 +13,7 @@ export const MAX_CONCAT_INPUT = 160 * 1024 * 1024;
 const createWorker = () => new Worker(new URL('./media-convert-worker.js', import.meta.url),
   { type: 'module' });
 
+export const MEDIA_CORE_MISSING = '尚未部署 Librempeg 媒體處理 WASM（media-core），無法解密或轉碼此影片';
 const checkPublished = retryableAvailability(() => mediaCorePublished());
 /** A transient 404 during a Pages deploy must not persist until reload. */
 export async function mediaCoreAvailable() {
@@ -61,12 +62,10 @@ export function convertBytes(bytes, { mode = 'copy', contentKey = null, signal, 
   if (contentKey && !/^[0-9a-f]{32}$/i.test(contentKey))
     return Promise.reject(errorWith('INVALID_KEY', '影片來源的解密金鑰格式錯誤'));
   if (signal?.aborted) return Promise.reject(errorWith('CANCELED', '已取消影片處理'));
-  const index = tradeoffIndex ?? h264TradeoffIndex ?? null;
-  const profile = index == null ? null : encoderTradeoff(mode, index);
   const threads = mediaThreads(mediaCoreVariant());
   return runMediaWorkerJob(bytes, {
-    request: { mode, key: contentKey || '', preset: profile?.preset || '',
-      quality: profile?.quality || 0, threads },
+    request: { mode, key: contentKey || '',
+      ...encoderSettings(mode, tradeoffIndex ?? h264TradeoffIndex ?? null), threads },
     progress, onProgress, signal, onResult, createWorker: () => takeWorker(mode)
   });
 }

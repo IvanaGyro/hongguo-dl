@@ -82,6 +82,9 @@ describe('retry limits and status', () => {
     }, limit);
     assert.equal(tooLargeIndex.stoppedBy, 'not-retryable');
     assert.equal(tooLargeIndex.retry, false);
+    // A missing media core cannot recover by retrying the same episode.
+    assert.equal(recordFailure(null, { code: 'MEDIA_CORE_UNAVAILABLE', message: '尚未部署' }, limit)
+      .stoppedBy, 'not-retryable');
     assert.match(playbackFailureMessage(blocked,
       { code: 'UNSUPPORTED_FORMAT', message: '不支援 HLS' }, limit), /此錯誤不可重試/);
   });
