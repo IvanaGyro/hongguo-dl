@@ -1,47 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Media Worker, layer 2 (processing): Librempeg Asyncify AVIO reads bytes
+// Media Worker, layer 2 (processing): the media core's Asyncify AVIO reads bytes
 // from the layer-1 cache in this same Worker and produces complete clear
 // fMP4 init/media units. The consumer's ACK provides backpressure.
 import { createFmp4Assembler } from './fmp4-assembler.js';
-import { verifyCencRuntimeBundle, readLimitedAsset } from './cenc-bundle.js';
-import { verifyBvc2RuntimeBundle } from './bvc2-bundle.js';
+import { loadMediaCore, mediaCoreVariant, mediaPoolSize, mediaThreads } from './media-core.js';
 
 const canceled = () => Object.assign(new Error('Canceled'), { code: 'CANCELED' });
 
-/** Download, verify and instantiate the pinned WASM runtime for a bridge. */
-export async function loadMediaRuntime({ bridge, signal, onStage, hooks, baseHref, baseUrl }) {
-  const runtime = bridge === 'bvc2' ? 'bvc2' : 'cenc';
-  const base = new URL((baseUrl ?? import.meta.env.BASE_URL) + runtime + '/', baseHref);
-  const moduleUrl = new URL(runtime + '-core.mjs', base);
-  const wasmUrl = new URL(runtime + '-core.wasm', base);
-  const manifestUrl = new URL('manifest.json', base);
-  onStage('wasm-download');
-  const manifestResponse = await fetch(manifestUrl, { signal, cache: 'no-store' });
-  if (!manifestResponse.ok) throw new Error('CENC release manifest unavailable');
-  const manifestBytes = await readLimitedAsset(manifestResponse, 4096);
-  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-  if (manifest?.schema !== 1 ||
-      !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.mjs']) ||
-      !/^[a-f0-9]{64}$/.test(manifest?.files?.[runtime + '-core.wasm']))
-    throw new Error('Invalid CENC release manifest');
-  // Content-address URLs prevent old HTTP cache entries from being reused
-  // across Pages deployments. Verify downloaded bytes before running code.
-  moduleUrl.searchParams.set('v', manifest.files[runtime + '-core.mjs']);
-  wasmUrl.searchParams.set('v', manifest.files[runtime + '-core.wasm']);
-  const [moduleResponse, wasmResponse] = await Promise.all([
-    fetch(moduleUrl, { signal, cache: 'force-cache' }),
-    fetch(wasmUrl, { signal, cache: 'force-cache' })
-  ]);
-  const [moduleBytes, wasmBytes] = await Promise.all([
-    readLimitedAsset(moduleResponse, 1024 * 1024),
-    readLimitedAsset(wasmResponse, (bridge === 'bvc2' ? 32 : 24) * 1024 * 1024)
-  ]);
-  onStage('wasm-verify');
-  await (bridge === 'bvc2' ? verifyBvc2RuntimeBundle : verifyCencRuntimeBundle)(manifest, moduleBytes, wasmBytes);
-  if (signal.aborted) throw canceled();
-  const { default: createModule } = await import(/* @vite-ignore */ moduleUrl.href);
-  onStage('wasm-start');
-  return createModule({ wasmBinary: wasmBytes, ...hooks });
+/**
+ * Instantiate the unified media core for a bridge. ByteVC2 transcoding and
+ * decoding use the multi-thread build's threads; a CENC remux needs none.
+ */
+export async function loadMediaRuntime({ bridge, signal, onStage, hooks, baseHref, baseUrl,
+  scope = globalThis }) {
+  const variant = mediaCoreVariant(scope);
+  const threads = bridge === 'bvc2' ? mediaThreads(variant, scope) : 1;
+  const core = await loadMediaCore({ signal, onStage, hooks, baseHref, baseUrl, variant,
+    poolSize: bridge === 'bvc2' ? mediaPoolSize('bvc2-stream', threads, variant) : 0 });
+  core._media_set_threads(threads);
+  onStage('wasm-threads', { variant, threads });
+  console.info('[media-core] ' + bridge + ' stream: ' + (variant === 'mt' ? 'multi-thread' : 'single-thread') +
+    ' core, threads ' + threads);
+  return core;
 }
 
 /**

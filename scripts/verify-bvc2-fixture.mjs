@@ -18,8 +18,8 @@ const size = statSync(fixturePath).size;
 assert(size > 8 && size <= 260 * 1024 * 1024, 'BVC2 fixture outside bounded memory limit');
 const key = process.env.BVC2_CENC_KEY || '';
 assert(!key || /^[a-fA-F0-9]{32}$/.test(key), 'Invalid local CENC key format');
-const coreModule = process.env.BVC2_CORE_MODULE || 'public/bvc2/bvc2-core.mjs';
-const coreWasm = process.env.BVC2_CORE_WASM || 'public/bvc2/bvc2-core.wasm';
+const coreModule = process.env.BVC2_CORE_MODULE || 'public/media-core/media-core-st.mjs';
+const coreWasm = process.env.BVC2_CORE_WASM || 'public/media-core/media-core-st.wasm';
 const { default: createModule } = await import(pathToFileURL(
   await import('node:path').then(p => p.resolve(coreModule))).href);
 const started = performance.now();

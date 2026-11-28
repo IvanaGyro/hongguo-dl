@@ -94,7 +94,7 @@ jobs:
       - run: chown "$(id -u):$(id -g)" "$HOME"
       - name: Verify published assets and generate version-1 bv2C regression fixtures
         run: |
-          node scripts/bvc2-wasm-bundle.mjs verify
+          node scripts/media-core-bundle.mjs verify
           node scripts/generate-bvc2-fixtures.mjs /tmp
           node scripts/verify-bvc2-fixture.mjs /tmp/bvc2-short.mp4
           PROOF_BRIDGE=bvc2 PROOF_SHORT=1 node tests/cenc-worker-reuse.node.mjs /tmp/bvc2-long.mp4

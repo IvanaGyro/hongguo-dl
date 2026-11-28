@@ -2,6 +2,12 @@
 
 更新：2026-11-16。**這是唯一的進度／交接文件**；歷史階段與失敗紀錄保留於 Git history，不再另外維護逐次流水帳。CENC、ByteVC2 的設計細節仍分別放在 [CENC 技術說明](cenc-progressive-to-fmp4.md)、[ByteVC2 技術說明](bvc2-wasm.md)。
 
+## 最新變更：統一媒體核心（2026-11-28）
+
+- FFmpeg.wasm、`public/bvc2`、`public/cenc` 合併為單一 Librempeg 核心 `public/media-core/`（x264、x265、SVT-AV1、VVenC），多執行緒（pthreads，需跨來源隔離）與單執行緒兩個變體；站內 Service Worker 補 COOP/COEP `credentialless`。說明與實測見 [媒體核心](media-core.md)。
+- H.265／AV1／VVC 下載與 H.264 一樣有速度／檔案大小滑桿；AV1 改用 SVT-AV1（套用 IvanaGyro/SVT-AV1 PR #1、#2）。
+- 已驗證：Node.js 兩變體全部輸出模式、CENC 轉封裝、concat、ByteVC2 串流／render；Chromium 下載規格、觀看規格、ByteVC2 串流（隔離與非隔離）。**待驗**：Firefox 隔離版、Android 實機記憶體、H.265／AV1／VVC 停點的 VMAF 量測。
+
 ## 階段總覽
 
 | 大階段 | 狀態 | 主要成果／界線 |

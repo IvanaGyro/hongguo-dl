@@ -27,10 +27,8 @@ jobs:
         run: bun ci
       - name: Run tests
         run: bun run test
-      - name: Verify CENC JS/WASM assets match pinned bridge sources
-        run: node scripts/cenc-wasm-bundle.mjs verify
-      - name: Verify optional BVC2 JS/WASM pair and pinned source manifest
-        run: node scripts/bvc2-wasm-bundle.mjs verify
+      - name: Verify committed media core (mt + st) JS/WASM and pinned build inputs
+        run: node scripts/media-core-bundle.mjs verify
       - name: Build for GitHub Pages
         env:
           VITE_BASE_PATH: /hongguo-dl/

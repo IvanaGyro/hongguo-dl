@@ -9,7 +9,8 @@ test('the fallback order moves down only for processing failures', () => {
     assert.equal(allowsWholeFileFallback({ code }), true, code);
   for (const code of ['CENC_SOURCE_FORBIDDEN', 'CENC_RATE_LIMITED', 'CENC_RANGE_HTTP',
     'CENC_RANGE_TIMEOUT', 'CENC_RANGE_UNSUPPORTED', 'CENC_SOURCE_SLOW', 'MEDIA_SOURCE_FORBIDDEN',
-    'CANCELED', 'PLAYBACK_STEP_LIMIT', 'CENC_METADATA_LIMIT', 'MEMORY_LIMIT'])
+    'CANCELED', 'PLAYBACK_STEP_LIMIT', 'CENC_METADATA_LIMIT', 'MEMORY_LIMIT',
+    'MEDIA_CORE_UNAVAILABLE'])
     assert.equal(allowsWholeFileFallback({ code }), false, code);
   assert.equal(allowsWholeFileFallback(null), true, 'An unavailable route without an error falls back');
   assert.equal(isProcessingFailure('CENC_SOURCE_FORBIDDEN'), false);

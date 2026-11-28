@@ -30,16 +30,19 @@ has its own `describe()`.
 | `component/` | Tests that need several modules at once | `playback-device`: front end and Worker agree on the device |
 | `helpers/` | Fixtures shared by more than one test file | fake CDN and WASM runtime, fragmented CENC boxes |
 
-`tooling/published-wasm.test.mjs` checks the committed WASM files against
-their pins. It is a separate file because `cenc-wasm-stream.yml` runs the
-bundle-script tests on branches whose inputs have changed but whose new pins
-are not published yet.
+`tooling/published-wasm.test.mjs` checks the committed media core (both
+variants) against its pins. It is a separate file because the bundle-script
+test (`tooling/media-core-bundle.test.mjs`) must also pass on branches whose
+inputs have changed but whose new binaries are not published yet. The media
+core itself is exercised in Node.js by `scripts/verify-video-outputs.mjs`
+(every encoder with presets, CENC remux, concat, ByteVC2 stream/render) in
+`media-core-wasm.yml`.
 
 Some modules have no unit test: `media-worker-core`, `mp4-metadata`,
 `media-source`, `playback-attempts`, `fmp4-passthrough`, `download-store`,
 `bulk` and `worker/vendor/request-signal`.
-Others are only covered by the browser specs: `main`, `ffmpeg`, `theme` and
-`bvc2*`.
+Others are only covered by the browser specs: `main`, `media-convert`,
+`media-convert-worker`, `theme` and `bvc2*`.
 
 ## Browser behaviour specs: `tests/browser/`
 

@@ -1,0 +1,34 @@
+{
+  "schema": 2,
+  "api": 4,
+  "emsdk": "3.1.74",
+  "librempegCommit": "cb1f8f3eef84999e61b27e2d44664858179bc240",
+  "encoders": {
+    "x264": "33cac6b77d5b9259c552156013a817ab23119612",
+    "x265": "2bb5520e9596f361bf0ed81b3b8da0d7fd999069",
+    "svt-av1": "ad875ab772c67ff3f098c59667348d80fb5c68b6+IvanaGyro/SVT-AV1#1+#2",
+    "vvenc": "ca1af4a2bcfcf9cd9fea1bacb1f73037af253bda"
+  },
+  "variants": {
+    "mt": "pthreads",
+    "st": "single-thread"
+  },
+  "files": {
+    "media-core.mjs": "8f433d628b86e3376015f9c656a7203d0a6c52cdff9922b6b739935750e8fb34",
+    "media-core.wasm": "db69c48fd415d742c939eeeb18e1aed719d9fcb3c1985dd6e24f8eed26f1cfbe",
+    "media-core-st.mjs": "ba9e6f98f199225f629ffcce1f0094a4cc0fdff23c66b14261a9d6313cfb7bab",
+    "media-core-st.wasm": "c3865706dda330516b76243fa0cdf0352334078da9fb7d7570faeae297428beb"
+  },
+  "inputs": {
+    "scripts/build-media-core.sh": "6a6abbeb42c0b83e694c4a64bdcc38893e07ae41bd636b607e1508f43441fc1a",
+    "scripts/media-core/avio.c": "ae2ead1d93bc1cffee2ee2be4a6143fcbaae80641108058d15133f5dbef8529d",
+    "scripts/media-core/avio.h": "8eeb35001e42845400e77b6642e3db765d382270c5543e1ef3875d15f0ac6378",
+    "scripts/media-core/cenc-remux.c": "a646b13012ce93451bda1b63612f20f5ada531edee4d633b981010562402265f",
+    "scripts/media-core/transcoder.c": "5e9f62bea9966d35891fd37b04f08d4fab7a4f3ca21666a91e2c3ed23e1f3bb8",
+    "scripts/patch-bvc2-mov.py": "bc527a9da819bec2b172f8d83d678ab62f0aafc496d72a133ec0153c1506deda",
+    "scripts/patch-x265-single-thread.py": "f60854a47f868b1aaec1359efc0186eef5ddc8fe3b0da1e3cb75e8b0764c4e67",
+    "scripts/patches/svt-av1/0001-wasm-wiener-kernel-pointers.patch": "9241a810f2534787c3e8c1ac5faa0ffc035889088c4cc93e5c595b20dce5d01d",
+    "scripts/patches/svt-av1/0002-avx2-mi-map-pointer-width.patch": "84724f1e7803efaebeff6b8676f34743b633b8e4990b2db91a23f3454938ea23",
+    "scripts/vendor/libvvenc.c": "f48965d731cfeaeafd7ac11c8fd129e3f631db04b8dfeb1b46a8d5e4375b943c"
+  }
+}

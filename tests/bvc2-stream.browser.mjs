@@ -91,7 +91,16 @@ await context.route(url => url.pathname.startsWith('/api/') || url.hostname.ends
 await page.exposeFunction('recordBvcFirstFrame', () => { firstFrameBytes ??= deliveredBytes; });
 try {
   // There is no URL option for whole-file conversion; it is a fallback only.
-  await page.goto(`${process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173'}/hongguo-dl/?id=123456789`);
+  const origin = process.env.BVC2_TEST_ORIGIN || 'http://127.0.0.1:4173';
+  // BVC2_ISOLATED=1: let the site's service worker take control first, so
+  // the page is cross-origin isolated and loads the multi-thread core.
+  if (process.env.BVC2_ISOLATED === '1') {
+    await page.goto(origin + '/hongguo-dl/');
+    await page.waitForFunction(() => navigator.serviceWorker.controller, null, { timeout: 30_000 });
+  }
+  await page.goto(`${origin}/hongguo-dl/?id=123456789`);
+  assert.equal(await page.evaluate(() => crossOriginIsolated), process.env.BVC2_ISOLATED === '1',
+    'cross-origin isolation state');
   // The controls exist in static HTML before the application attaches handlers.
   await page.waitForFunction(() => document.querySelector('#series-title')
     ?.textContent.includes('Synthetic ByteVC2 framing'), null, { timeout: 30000 });

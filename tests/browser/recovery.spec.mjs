@@ -93,11 +93,33 @@ const FAULTS = [
     }
   },
   {
-    name: 'incremental decryption is unavailable (no WASM, no EME)',
+    // One media core serves streaming and the whole-file fallback, so only
+    // the streaming route (MSE) can be missing while decryption still works.
+    name: 'incremental decryption is unavailable (no MSE, no EME)',
+    variants: [variant('cenc-medium.mp4')],
+    setup: ({ context }) => context.addInitScript(() => {
+      delete window.MediaSource; delete window.ManagedMediaSource;
+      Object.defineProperty(navigator, 'requestMediaKeySystemAccess', { value: undefined });
+    })
+  },
+  {
+    // Every remaining route needs the media core: fail before the whole
+    // episode is downloaded, instead of falling back to a full download.
+    name: 'the media core is not deployed and incremental decryption is unavailable',
     variants: [variant('cenc-medium.mp4')],
     setup: async ({ context }) => {
-      await context.route('**/cenc/cenc-core.wasm', route => route.fulfill({ status: 404, body: 'not deployed' }));
-      await context.addInitScript(() => Object.defineProperty(navigator, 'requestMediaKeySystemAccess', { value: undefined }));
+      await context.route('**/media-core/**', route => route.fulfill({ status: 404, body: 'not deployed' }));
+      await context.addInitScript(() => {
+        delete window.MediaSource; delete window.ManagedMediaSource;
+        Object.defineProperty(navigator, 'requestMediaKeySystemAccess', { value: undefined });
+      });
+    },
+    message: /尚未部署 Librempeg 媒體處理 WASM/,
+    // The whole-file read never starts (it logs whole-file.source).
+    check: async ({ page }) => {
+      const log = await page.locator('#playback-log').inputValue();
+      expect(log).toContain('cenc.route');
+      expect(log).not.toContain('whole-file.source');
     }
   },
   {

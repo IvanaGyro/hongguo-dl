@@ -42,7 +42,7 @@ MSE 消費片段後才回 ACK，形成背壓；下載層的位元組預取可獨
 
 ## 備援順序（#23）
 
-`fallback-policy.js` 定義單一順序：原生 EME（已分段 CENC）→ WASM 串流 → 整檔處理（FFmpeg.wasm 解密封裝／ByteVC2 整檔轉碼）。
+`fallback-policy.js` 定義單一順序：原生 EME（已分段 CENC）→ WASM 串流 → 整檔處理（媒體核心解密封裝／ByteVC2 整檔轉碼）。
 
 - **只有處理失敗才往下一層**：WASM 無法載入或執行、轉封裝／轉碼失敗、SourceBuffer／HEVC init 失敗、EME 設定失敗、沒有分段索引。HEVC 不再有獨立的整檔禁令。
 - **來源失敗不備援**：CDN 403／429、Range 錯誤或不支援、逾時與過慢由 `download-source-session.js` 輪替同畫質候選或重新取源；整檔讀取只會再碰到同一個失敗的 CDN。

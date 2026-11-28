@@ -3,12 +3,11 @@ import { createPlaybackAttempts } from './playback-attempts.js';
 // and speculative work. Playback supplies context; this layer owns scheduling.
 import { errorWith } from './logic.js';
 import { episodeCacheKey } from './media-cache.js';
-import { convertBytes, prepareFfmpeg } from './ffmpeg.js';
+import { convertBytes, prepareMediaCore, mediaCoreAvailable, MEDIA_CORE_MISSING } from './media-convert.js';
 import { renditionOptions, availableRenditions, codecsAtQuality, playbackRendition, codecId, qualityId, reconcileRendition, playableVariants } from './source-options.js';
 import { nextEpisode, shouldPrefetchNext } from './player-prefetch.js';
 import { openClearKeyStream } from './clear-key.js';
 import { openCencProgressiveStream } from './cenc-remux.js';
-import { bvc2BridgeAvailable, transcodeBvc2 } from './bvc2.js';
 import { createDownloadSourceSession } from './download-source-session.js';
 import { createMediaDownload } from './media-download.js';
 import { clearMediaProcessors } from './media-processor.js';
@@ -51,9 +50,16 @@ export function createMediaSession({
     return download.whole(source, { bridge, processor, maxBytes: WHOLE_FILE_LIMIT,
       signal, onStage, onProgress });
   }
+  // Whole-file processing always needs the media core: check before
+  // downloading an entire episode that could not be used anyway.
+  async function requireMediaCore(signal) {
+    const available = await mediaCoreAvailable();
+    if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
+    if (!available) throw errorWith('MEDIA_CORE_UNAVAILABLE', MEDIA_CORE_MISSING);
+  }
   function refreshBvc2Choices(variants, signal) {
     if (!variants.some(v => codecId(v.codec) === 'bytevc2')) return;
-    void bvc2BridgeAvailable().then(available => {
+    void mediaCoreAvailable().then(available => {
       if (signal.aborted || lastVariants !== variants || available === canTranscodeBvc2) return;
       canTranscodeBvc2 = available;
       onVariants(variants);
@@ -181,7 +187,7 @@ export function createMediaSession({
         (!nativeChoice || parseInt(qualityId(v), 10) > parseInt(qualityId(nativeChoice), 10)));
       if (needsBvc2) report('正在檢查 ByteVC2 播放工具…', 2);
       const checkStarted = performance.now();
-      const bvc2Available = needsBvc2 ? await bvc2BridgeAvailable() : canTranscodeBvc2;
+      const bvc2Available = needsBvc2 ? await mediaCoreAvailable() : canTranscodeBvc2;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       canTranscodeBvc2 = bvc2Available;
       log('source.bvc2.check', {
@@ -278,6 +284,7 @@ export function createMediaSession({
         // ByteVC2 → H.264 route was unavailable or failed while processing.
         const reportBvc2 = (message, layer = 2) => report(message, layer);
         log('bvc2.prepare.begin', { mode: 'whole-file', codec: 'bytevc2', reason: fallbackReason });
+        await requireMediaCore(signal);
         onStage('cdn.probe', { mode: 'whole-file' });
         failureStep = 'media-download'; steps.begin('media-download');
         reportBvc2('正在下載 ByteVC2 影片…', 1);
@@ -300,7 +307,7 @@ export function createMediaSession({
           transcoding: 'ByteVC2 → H.264 正在轉碼整集；完成前無法顯示影格，請勿誤認為已起播',
           finalizing: 'ByteVC2 轉碼完成，正在輸出 MP4…'
         };
-        const transcoded = await transcodeBvc2(raw, {
+        const transcoded = await convertBytes(raw, {
           contentKey: source.contentKey, signal, mode: 'h264',
           progress: value => { if (!signal.aborted) reportBvc2('轉碼 ' + Math.round(value * 100) + '%'); },
           onProgress: phase => {
@@ -324,7 +331,7 @@ export function createMediaSession({
         return { ...native, source, fallbackNotice, variants: quiet ? variants : null };
       }
       // The browser's native CDM performs CENC-AES-CTR on its HTTP Range
-      // stream: no full MP4 buffer, JS crypto loop, or FFmpeg virtual FS.
+      // stream: no full MP4 buffer, JS crypto loop, or WASM virtual FS.
       // ByteVC2 still needs a dedicated decoder, which the CDM cannot supply.
       // A source/API failure may consume attempt zero before any CENC setup.
       // Every newly selected encrypted source must still try incremental playback.
@@ -359,18 +366,19 @@ export function createMediaSession({
       log('playback.fallback.whole-file', {
         codec: codecId(source.codec) || 'unknown', reason: fallbackReason, elapsedMs: ageMs()
       });
+      await requireMediaCore(signal);
       let bytes;
       // Encrypted MP4s still require the complete source before decryption.
-      // Initialize FFmpeg after the first media chunk, in parallel with the
+      // Initialize the media core after the first media chunk, in parallel with the
       // remaining download, so the initial startup stages do not run serially.
-      let warmup = !quiet ? prepareFfmpeg(signal).then(() => null, error => error) : null;
+      let warmup = !quiet ? prepareMediaCore(signal).then(() => null, error => error) : null;
       let received = 0, lastUpdate = 0;
       const wholeFileStarted = performance.now();
       onStage('cdn.probe', { mode: 'whole-file' });
       failureStep = 'media-download'; steps.begin('media-download');
       fallbackStatus('正在下載整集影片…');
       const raw = await readSource(source, 'cenc', signal, onStage, (count, total) => {
-        if (!warmup) warmup = prepareFfmpeg(signal).then(() => null, error => error);
+        if (!warmup) warmup = prepareMediaCore(signal).then(() => null, error => error);
         if (count > received) markStartupStage('first-media-byte');
         received = count;
         const now = Date.now();
@@ -382,7 +390,7 @@ export function createMediaSession({
       });
       failureStep = 'processing'; steps.begin('processing');
       fallbackStatus('正在準備影片處理工具…', 2);
-      const warmupError = await (warmup || prepareFfmpeg(signal).then(() => null, error => error));
+      const warmupError = await (warmup || prepareMediaCore(signal).then(() => null, error => error));
       if (warmupError) throw warmupError;
       if (signal.aborted) throw errorWith('CANCELED', '已切換影片');
       if (!quiet) {

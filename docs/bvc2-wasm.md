@@ -1,5 +1,7 @@
 # BVC2 / ByteVC2 browser decoder: implementation boundary
 
+> 2026-11-28：`public/bvc2` 與 `public/cenc` 已合併為單一的 [Librempeg 媒體核心](media-core.md)（`public/media-core/`，多執行緒與單執行緒兩個變體；AV1 改用 SVT-AV1）。下文的 `bvc2-core`、libaom 與單執行緒描述是歷史紀錄，ByteVC2 的解碼／串流／render 行為不變。
+
 The upstream [jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama/blob/main/docs/bytevc2-playback.md)
 uses a **native Librempeg bvc2 decoder**, not an ordinary H.266/VVC
 decoder. Its pinned revision is `cb1f8f3eef84999e61b27e2d44664858179bc240`.
