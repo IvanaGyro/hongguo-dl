@@ -10,11 +10,26 @@ import { test as base, expect } from '@playwright/test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { KEY, mediaPath } from './fixtures.mjs';
 
 export { expect, KEY };
 
 const OPEN_RANGE_CAP = 8 * 1024 * 1024;
+// A valid 3x4 RGB PNG for search covers; Firefox rejects a corrupt one that
+// Chromium and WebKit would still draw.
+const pngChunk = (type, data) => {
+  const head = Buffer.alloc(8); head.writeUInt32BE(data.length); head.write(type, 4, 'ascii');
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])));
+  return Buffer.concat([head, data, crc]);
+};
+const COVER_PNG = (() => {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(3, 0); header.writeUInt32BE(4, 4); header.set([8, 2, 0, 0, 0], 8);
+  const rows = Buffer.concat(Array.from({ length: 4 }, () => Buffer.from([0, 240, 177, 107, 240, 177, 107, 240, 177, 107])));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)), pngChunk('IEND', Buffer.alloc(0))]);
+})();
 const files = new Map();
 const bytesOf = name => {
   if (!files.has(name)) files.set(name, new Uint8Array(readFileSync(mediaPath(name))));
@@ -72,7 +87,7 @@ export class App {
     await this.context.route(/^https:\/\/p3-novel\.byteimg\.com\//, route => {
       this.requests.push({ kind: 'cover', url: route.request().url() });
       return route.fulfill({ status: 200, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' },
-        body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAAECAIAAADETxJQAAAAEklEQVR4nGP4z8AARAxEMjAGANn5C/U9wPKZAAAAAElFTkSuQmCC', 'base64') });
+        body: COVER_PNG });
     });
     await this.context.route(/^https:\/\/[a-z0-9-]+\.fqnovelvod\.com\//, route =>
       this.media(route, route.request().url(), 'cdn'));
