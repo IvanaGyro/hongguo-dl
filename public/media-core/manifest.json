@@ -15,9 +15,9 @@
   },
   "files": {
     "media-core.mjs": "8f433d628b86e3376015f9c656a7203d0a6c52cdff9922b6b739935750e8fb34",
-    "media-core.wasm": "db69c48fd415d742c939eeeb18e1aed719d9fcb3c1985dd6e24f8eed26f1cfbe",
+    "media-core.wasm": "a27e3a7dfdf443349cc755c5569a06039af722eadcf607673919c9f1c511c2df",
     "media-core-st.mjs": "ba9e6f98f199225f629ffcce1f0094a4cc0fdff23c66b14261a9d6313cfb7bab",
-    "media-core-st.wasm": "c3865706dda330516b76243fa0cdf0352334078da9fb7d7570faeae297428beb"
+    "media-core-st.wasm": "f1595d32aa89a5754f6c1a12345b55a1b0d6a64809c8487fb39a43cd3874301e"
   },
   "inputs": {
     "scripts/build-media-core.sh": "6a6abbeb42c0b83e694c4a64bdcc38893e07ae41bd636b607e1508f43441fc1a",
