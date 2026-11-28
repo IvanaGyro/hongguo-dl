@@ -6,6 +6,6 @@
   "observability": { "enabled": true },
   // Run near Tokyo so App API calls (search, episode directory, sources) leave
   // from Japan: the App filters some series for Taiwan/Hong Kong IPs.
-  "placement": { "region": "aws:us-west-2" },
+  "placement": { "region": "aws:ap-northeast-2" },
   "previews": {}
 }
